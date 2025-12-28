@@ -25,6 +25,7 @@ import { getToday, getLastNDays } from '../utils';
 interface HabitStore {
   // State (data)
   habits: Habit[];
+  archivedHabits: Habit[];
   completions: Map<string, Completion>; // Key: "habitId:date"
   selectedDate: string;
   isLoading: boolean;
@@ -32,15 +33,19 @@ interface HabitStore {
 
   // Actions (methods that modify state)
   loadData: () => Promise<void>;
+  loadArchivedHabits: () => Promise<void>;
   loadCompletionsForMonth: (month: Date) => Promise<void>;
   addHabit: (habit: Omit<Habit, 'id' | 'createdAt' | 'updatedAt' | 'position'>) => Promise<void>;
   updateHabit: (id: string, updates: Partial<Habit>) => Promise<void>;
   deleteHabit: (id: string) => Promise<void>;
+  restoreHabit: (id: string) => Promise<void>;
   toggleHabit: (habitId: string, date?: string) => Promise<void>;
   setNumericValue: (habitId: string, value: number, date?: string) => Promise<void>;
   setSelectedDate: (date: string) => void;
   getCompletionForHabit: (habitId: string, date?: string) => Completion | undefined;
   reorderHabits: (fromIndex: number, toIndex: number) => Promise<void>;
+  exportData: () => Promise<string>;
+  importData: (jsonString: string) => Promise<void>;
 }
 
 /**
@@ -59,6 +64,7 @@ function completionKey(habitId: string, date: string): string {
 export const useHabitStore = create<HabitStore>((set, get) => ({
   // Initial state
   habits: [],
+  archivedHabits: [],
   completions: new Map(),
   selectedDate: getToday(),
   isLoading: true,
@@ -100,6 +106,19 @@ export const useHabitStore = create<HabitStore>((set, get) => ({
         error: 'Failed to load data', 
         isLoading: false 
       });
+    }
+  },
+
+  /**
+   * Load archived habits
+   * Called when viewing settings/archive page
+   */
+  loadArchivedHabits: async () => {
+    try {
+      const archivedHabits = await db.getArchivedHabits();
+      set({ archivedHabits });
+    } catch (error) {
+      console.error('Failed to load archived habits:', error);
     }
   },
 
@@ -167,13 +186,21 @@ export const useHabitStore = create<HabitStore>((set, get) => ({
       await db.updateHabit(id, updates);
       
       const { habits } = get();
-      set({
-        habits: habits.map(h => 
-          h.id === id 
-            ? { ...h, ...updates, updatedAt: new Date().toISOString() }
-            : h
-        ),
-      });
+      
+      // If archiving, remove from active habits
+      if (updates.archived === true) {
+        set({
+          habits: habits.filter(h => h.id !== id),
+        });
+      } else {
+        set({
+          habits: habits.map(h => 
+            h.id === id 
+              ? { ...h, ...updates, updatedAt: new Date().toISOString() }
+              : h
+          ),
+        });
+      }
     } catch (error) {
       console.error('Failed to update habit:', error);
       set({ error: 'Failed to update habit' });
@@ -187,10 +214,11 @@ export const useHabitStore = create<HabitStore>((set, get) => ({
     try {
       await db.deleteHabit(id);
       
-      const { habits, completions } = get();
+      const { habits, archivedHabits, completions } = get();
       
       // Remove from habits list
       const newHabits = habits.filter(h => h.id !== id);
+      const newArchivedHabits = archivedHabits.filter(h => h.id !== id);
       
       // Remove completions for this habit
       const newCompletions = new Map(completions);
@@ -200,10 +228,42 @@ export const useHabitStore = create<HabitStore>((set, get) => ({
         }
       }
 
-      set({ habits: newHabits, completions: newCompletions });
+      set({ 
+        habits: newHabits, 
+        archivedHabits: newArchivedHabits,
+        completions: newCompletions 
+      });
     } catch (error) {
       console.error('Failed to delete habit:', error);
       set({ error: 'Failed to delete habit' });
+    }
+  },
+
+  /**
+   * Restore an archived habit
+   */
+  restoreHabit: async (id) => {
+    try {
+      await db.updateHabit(id, { archived: false });
+      
+      const { archivedHabits, habits } = get();
+      const habitToRestore = archivedHabits.find(h => h.id === id);
+      
+      if (habitToRestore) {
+        const restoredHabit = { 
+          ...habitToRestore, 
+          archived: false, 
+          updatedAt: new Date().toISOString() 
+        };
+        
+        set({
+          archivedHabits: archivedHabits.filter(h => h.id !== id),
+          habits: [...habits, restoredHabit],
+        });
+      }
+    } catch (error) {
+      console.error('Failed to restore habit:', error);
+      set({ error: 'Failed to restore habit' });
     }
   },
 
@@ -312,6 +372,64 @@ export const useHabitStore = create<HabitStore>((set, get) => ({
     // Persist to database
     for (const habit of updatedHabits) {
       await db.updateHabit(habit.id, { position: habit.position });
+    }
+  },
+
+  /**
+   * Export all data as JSON string
+   */
+  exportData: async () => {
+    try {
+      // Get all habits (including archived) directly from database
+      const allHabits = await db.db.habits.toArray();
+      const allCompletions = await db.db.completions.toArray();
+
+      const exportData = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        app: 'OpenHabit',
+        habits: allHabits,
+        completions: allCompletions,
+      };
+
+      return JSON.stringify(exportData, null, 2);
+    } catch (error) {
+      console.error('Failed to export data:', error);
+      throw new Error('Failed to export data');
+    }
+  },
+
+  /**
+   * Import data from JSON string
+   */
+  importData: async (jsonString) => {
+    try {
+      const data = JSON.parse(jsonString);
+
+      // Validate structure
+      if (!data.habits || !data.completions) {
+        throw new Error('Invalid data format');
+      }
+
+      // Clear existing data
+      await db.db.habits.clear();
+      await db.db.completions.clear();
+
+      // Import habits
+      for (const habit of data.habits) {
+        await db.db.habits.add(habit);
+      }
+
+      // Import completions
+      for (const completion of data.completions) {
+        await db.db.completions.add(completion);
+      }
+
+      // Reload data
+      await get().loadData();
+    } catch (error) {
+      console.error('Failed to import data:', error);
+      throw new Error('Failed to import data: ' + (error as Error).message);
     }
   },
 }));

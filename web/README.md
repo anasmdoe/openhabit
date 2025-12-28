@@ -54,6 +54,7 @@ src/
 │   ├── HabitRow.tsx         # Horizontal day grid row
 │   ├── HabitDetailView.tsx  # Statistics & charts view
 │   ├── HabitForm.tsx        # Create/edit modal
+│   ├── SettingsPage.tsx     # Settings, archive, export/import
 │   ├── HabitCard.tsx        # Legacy card component
 │   ├── CalendarView.tsx     # Standalone calendar view
 │   └── CalendarHeatmap.tsx  # Month heatmap component
@@ -129,14 +130,18 @@ const habits = await db.habits.where('archived').equals(0).toArray();
 - ✅ Create boolean (yes/no) habits
 - ✅ Create numeric (count) habits
 - ✅ Toggle/track daily completions
-- ✅ Streak tracking
+- ✅ Streak tracking with 🔥 badges
 - ✅ Local storage (IndexedDB)
 - ✅ Responsive design
-- 🚧 Calendar view (coming)
-- 🚧 Statistics/graphs (coming)
+- ✅ Calendar heatmap view
+- ✅ Statistics with line & bar charts
+- ✅ Edit/Delete habits
+- ✅ Archive/Restore habits
+- ✅ Export data (JSON backup)
+- ✅ Import data (restore from backup)
 - 🚧 Import from Loop Habit Tracker (coming)
-- 🚧 Export/backup (coming)
 - 🚧 PWA offline support (coming)
+- 🚧 Dark mode (coming)
 
 ## Development
 
@@ -186,23 +191,28 @@ interface Completion {
 
 ## Roadmap
 
-### Phase 1: MVP (Current)
+### Phase 1: MVP ✅
 - [x] Basic habit CRUD
 - [x] Daily tracking
 - [x] Local storage
-- [ ] Calendar view
-- [ ] Statistics
+- [x] Calendar view
+- [x] Statistics charts
 
-### Phase 2: Features
-- [ ] Import/Export
-- [ ] PWA support
+### Phase 2: Features (Current)
+- [x] Edit/Delete from detail view
+- [x] Archive/Restore habits
+- [x] Export/Import (JSON)
+- [ ] Import from Loop Habit Tracker
+- [ ] PWA support (offline, installable)
+- [ ] Dark mode
 - [ ] Reminders (browser notifications)
 - [ ] Tags/categories
 
 ### Phase 3: Multi-platform
+- [ ] Docker deployment
 - [ ] Desktop app (Electron/Tauri)
 - [ ] Optional cloud sync
-- [ ] Mobile apps
+- [ ] Mobile apps (React Native)
 
 ## License
 

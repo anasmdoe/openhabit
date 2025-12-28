@@ -54,6 +54,13 @@ export async function getAllHabits(): Promise<Habit[]> {
     .sortBy('position');
 }
 
+export async function getArchivedHabits(): Promise<Habit[]> {
+  return db.habits
+    .where('archived')
+    .equals(1)  // true is stored as 1
+    .sortBy('position');
+}
+
 export async function getHabitById(id: string): Promise<Habit | undefined> {
   return db.habits.get(id);
 }

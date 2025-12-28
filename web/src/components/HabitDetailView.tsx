@@ -10,7 +10,7 @@
  * - Best streaks
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -28,6 +28,10 @@ import {
   TrendingUp,
   Calendar,
   Award,
+  Edit2,
+  Trash2,
+  Archive,
+  MoreVertical,
 } from 'lucide-react';
 import {
   format,
@@ -52,6 +56,9 @@ interface HabitDetailViewProps {
   onBack: () => void;
   onToggle: (date: string) => void;
   onSetValue: (date: string, value: number) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onArchive: () => void;
 }
 
 export function HabitDetailView({
@@ -60,7 +67,11 @@ export function HabitDetailView({
   onBack,
   onToggle,
   onSetValue,
+  onEdit,
+  onDelete,
+  onArchive,
 }: HabitDetailViewProps) {
+  const [showMenu, setShowMenu] = useState(false);
   const today = new Date();
 
   // Calculate overview stats
@@ -259,13 +270,73 @@ export function HabitDetailView({
         className="text-white p-4 rounded-b-3xl"
         style={{ backgroundColor: habit.color }}
       >
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-white/80 hover:text-white mb-4"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          <span>Back</span>
-        </button>
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 text-white/80 hover:text-white"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span>Back</span>
+          </button>
+          
+          {/* Menu button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg"
+            >
+              <MoreVertical className="w-5 h-5" />
+            </button>
+            
+            {/* Dropdown menu */}
+            {showMenu && (
+              <>
+                {/* Backdrop to close menu */}
+                <div 
+                  className="fixed inset-0 z-10"
+                  onClick={() => setShowMenu(false)}
+                />
+                <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg 
+                               border border-gray-100 py-1 z-20">
+                  <button
+                    onClick={() => {
+                      setShowMenu(false);
+                      onEdit();
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-gray-700 
+                             hover:bg-gray-50 text-left"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    <span>Edit habit</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowMenu(false);
+                      onArchive();
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-gray-700 
+                             hover:bg-gray-50 text-left"
+                  >
+                    <Archive className="w-4 h-4" />
+                    <span>Archive habit</span>
+                  </button>
+                  <hr className="my-1 border-gray-100" />
+                  <button
+                    onClick={() => {
+                      setShowMenu(false);
+                      onDelete();
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-red-600 
+                             hover:bg-red-50 text-left"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete habit</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
         
         <h1 className="text-2xl font-bold mb-1">{habit.name}</h1>
         {habit.description && (

@@ -6,18 +6,25 @@
  * Navigation:
  * - Home: Shows list of habits with horizontal day grid
  * - Detail: Shows statistics for a selected habit
+ * - Settings: App settings, archived habits, export/import
  */
 
 import { useEffect, useState, useCallback } from 'react';
 import { subDays } from 'date-fns';
-import { HomePage, HabitDetailView } from './components';
+import { Settings } from 'lucide-react';
+import { HomePage, HabitDetailView, HabitForm, SettingsPage } from './components';
 import { useHabitStore } from './store/habitStore';
 import { formatDate } from './utils';
 import type { Habit, Completion } from './types';
 
+type Page = 'home' | 'detail' | 'settings';
+
 function App() {
   // Navigation state
+  const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
+  const [editingHabit, setEditingHabit] = useState<Habit | undefined>();
+  const [isFormOpen, setIsFormOpen] = useState(false);
 
   // Get store state and actions
   const { 
@@ -28,6 +35,8 @@ function App() {
     getCompletionForHabit,
     toggleHabit,
     setNumericValue,
+    updateHabit,
+    deleteHabit,
   } = useHabitStore();
 
   // Load data when app starts
@@ -56,11 +65,57 @@ function App() {
       if (updated) {
         setSelectedHabit(updated);
       } else {
-        // Habit was deleted
+        // Habit was deleted or archived
         setSelectedHabit(null);
+        setCurrentPage('home');
       }
     }
   }, [habits, selectedHabit]);
+
+  // Navigate to habit detail
+  const handleHabitClick = (habit: Habit) => {
+    setSelectedHabit(habit);
+    setCurrentPage('detail');
+  };
+
+  // Handle edit from detail view
+  const handleEdit = () => {
+    if (selectedHabit) {
+      setEditingHabit(selectedHabit);
+      setIsFormOpen(true);
+    }
+  };
+
+  // Handle save from edit form
+  const handleSave = (habitData: Omit<Habit, 'id' | 'createdAt' | 'updatedAt' | 'position'>) => {
+    if (editingHabit) {
+      updateHabit(editingHabit.id, habitData);
+    }
+    setEditingHabit(undefined);
+    setIsFormOpen(false);
+  };
+
+  // Handle archive from detail view
+  const handleArchive = () => {
+    if (selectedHabit) {
+      if (confirm(`Archive "${selectedHabit.name}"? You can restore it later from Settings.`)) {
+        updateHabit(selectedHabit.id, { archived: true });
+        setSelectedHabit(null);
+        setCurrentPage('home');
+      }
+    }
+  };
+
+  // Handle delete from detail view
+  const handleDelete = () => {
+    if (selectedHabit) {
+      if (confirm(`Delete "${selectedHabit.name}"? This action cannot be undone.`)) {
+        deleteHabit(selectedHabit.id);
+        setSelectedHabit(null);
+        setCurrentPage('home');
+      }
+    }
+  };
 
   // Show loading state
   if (isLoading) {
@@ -96,9 +151,9 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header - only show on home page */}
-      {!selectedHabit && (
+      {currentPage === 'home' && (
         <header className="bg-white border-b border-gray-200">
-          <div className="max-w-4xl mx-auto px-4 py-3">
+          <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="text-2xl">🌀</span>
               <div>
@@ -106,24 +161,49 @@ function App() {
                 <p className="text-xs text-gray-500">Your data, your habits, your way</p>
               </div>
             </div>
+            <button
+              onClick={() => setCurrentPage('settings')}
+              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
           </div>
         </header>
       )}
 
       {/* Main content */}
       <main>
-        {selectedHabit ? (
+        {currentPage === 'settings' ? (
+          <SettingsPage onBack={() => setCurrentPage('home')} />
+        ) : currentPage === 'detail' && selectedHabit ? (
           <HabitDetailView
             habit={selectedHabit}
             completions={getCompletionsMap(selectedHabit.id)}
-            onBack={() => setSelectedHabit(null)}
+            onBack={() => {
+              setSelectedHabit(null);
+              setCurrentPage('home');
+            }}
             onToggle={(date) => toggleHabit(selectedHabit.id, date)}
             onSetValue={(date, value) => setNumericValue(selectedHabit.id, value, date)}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            onArchive={handleArchive}
           />
         ) : (
-          <HomePage onHabitClick={setSelectedHabit} />
+          <HomePage onHabitClick={handleHabitClick} />
         )}
       </main>
+
+      {/* Edit Form Modal */}
+      <HabitForm
+        habit={editingHabit}
+        isOpen={isFormOpen}
+        onClose={() => {
+          setIsFormOpen(false);
+          setEditingHabit(undefined);
+        }}
+        onSave={handleSave}
+      />
     </div>
   );
 }
