@@ -12,6 +12,7 @@
 
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
+import { startOfMonth, endOfMonth, eachDayOfInterval, format } from 'date-fns';
 import type { Habit, Completion } from '../types';
 import { DEFAULT_HABIT } from '../types';
 import * as db from '../db';
@@ -31,6 +32,7 @@ interface HabitStore {
 
   // Actions (methods that modify state)
   loadData: () => Promise<void>;
+  loadCompletionsForMonth: (month: Date) => Promise<void>;
   addHabit: (habit: Omit<Habit, 'id' | 'createdAt' | 'updatedAt' | 'position'>) => Promise<void>;
   updateHabit: (id: string, updates: Partial<Habit>) => Promise<void>;
   deleteHabit: (id: string) => Promise<void>;
@@ -98,6 +100,37 @@ export const useHabitStore = create<HabitStore>((set, get) => ({
         error: 'Failed to load data', 
         isLoading: false 
       });
+    }
+  },
+
+  /**
+   * Load completions for a specific month
+   * Called when navigating the calendar
+   */
+  loadCompletionsForMonth: async (month: Date) => {
+    try {
+      const { completions } = get();
+      const newCompletions = new Map(completions);
+
+      const monthStart = startOfMonth(month);
+      const monthEnd = endOfMonth(month);
+      const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+
+      for (const day of days) {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const dayCompletions = await db.getCompletionsForDate(dateStr);
+        
+        for (const completion of dayCompletions) {
+          newCompletions.set(
+            completionKey(completion.habitId, completion.date),
+            completion
+          );
+        }
+      }
+
+      set({ completions: newCompletions });
+    } catch (error) {
+      console.error('Failed to load month completions:', error);
     }
   },
 

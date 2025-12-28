@@ -2,24 +2,65 @@
  * Main App Component
  * 
  * This is the root of the React application.
- * It loads data on startup and renders the main UI.
+ * 
+ * Navigation:
+ * - Home: Shows list of habits with horizontal day grid
+ * - Detail: Shows statistics for a selected habit
  */
 
-import { useEffect } from 'react';
-import { HabitList } from './components';
+import { useEffect, useState, useCallback } from 'react';
+import { subDays } from 'date-fns';
+import { HomePage, HabitDetailView } from './components';
 import { useHabitStore } from './store/habitStore';
-import { getGreeting } from './utils';
+import { formatDate } from './utils';
+import type { Habit, Completion } from './types';
 
 function App() {
+  // Navigation state
+  const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
+
   // Get store state and actions
-  const { isLoading, error, loadData } = useHabitStore();
+  const { 
+    isLoading, 
+    error, 
+    loadData, 
+    habits,
+    getCompletionForHabit,
+    toggleHabit,
+    setNumericValue,
+  } = useHabitStore();
 
   // Load data when app starts
-  // useEffect runs code after the component renders
-  // The empty [] means "only run once on mount"
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Build completions map for detail view
+  const getCompletionsMap = useCallback((habitId: string): Map<string, Completion> => {
+    const map = new Map<string, Completion>();
+    // Load more days for detail view (1 year)
+    for (let i = 0; i < 365; i++) {
+      const dateStr = formatDate(subDays(new Date(), i));
+      const completion = getCompletionForHabit(habitId, dateStr);
+      if (completion) {
+        map.set(dateStr, completion);
+      }
+    }
+    return map;
+  }, [getCompletionForHabit]);
+
+  // Update selected habit when habits change (e.g., after editing)
+  useEffect(() => {
+    if (selectedHabit) {
+      const updated = habits.find(h => h.id === selectedHabit.id);
+      if (updated) {
+        setSelectedHabit(updated);
+      } else {
+        // Habit was deleted
+        setSelectedHabit(null);
+      }
+    }
+  }, [habits, selectedHabit]);
 
   // Show loading state
   if (isLoading) {
@@ -54,32 +95,35 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-2xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">
-                🌀 OpenHabit
-              </h1>
-              <p className="text-sm text-gray-500">
-                {getGreeting()}! Build better habits.
-              </p>
+      {/* Header - only show on home page */}
+      {!selectedHabit && (
+        <header className="bg-white border-b border-gray-200">
+          <div className="max-w-4xl mx-auto px-4 py-3">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🌀</span>
+              <div>
+                <h1 className="text-lg font-bold text-gray-900">OpenHabit</h1>
+                <p className="text-xs text-gray-500">Your data, your habits, your way</p>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* Main content */}
-      <main className="px-4 py-6 pb-20">
-        <HabitList />
+      <main>
+        {selectedHabit ? (
+          <HabitDetailView
+            habit={selectedHabit}
+            completions={getCompletionsMap(selectedHabit.id)}
+            onBack={() => setSelectedHabit(null)}
+            onToggle={(date) => toggleHabit(selectedHabit.id, date)}
+            onSetValue={(date, value) => setNumericValue(selectedHabit.id, value, date)}
+          />
+        ) : (
+          <HomePage onHabitClick={setSelectedHabit} />
+        )}
       </main>
-
-      {/* Footer */}
-      <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 
-                         py-2 text-center text-xs text-gray-400">
-        OpenHabit - Your data, your habits, your way
-      </footer>
     </div>
   );
 }

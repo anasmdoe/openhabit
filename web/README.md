@@ -24,25 +24,49 @@ npm run dev
 # Open http://localhost:5173 in your browser
 ```
 
+## UI Design (Loop Habit Tracker Style)
+
+### Home Page
+- **Header** with app branding and date
+- **Quick stats bar** showing today's completion rate
+- **Habit list** with horizontal scrolling day grid
+  - Color indicator for each habit
+  - Checkmarks (✓) for boolean habits
+  - Numeric values for count habits
+  - Last 14 days visible with horizontal scroll
+- **Top Streaks** section showing best performing habits
+- **Weekly Summary** showing habits completed each day
+
+### Habit Detail Page (click on any habit)
+- **Colored header** with habit name and settings
+- **Overview stats**: Score %, Current Streak, Best Streak, Total
+- **Score Chart**: Line graph showing weekly scores (12 weeks)
+- **History Chart**: Bar graph showing monthly completions (12 months)
+- **Calendar**: Monthly heatmap with clickable days
+- **Best Streaks**: Current and longest streak info
+
 ## Project Structure
 
 ```
 src/
-├── components/          # React UI components
-│   ├── HabitCard.tsx   # Single habit display
-│   ├── HabitForm.tsx   # Create/edit modal
-│   └── HabitList.tsx   # Main list view
-├── db/                  # Database layer (IndexedDB)
-│   └── index.ts        # Dexie wrapper
-├── store/              # State management
-│   └── habitStore.ts   # Zustand store
-├── types/              # TypeScript types
-│   └── index.ts        # Data models
-├── utils/              # Helper functions
-│   └── index.ts        # Date, stats utilities
-├── App.tsx             # Root component
-├── main.tsx            # Entry point
-└── index.css           # Tailwind CSS
+├── components/
+│   ├── HomePage.tsx         # Main view with habit list
+│   ├── HabitRow.tsx         # Horizontal day grid row
+│   ├── HabitDetailView.tsx  # Statistics & charts view
+│   ├── HabitForm.tsx        # Create/edit modal
+│   ├── HabitCard.tsx        # Legacy card component
+│   ├── CalendarView.tsx     # Standalone calendar view
+│   └── CalendarHeatmap.tsx  # Month heatmap component
+├── db/
+│   └── index.ts             # IndexedDB via Dexie
+├── store/
+│   └── habitStore.ts        # Zustand state management
+├── types/
+│   └── index.ts             # TypeScript interfaces
+├── utils/
+│   └── index.ts             # Date & calculation helpers
+├── App.tsx                  # Root with navigation
+└── main.tsx                 # Entry point
 ```
 
 ## Tech Stack
@@ -55,6 +79,7 @@ src/
 | **Tailwind CSS** | Styling |
 | **Zustand** | State management |
 | **Dexie** | IndexedDB wrapper |
+| **Recharts** | Charts & graphs |
 | **date-fns** | Date utilities |
 | **Lucide React** | Icons |
 
