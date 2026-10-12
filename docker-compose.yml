@@ -21,7 +21,7 @@ services:
     environment:
       DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
       PORT: "3004"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
       # set ALLOW_REGISTRATION: "false" once your accounts exist
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -39,7 +39,7 @@ services:
     environment:
       DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
       PORT: "3001"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,7 +50,7 @@ services:
     environment:
       DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
       PORT: "3002"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,7 +71,7 @@ services:
     environment:
       DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
       PORT: "3005"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,7 +82,7 @@ services:
     environment:
       DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
       PORT: "3003"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy

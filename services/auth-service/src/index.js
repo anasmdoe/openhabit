@@ -5,7 +5,11 @@ import crypto from 'node:crypto';
 import { oidcEnabled, oidcInfo, authorizeUrl, handleCallback, postLoginUri } from './oidc.js';
 
 const PORT = process.env.PORT || 3004;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32 || /change-me/i.test(JWT_SECRET)) {
+  console.error('FATAL: JWT_SECRET must be a random string of at least 32 characters, shared by all services (e.g. `openssl rand -base64 48`).');
+  process.exit(1);
+}
 const TOKEN_TTL_S = 60 * 60 * 24 * 30; // 30 days
 const ALLOW_REGISTRATION = process.env.ALLOW_REGISTRATION !== 'false';
 
