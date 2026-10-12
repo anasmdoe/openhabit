@@ -36,6 +36,12 @@ spec:
               key: AUTH_DB_PASSWORD
         - name: DATABASE_URL
           value: postgres://auth_svc:$(DB_PASSWORD)@postgres:5432/openhabit
+        - name: VAPID_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: VAPID_PUBLIC_KEY
+              optional: true
         - name: ALLOW_REGISTRATION
           valueFrom:
             configMapKeyRef:

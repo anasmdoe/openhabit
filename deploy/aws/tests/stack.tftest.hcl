@@ -39,6 +39,23 @@ mock_provider "aws" {
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/openhabit" }
   }
+  mock_resource "aws_db_instance" {
+    defaults = { address = "openhabit-db.abc123.us-east-1.rds.amazonaws.com" }
+  }
+  mock_data "aws_vpc" {
+    defaults = { id = "vpc-123", cidr_block = "172.31.0.0/16" }
+  }
+  mock_data "aws_subnets" {
+    defaults = { ids = ["subnet-a", "subnet-b"] }
+  }
+}
+
+# the untagged provider copy used for the EventBridge rule (var.tag_event_rule)
+mock_provider "aws" {
+  alias = "events"
+  mock_resource "aws_cloudwatch_event_rule" {
+    defaults = { arn = "arn:aws:events:us-east-1:123456789012:rule/openhabit-reminders" }
+  }
 }
 
 variables {
@@ -70,7 +87,7 @@ run "stack" {
     error_message = "/metrics must not be public"
   }
   assert {
-    condition     = nonsensitive(aws_lambda_function.svc["habit"].environment[0].variables.DATABASE_URL) == "postgres://habit_svc:habit-pw%2Fneeds%2Bescaping@ep-test-pooler.example.neon.tech:5432/openhabit?sslmode=require"
+    condition     = nonsensitive(aws_lambda_function.svc["habit"].environment[0].variables.DATABASE_URL) == "postgres://habit_svc:habit-pw%2Fneeds%2Bescaping@ep-test-pooler.example.neon.tech:5432/openhabit?sslmode=verify-full"
     error_message = "habit DATABASE_URL must use the habit_svc role with a URL-encoded password"
   }
   assert {
@@ -86,12 +103,78 @@ run "stack" {
     error_message = "SSO stays off without an issuer"
   }
   assert {
-    condition     = aws_scheduler_schedule.reminders.schedule_expression == "rate(5 minutes)" && nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.REMINDER_CATCH_UP_MINUTES) == "15"
+    condition     = aws_cloudwatch_event_rule.reminders.schedule_expression == "rate(5 minutes)" && nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.REMINDER_CATCH_UP_MINUTES) == "15"
     error_message = "default: reminders every 5 minutes with a 15-minute catch-up window"
   }
   assert {
     condition     = aws_lambda_function.svc["auth"].architectures[0] == "arm64" && aws_lambda_function.svc["auth"].runtime == "nodejs22.x"
     error_message = "functions run on arm64 / Node 22"
+  }
+  assert {
+    condition     = length(aws_cloudfront_distribution.app) == 1 && length(aws_lambda_function.web) == 0 && length(aws_lambda_invocation.migrate) == 0
+    error_message = "defaults: CloudFront serves the frontend; no migrations without an admin URL"
+  }
+  assert {
+    condition     = length(aws_lambda_function.svc["habit"].vpc_config) == 0
+    error_message = "with an external database the functions stay out of a VPC (no NAT needed)"
+  }
+  assert {
+    condition     = length(aws_iam_role_policy.lambda_logs) == 1 && length(aws_iam_role_policy_attachment.lambda_managed) == 0
+    error_message = "default: least-privilege inline logs policy"
+  }
+}
+
+run "sandbox_private_rds_without_cdn" {
+  command = apply
+
+  variables {
+    create_database          = true
+    db_host                  = ""
+    db_admin_password        = "admin-pw-0123456789abcdef"
+    enable_cdn               = false
+    log_retention_days       = 0
+    use_managed_iam_policies = true
+  }
+
+  assert {
+    condition = (length(aws_iam_role_policy.lambda_logs) == 0 && length(aws_iam_role_policy.lambda_vpc) == 0
+    && aws_iam_role_policy_attachment.lambda_managed[0].policy_arn == "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole")
+    error_message = "managed mode: no inline policies, the AWS VPC execution policy instead"
+  }
+
+  assert {
+    condition     = aws_db_instance.db[0].publicly_accessible == false && aws_db_instance.db[0].storage_encrypted
+    error_message = "the created database must be private and encrypted"
+  }
+  assert {
+    condition = (length(aws_security_group.db[0].ingress) == 1
+      && length(coalesce(one(aws_security_group.db[0].ingress).cidr_blocks, [])) == 0
+    && contains(one(aws_security_group.db[0].ingress).security_groups, aws_security_group.lambda[0].id))
+    error_message = "Postgres must only accept the Lambda security group, never a CIDR"
+  }
+  assert {
+    condition     = length(aws_lambda_function.svc["habit"].vpc_config) == 1 && length(aws_lambda_function.migrate.vpc_config) == 1
+    error_message = "functions that use the private database must join the VPC"
+  }
+  assert {
+    condition     = strcontains(nonsensitive(aws_lambda_function.svc["habit"].environment[0].variables.DATABASE_URL), "@openhabit-db.abc123.us-east-1.rds.amazonaws.com:5432/")
+    error_message = "services must connect to the created RDS instance"
+  }
+  assert {
+    condition     = length(aws_lambda_invocation.migrate) == 1
+    error_message = "migrations run on apply when the database is created here"
+  }
+  assert {
+    condition     = length(aws_cloudfront_distribution.app) == 0 && aws_apigatewayv2_route.web[0].route_key == "$default"
+    error_message = "without CloudFront, the web Lambda serves everything outside /api"
+  }
+  assert {
+    condition     = length(aws_s3_bucket_policy.web) == 0 && aws_s3_bucket_public_access_block.web.restrict_public_buckets
+    error_message = "without CloudFront the bucket stays fully private with no read policy"
+  }
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.PUBLIC_URL) == "https://abc123.execute-api.ap-south-1.amazonaws.com"
+    error_message = "without CloudFront the API endpoint is the public URL"
   }
 }
 
@@ -110,7 +193,7 @@ run "one_minute_reminders_and_sso" {
   }
 
   assert {
-    condition     = aws_scheduler_schedule.reminders.schedule_expression == "rate(1 minute)"
+    condition     = aws_cloudwatch_event_rule.reminders.schedule_expression == "rate(1 minute)"
     error_message = "a 1-minute interval needs the singular rate expression"
   }
   assert {

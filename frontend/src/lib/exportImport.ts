@@ -131,7 +131,10 @@ export async function importJSON(adapter: DataAdapter, file: File): Promise<Impo
       scheduleType: h.scheduleType ?? 'weekdays',
       frequency: h.frequency ?? 3,
       webhookUrl: h.webhookUrl ?? '',
+      reminderTime: h.reminderTime ?? '',
       activeDays: h.activeDays,
+      category: h.category ?? '',
+      kind: h.kind === 'quit' ? 'quit' : 'build',
     });
     idMap.set(h.id, fresh.id);
     byName.set(key, fresh.id);

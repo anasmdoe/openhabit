@@ -7,6 +7,11 @@
 //   node scripts/smoke-test.js --lambda  the same flows through each service's AWS
 //                                        Lambda handler (API Gateway v2 events, and
 //                                        EventBridge Scheduler events for reminders)
+//   node scripts/smoke-test.js --url https://<api-id>.execute-api.<region>.amazonaws.com
+//                                        the same API flows against a live deployment;
+//                                        reminder pushes aren't observable from here, so
+//                                        it invokes the reminder Lambda directly (aws CLI,
+//                                        SMOKE_REMINDER_FUNCTION) and checks the frontend
 //
 // Prerequisites: db/init.sql applied, role passwords set (db/set-db-passwords.sh),
 // `npm ci` done in each service, `psql` on PATH. Connection via the PG* variables
@@ -23,6 +28,15 @@ const host = process.env.PGHOST || 'localhost';
 const port = process.env.PGPORT || '5432';
 const db = process.env.PGDATABASE || 'openhabit';
 const JWT_SECRET = crypto.randomBytes(48).toString('base64');
+// Web Push: a fresh VAPID pair; push endpoints may be the local fake push service
+const vapidKey = crypto.createECDH('prime256v1');
+vapidKey.generateKeys();
+const PUSH_ENV = {
+  VAPID_PUBLIC_KEY: vapidKey.getPublicKey('base64url'),
+  VAPID_PRIVATE_KEY: vapidKey.getPrivateKey('base64url'),
+  VAPID_SUBJECT: 'mailto:smoke@openhabit.test',
+  PUSH_ENDPOINT_HOSTS: 'localhost',
+};
 
 const SERVICES = {
   auth: 3911, habit: 3912, tracking: 3913, analytics: 3914, social: 3915, reminder: 3916,
@@ -31,6 +45,8 @@ const SERVICES = {
 const serviceDir = (name) => name.replace(/\d+$/, '');
 
 const LAMBDA = process.argv.includes('--lambda');
+const urlArg = process.argv.indexOf('--url');
+const REMOTE = urlArg > -1 ? process.argv[urlArg + 1].replace(/\/+$/, '') : '';
 const handlers = {};
 let schedulerErrors = 0;
 const procs = [];
@@ -50,7 +66,7 @@ function start(name) {
     cwd: path.join(root, 'services', `${serviceDir(name)}-service`),
     env: {
       ...process.env, PORT: String(SERVICES[name]), DATABASE_URL: dbUrl(name), JWT_SECRET, TICK_MS: '300',
-      PUBLIC_URL: 'https://habits.smoke.test',
+      PUBLIC_URL: 'https://habits.smoke.test', ...PUSH_ENV,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -66,7 +82,7 @@ async function loadHandlers() {
   console.error = (...a) => { logs.lambda += `${a.join(' ')}\n`; origError(...a); };
   for (const name of Object.keys(SERVICES).filter((n) => n === serviceDir(n))) {
     Object.assign(process.env, {
-      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2',
+      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2', ...PUSH_ENV,
     });
     // SMOKE_LAMBDA_DIR=<dir> runs the unpacked deploy zips (<dir>/<svc>/src/lambda.js)
     const file = process.env.SMOKE_LAMBDA_DIR
@@ -78,6 +94,10 @@ async function loadHandlers() {
 
 /** One request to a service, as an HTTP call or as an API Gateway v2 Lambda event. */
 async function request(svc, method, url, headers = {}, body) {
+  if (REMOTE) {
+    const res = await fetch(`${REMOTE}/api${url}`, { method, headers, body });
+    return { status: res.status, text: await res.text() };
+  }
   if (!LAMBDA) {
     const res = await fetch(`http://localhost:${SERVICES[svc]}${url}`, { method, headers, body });
     return { status: res.status, text: await res.text() };
@@ -167,15 +187,32 @@ async function main() {
   await new Promise((r) => ntfy.listen(0, r));
   const ntfyUrl = `http://localhost:${ntfy.address().port}/openhabit-smoke`;
 
+  // Fake push service (stands in for FCM / Mozilla / Apple): records encrypted
+  // pushes; endpoints under /gone/ answer 410 like an expired subscription.
+  const webpushes = [];
+  const pushService = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (d) => chunks.push(d));
+    req.on('end', () => {
+      webpushes.push({ path: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+      res.statusCode = req.url.startsWith('/gone/') ? 410 : 201;
+      res.end();
+    });
+  });
+  await new Promise((r) => pushService.listen(0, r));
+  const pushBase = `http://localhost:${pushService.address().port}`;
+
   let stopScheduler = () => {};
-  if (LAMBDA) {
+  if (REMOTE) {
+    // nothing to start
+  } else if (LAMBDA) {
     await loadHandlers();
     stopScheduler = startScheduler();
   } else {
     for (const name of Object.keys(SERVICES)) start(name);
     await Promise.all(Object.keys(SERVICES).map(waitHealthy));
   }
-  console.log(`mode: ${LAMBDA ? 'AWS Lambda handlers' : 'HTTP services'}`);
+  console.log(`mode: ${REMOTE ? `live deployment ${REMOTE}` : LAMBDA ? 'AWS Lambda handlers' : 'HTTP services'}`);
 
   // ---- auth --------------------------------------------------------------
   const tag = crypto.randomBytes(4).toString('hex');
@@ -229,6 +266,22 @@ async function main() {
   await call('analytics', 'GET', `/analytics/habits/${h2.id}`, { token: A });
   await call('analytics', 'GET', '/analytics/insights', { token: A });
 
+  // ---- categories, quit habits, pause --------------------------------------
+  const quitH = await call('habit', 'POST', '/habits', {
+    token: A, body: { name: 'Smoking', kind: 'quit', category: ' Health ', reminderTime: hhmm() },
+  });
+  check(quitH.kind === 'quit' && quitH.category === 'Health', 'habits: quit habit with a trimmed category');
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', kind: 'quit', type: 'numeric' }, expect: [400] });
+  await call('habit', 'PUT', `/habits/${quitH.id}`, { token: A, body: { type: 'numeric' }, expect: [400] });
+  await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: quitH.id, date: daysAgo(2), value: 1 } });
+  const qd = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
+  check(qd.currentStreak === 2 && qd.history.reduce((n, m) => n + m.completions, 0) === 1,
+    `analytics: quit habit counts clean days since the slip (streak ${qd.currentStreak})`);
+  const pauseDays = [1, 2, 3].map((n) => ({ habitId: h1.id, date: daysAgo(-n), value: -1 })); // next 3 days
+  await call('tracking', 'POST', '/entries/bulk', { token: A, body: { entries: pauseDays } });
+  const qo = await call('analytics', 'GET', '/analytics/overview', { token: A });
+  check(qo.habits.some((h) => h.id === quitH.id), 'analytics: overview includes the quit habit');
+
   // ---- groups ------------------------------------------------------------
   const g = await call('social', 'POST', '/groups', { token: A, body: { name: 'Smoke crew' } });
   await call('social', 'POST', '/join', { token: B, body: { code: g.inviteCode } });
@@ -258,46 +311,102 @@ async function main() {
   await call('social', 'POST', `/groups/${g.id}/leave`, { token: B });
   await call('social', 'DELETE', `/groups/${g.id}/habits/${gh.id}`, { token: A });
 
-  // ---- reminders (two replicas tick every 300 ms) --------------------------
-  // A habit due now and not logged gets exactly one push, even with two
-  // replicas racing for it; reminders_sent makes the claim atomic.
-  const due = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stretch', reminderTime: hhmm() } });
-  check(await waitFor(() => pushesFor('Stretch').length > 0), 'reminder: due habit pushed');
-  await sleep(1500);
-  check(pushesFor('Stretch').length === 1,
-    `reminder: exactly one push across ${LAMBDA ? 'duplicate scheduler deliveries' : '2 replicas'} (got ${pushesFor('Stretch').length})`);
+  if (REMOTE) await remoteChecks(A, T);
+  else {
+    // ---- reminders (two replicas tick every 300 ms) --------------------------
+    // A habit due now and not logged gets exactly one push, even with two
+    // replicas racing for it; reminders_sent makes the claim atomic.
+    const due = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stretch', reminderTime: hhmm() } });
+    check(await waitFor(() => pushesFor('Stretch').length > 0), 'reminder: due habit pushed');
+    await sleep(1500);
+    check(pushesFor('Stretch').length === 1,
+      `reminder: exactly one push across ${LAMBDA ? 'duplicate scheduler deliveries' : '2 replicas'} (got ${pushesFor('Stretch').length})`);
+    check(pushesFor('Smoking').length === 0, 'reminder: quit habits are never nagged');
 
-  // Snooze: the notification carries signed links; the button POSTs one.
-  const push = pushesFor('Stretch')[0] ?? { actions: '' };
-  const links = [...push.actions.matchAll(/https:\/\/habits\.smoke\.test\/api\/reminders\/snooze\/([^,\s]+)/g)].map((m) => m[1]);
-  check(links.length === 2, `reminder: notification has 2 snooze buttons (got ${links.length})`);
-  const [snooze30] = links;
-  await call('reminder', 'POST', `/reminders/snooze/${snooze30}x`, { expect: [403] });
-  await call('reminder', 'POST', `/reminders/snooze/${snooze30}`);
-  // fast-forward the 30 minutes, then exactly one "snoozed" re-send must follow
-  execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c',
-    `UPDATE reminders_sent SET snoozed_until = now() - interval '1 second' WHERE habit_id = '${due.id}'`]);
-  check(await waitFor(() => pushesFor('Stretch', 'OpenHabit (snoozed)').length > 0), 'reminder: snoozed reminder re-sent');
-  await sleep(1000);
-  check(pushesFor('Stretch', 'OpenHabit (snoozed)').length === 1, 'reminder: snoozed reminder re-sent exactly once');
+    // Buttons: signed links (Done, Snooze 30 min) plus Open; the ntfy app POSTs them.
+    const push = pushesFor('Stretch')[0] ?? { actions: '' };
+    const linkFor = (p, kind) => (p.actions.match(new RegExp(`https://habits\\.smoke\\.test/api/${kind}/([^,\\s]+)`)) || [])[1];
+    const snooze30 = linkFor(push, 'reminders/snooze');
+    const done = linkFor(push, 'entries/done');
+    check(Boolean(snooze30 && done) && /view, Open, https:\/\/habits\.smoke\.test\//.test(push.actions),
+      `reminder: notification has Done, Snooze and Open buttons (${push.actions.split('; ').map((a) => a.split(', ')[1]).join(', ')})`);
+    await call('reminder', 'POST', `/reminders/snooze/${snooze30}x`, { expect: [403] });
+    await call('reminder', 'POST', `/reminders/snooze/${done}`, { expect: [403] }); // links are bound to their action
+    await call('tracking', 'POST', `/entries/done/${snooze30}`, { expect: [403] });
+    await call('reminder', 'POST', `/reminders/snooze/${snooze30}`);
+    // fast-forward the 30 minutes, then exactly one "snoozed" re-send must follow
+    execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c',
+      `UPDATE reminders_sent SET snoozed_until = now() - interval '1 second' WHERE habit_id = '${due.id}'`]);
+    check(await waitFor(() => pushesFor('Stretch', 'OpenHabit (snoozed)').length > 0), 'reminder: snoozed reminder re-sent');
+    await sleep(1000);
+    check(pushesFor('Stretch', 'OpenHabit (snoozed)').length === 1, 'reminder: snoozed reminder re-sent exactly once');
 
-  // Quiet hours hold reminders back; one still in its catch-up window goes out
-  // once they are cleared.
-  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: hhmm(-1), quietEnd: hhmm(60) } });
-  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '' }, expect: [400] });
-  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Hush', reminderTime: hhmm() } });
-  await sleep(1500);
-  check(pushesFor('Hush').length === 0, 'reminder: nothing sent during quiet hours');
-  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '', quietEnd: '' } });
-  check(await waitFor(() => pushesFor('Hush').length === 1), 'reminder: sent after quiet hours were cleared');
+    // Done from the notification marks today complete, no login needed.
+    const doneAgain = linkFor(pushesFor('Stretch', 'OpenHabit (snoozed)')[0] ?? { actions: '' }, 'entries/done');
+    await call('tracking', 'POST', `/entries/done/${doneAgain}`);
+    const entries = await call('tracking', 'GET', `/entries?from=${today}&to=${today}`, { token: A });
+    check((Array.isArray(entries) ? entries : []).some((e) => e.habitId === due.id && e.value === 1),
+      'reminder: Done button marked the habit complete for today');
 
-  const metrics = (await request('reminder', 'GET', '/metrics')).text;
-  const metric = (n) => Number((metrics.match(new RegExp(`^${n}(?:\\{[^}]*\\})? (\\S+)`, 'm')) || [])[1] ?? NaN);
-  const ticks = metric('openhabit_reminder_ticks_total');
-  const tickErrors = metric('openhabit_reminder_tick_errors_total');
-  if (LAMBDA) check(schedulerErrors === 0, `reminder: scheduled invocations without errors (errors=${schedulerErrors})`);
-  else check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
-  check(metric('openhabit_reminder_snoozes_total') === 1, 'reminder: snooze counted in metrics');
+    // Quiet hours hold reminders back; one still in its catch-up window goes out
+    // once they are cleared.
+    await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: hhmm(-1), quietEnd: hhmm(60) } });
+    await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '' }, expect: [400] });
+    await call('habit', 'POST', '/habits', { token: A, body: { name: 'Hush', reminderTime: hhmm() } });
+    await sleep(1500);
+    check(pushesFor('Hush').length === 0, 'reminder: nothing sent during quiet hours');
+    await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '', quietEnd: '' } });
+    check(await waitFor(() => pushesFor('Hush').length === 1), 'reminder: sent after quiet hours were cleared');
+
+    // ---- Web Push: a "browser" subscribes, gets an encrypted reminder, taps Done
+    const wp = await import(pathToFileURL(path.join(root, 'services/reminder-service/src/webpush.js')).href);
+    const dora = await reg('dora'); // Web Push only, no ntfy topic
+    const D = dora.token;
+    await call('auth', 'PUT', '/auth/me', { token: D, body: { timezone: 'UTC' } });
+    const pushKey = await call('auth', 'GET', '/auth/push/key', { token: D });
+    check(pushKey.publicKey === PUSH_ENV.VAPID_PUBLIC_KEY, 'webpush: server publishes its VAPID public key');
+    const ua = crypto.createECDH('prime256v1');
+    ua.generateKeys();
+    const keys = { p256dh: ua.getPublicKey('base64url'), auth: crypto.randomBytes(16).toString('base64url') };
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: 'https://evil.example.com/x', keys }, expect: [400] });
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: `${pushBase}/push/dora`, keys: { p256dh: 'abc', auth: 'def' } }, expect: [400] });
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: `${pushBase}/push/dora`, keys } });
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: `${pushBase}/gone/dora`, keys } });
+    await call('habit', 'POST', '/habits', { token: D, body: { name: 'Floss', reminderTime: hhmm() } });
+    check(await waitFor(() => webpushes.some((p) => p.path === '/push/dora')), 'webpush: reminder delivered to the subscribed browser');
+    await sleep(1000);
+    const delivered = webpushes.filter((p) => p.path === '/push/dora');
+    check(delivered.length === 1, `webpush: exactly one push across 2 replicas (got ${delivered.length})`);
+    const wpush = delivered[0] ?? { headers: {}, body: Buffer.alloc(0) };
+    const [, jwt, k] = (wpush.headers.authorization || '').match(/^vapid t=([^,]+), k=(.+)$/) || [];
+    const [jh, jc, js] = (jwt || '..').split('.');
+    const vapidPub = crypto.createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256',
+      x: vapidKey.getPublicKey().subarray(1, 33).toString('base64url'), y: vapidKey.getPublicKey().subarray(33).toString('base64url') } });
+    check(k === PUSH_ENV.VAPID_PUBLIC_KEY && wpush.headers['content-encoding'] === 'aes128gcm' && Number(wpush.headers.ttl) > 0
+      && crypto.verify('sha256', Buffer.from(`${jh}.${jc}`), { key: vapidPub, dsaEncoding: 'ieee-p1363' }, Buffer.from(js || '', 'base64url'))
+      && JSON.parse(Buffer.from(jc || 'e30', 'base64url')).aud === pushBase,
+      'webpush: aes128gcm body with a valid VAPID signature for the push service origin');
+    let payload = {};
+    try { payload = JSON.parse(wp.decrypt(wpush.body, { privateKey: ua.getPrivateKey('base64url'), auth: keys.auth })); } catch { /* checked below */ }
+    check(/Floss/.test(payload.body || '') && (payload.actions || []).map((a) => a.title).join(', ') === 'Done, Snooze 30 min',
+      `webpush: the browser decrypts it: "${payload.body}" [${(payload.actions || []).map((a) => a.title).join(', ')}]`);
+    const tap = (payload.actions || []).find((a) => a.action === 'done');
+    if (tap) await call('tracking', 'POST', tap.url.replace(/^\/api/, '')); // what the service worker does
+    const doraEntries = await call('tracking', 'GET', `/entries?from=${today}&to=${today}`, { token: D });
+    check((Array.isArray(doraEntries) ? doraEntries : []).some((e) => e.value === 1), 'webpush: Done from the notification checked the habit in');
+    const goneLeft = () => Number(execFileSync('psql', ['-X', '-Atc',
+      `SELECT count(*) FROM push_subscriptions WHERE endpoint = '${pushBase}/gone/dora'`]).toString().trim());
+    check(await waitFor(() => goneLeft() === 0), 'webpush: a subscription the push service reports gone (410) is removed');
+    await call('auth', 'DELETE', '/auth/me', { token: D, body: { password: 'smoke-password-1' } });
+
+    const metrics = (await request('reminder', 'GET', '/metrics')).text;
+    const metric = (n) => Number((metrics.match(new RegExp(`^${n}(?:\\{[^}]*\\})? (\\S+)`, 'm')) || [])[1] ?? NaN);
+    const ticks = metric('openhabit_reminder_ticks_total');
+    const tickErrors = metric('openhabit_reminder_tick_errors_total');
+    if (LAMBDA) check(schedulerErrors === 0, `reminder: scheduled invocations without errors (errors=${schedulerErrors})`);
+    else check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
+    check(metric('openhabit_reminder_snoozes_total') === 1, 'reminder: snooze counted in metrics');
+  }
 
   // ---- teardown flows: token revoke, group & account deletion ---------------
   await call('auth', 'DELETE', `/auth/tokens/${tok.id}`, { token: A });
@@ -310,6 +419,50 @@ async function main() {
 
   stopScheduler();
   ntfy.close();
+  pushService.close();
+}
+
+/** Live deployment: reminder Lambda, snooze route, quiet-hours API, frontend, no /metrics. */
+async function remoteChecks(A) {
+  const fn = process.env.SMOKE_REMINDER_FUNCTION;
+  if (fn) {
+    // two concurrent runs, like an at-least-once double delivery from EventBridge
+    // fileb:// works with both AWS CLI v1 and v2 (v2 would need --cli-binary-format for inline JSON)
+    const payload = path.join(require('os').tmpdir(), 'openhabit-smoke-payload.json');
+    require('fs').writeFileSync(payload, '{"source":"openhabit.smoke"}');
+    const invoke = () => new Promise((resolve) => {
+      const p = spawn('aws', ['lambda', 'invoke', '--function-name', fn, '--payload', `fileb://${payload}`,
+        '--query', 'FunctionError', '--output', 'text', '/dev/null']);
+      let out = '';
+      p.stdout.on('data', (d) => { out += d; });
+      p.stderr.on('data', (d) => { out += d; });
+      p.on('close', (code) => resolve({ code, out: out.trim() }));
+    });
+    const runs = await Promise.all([invoke(), invoke()]);
+    check(runs.every((r) => r.code === 0 && r.out === 'None'),
+      `reminder Lambda: 2 concurrent scheduled runs without errors (${runs.map((r) => r.out || r.code).join(', ')})`);
+  } else {
+    console.log('skip reminder Lambda invocation (set SMOKE_REMINDER_FUNCTION)');
+  }
+  await call('reminder', 'POST', '/reminders/snooze/not-a-valid-token', { expect: [403] });
+  await call('tracking', 'POST', '/entries/done/not-a-valid-token', { expect: [403] });
+  await call('auth', 'POST', '/auth/push/subscriptions', {
+    token: A, body: { endpoint: 'https://evil.example.com/x', keys: { p256dh: 'x', auth: 'y' } }, expect: [400, 404],
+  }); // 404 when Web Push isn't configured on the deployment
+  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '07:00' } });
+  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '' }, expect: [400] });
+
+  const page = await fetch(`${REMOTE}/`);
+  const html = await page.text();
+  check(page.status === 200 && /<div id="root"/.test(html), `frontend: / serves the app (${page.status})`);
+  check(/default-src 'self'/.test(page.headers.get('content-security-policy') ?? ''), 'frontend: CSP header present');
+  const spa = await fetch(`${REMOTE}/some/client/route`);
+  check(spa.status === 200 && (await spa.text()) === html, 'frontend: unknown paths fall back to index.html');
+  const asset = (html.match(/\/assets\/[^"]+\.js/) || [])[0];
+  const js = asset ? await fetch(`${REMOTE}${asset}`) : null;
+  check(js?.status === 200 && /immutable/.test(js.headers.get('cache-control') ?? ''), `frontend: ${asset} served with immutable caching`);
+  const metrics = await (await fetch(`${REMOTE}/api/metrics`)).text();
+  check(!metrics.includes('openhabit_http_requests_total'), 'metrics are not publicly exposed');
 }
 
 function finish(code) {

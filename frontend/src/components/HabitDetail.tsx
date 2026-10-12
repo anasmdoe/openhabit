@@ -3,7 +3,7 @@ import { useApp } from '../store';
 import { Bars, LineChart } from '../charts';
 import { DAY_LETTERS } from '../lib/types';
 import { HabitIcon } from '../lib/icons';
-import { addDays, dow, isCompleted, isFixedDay, isSkip, todayISO, weekKey } from '../lib/stats';
+import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, todayISO, weekKey } from '../lib/stats';
 import type { HabitDetail as HabitDetailData } from '../lib/types';
 import {
   aggregateHistory, aggregateScore, buildCalendars, targetProgress, PERIODS, type Period,
@@ -23,6 +23,8 @@ export function HabitDetail() {
 
   const habit = detail ? habits.find((h) => h.id === detail.habit.id) : null;
   const isNumeric = detail?.habit.type === 'numeric';
+  const quit = detail ? isQuit(detail.habit) : false;
+  const lastSlip = quit ? detail!.entries.filter((e) => e.value >= 1).at(-1)?.date : undefined;
   // Requirement: day toggle is not useful for yes/no habits
   const periods = PERIODS.filter((p) => (isNumeric ? true : p.id !== 'day'));
   const color = detail?.habit.color ?? 'rgb(var(--mint))';
@@ -60,8 +62,12 @@ export function HabitDetail() {
                   {detail.habit.icon && <HabitIcon name={detail.habit.icon} color={color} size={18} className="shrink-0" />}
                   {detail.habit.name}
                 </h2>
-                {detail.habit.question && (
-                  <p className="text-[12px] text-ink-soft truncate">{detail.habit.question}</p>
+                {(detail.habit.question || quit) && (
+                  <p className="text-[12px] text-ink-soft truncate">
+                    {quit && (lastSlip ? `Last slip ${lastSlip}` : 'No slips logged')}
+                    {quit && detail.habit.question && ' · '}
+                    {detail.habit.question}
+                  </p>
                 )}
               </div>
               {habit && (
@@ -76,7 +82,7 @@ export function HabitDetail() {
 
             {/* headline stats */}
             <div className="grid grid-cols-3 gap-3">
-              <Stat label="Current streak" value={`${detail.currentStreak}`} sub={detail.streakUnit} color={color} />
+              <Stat label={quit ? 'Clean streak' : 'Current streak'} value={`${detail.currentStreak}`} sub={detail.streakUnit} color={color} />
               <Stat label="Best streak" value={`${detail.bestStreaks[0]?.length ?? 0}`} sub="days" />
               <Stat
                 label="Strength"
@@ -133,7 +139,7 @@ export function HabitDetail() {
             {/* history */}
             <section className="panel">
               <div className="panel-head">
-                History
+                {quit ? 'Slips' : 'History'}
                 <Seg periods={periods} value={histPeriod} onChange={setHistPeriod} />
               </div>
               <div className="px-4 pb-3">
@@ -146,10 +152,11 @@ export function HabitDetail() {
                     color={detail.habit.color}
                   />
                 ) : (
-                  <Empty>No entries yet.</Empty>
+                  <Empty>{quit ? 'No slips — keep it up.' : 'No entries yet.'}</Empty>
                 )}
                 <p className="text-[10px] text-ink-soft mt-1">
-                  {isNumeric ? `Total ${detail.habit.unit || 'value'} per ${histPeriod}` : `Completions per ${histPeriod}`}
+                  {isNumeric ? `Total ${detail.habit.unit || 'value'} per ${histPeriod}`
+                    : quit ? `Slips per ${histPeriod}` : `Completions per ${histPeriod}`}
                 </p>
               </div>
             </section>
@@ -329,7 +336,9 @@ function YearHeatmap({ detail, color }: { detail: HabitDetailData; color: string
       const v = byDate.get(d);
       let level = 0; // 0 empty/off, 1 partial, 2 done, -1 skip
       if (isSkip(v)) level = -1;
-      else if (v != null && isCompleted(habit, v)) level = 2;
+      else if (isQuit(habit) && d < detail.habit.createdDate) level = 0;
+      else if (isCompleted(habit, v)) level = 2; // quit habits: a clean day
+      else if (isQuit(habit) && v != null && v >= 1) level = 1; // a slip
       else if (v != null && v > 0) level = 1;
       else if (d < detail.habit.createdDate
         || (isFixedDay(habit) && !habit.activeDays.includes(dow(d)))) level = 0;

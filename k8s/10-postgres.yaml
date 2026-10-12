@@ -305,6 +305,41 @@ data:
     );
 
     GRANT SELECT, INSERT, UPDATE, DELETE ON reminders_sent TO reminder_svc;
+
+    -- ============================================================
+    -- Web Push subscriptions (one per browser/device). auth-service
+    -- manages them for the signed-in user; reminder-service reads them
+    -- to deliver and deletes ones the push service reports as gone.
+    -- ============================================================
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      endpoint   TEXT NOT NULL UNIQUE,
+      p256dh     TEXT NOT NULL,
+      auth       TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (user_id);
+
+    GRANT SELECT, INSERT, UPDATE, DELETE ON push_subscriptions TO auth_svc;
+    GRANT SELECT, DELETE ON push_subscriptions TO reminder_svc;
+
+    -- ============================================================
+    -- Habit categories ("Health", "Work", …) and quit habits. A quit
+    -- habit is a yes/no, every-day habit where an entry records a
+    -- slip: days without one are the successes.
+    -- ============================================================
+    ALTER TABLE habits ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT '';
+    ALTER TABLE habits ADD COLUMN IF NOT EXISTS kind     TEXT NOT NULL DEFAULT 'build';
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_constraint WHERE conname = 'habits_kind_check') THEN
+        ALTER TABLE habits ADD CONSTRAINT habits_kind_check CHECK (
+          kind = 'build' OR (kind = 'quit' AND type = 'boolean' AND schedule_type = 'weekdays'));
+      END IF;
+    END
+    $$;
   set-db-passwords.sh: |
     #!/usr/bin/env bash
     # Sets the login password of each per-service database role (created by

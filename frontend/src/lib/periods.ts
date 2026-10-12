@@ -1,7 +1,7 @@
 // Aggregation helpers for the Day/Week/Month/Quarter/Year toggles,
 // target progress and the compact calendars.
 import type { Habit, HabitDetail } from './types';
-import { addDays, dow, fromISO, iso, todayISO, isCompleted, isSkip, isFixedDay, weekKey as wkKey } from './stats';
+import { addDays, dow, fromISO, iso, todayISO, isCompleted, isQuit, isSkip, isFixedDay, weekKey as wkKey } from './stats';
 
 export type Period = 'day' | 'week' | 'month' | 'quarter' | 'year';
 export const PERIODS: { id: Period; label: string }[] = [
@@ -51,7 +51,9 @@ export function aggregateHistory(detail: HabitDetail, period: Period) {
   for (const e of detail.entries) {
     if (isSkip(e.value)) continue;
     const key = bucketKey(e.date, period);
-    const add = habit.type === 'numeric' ? Math.max(0, e.value) : (isCompleted(habit as Habit, e.value) ? 1 : 0);
+    const add = habit.type === 'numeric' ? Math.max(0, e.value)
+      : isQuit(habit) ? (e.value >= 1 ? 1 : 0) // quit habits chart their slips
+      : (isCompleted(habit as Habit, e.value) ? 1 : 0);
     buckets.set(key, (buckets.get(key) ?? 0) + add);
   }
   return [...buckets.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-KEEP[period])
@@ -126,7 +128,8 @@ export function buildCalendars(detail: HabitDetail, months = 3): CalendarMonth[]
       else if (isSkip(value)) state = 'off';
       else if (date < detail.habit.createdDate
         || (isFixedDay(habit as Habit) && !habit.activeDays.includes(dow(date)))) state = 'off';
-      else if (value != null && isCompleted(habit as Habit, value)) state = 'done';
+      else if (isCompleted(habit as Habit, value)) state = 'done';
+      else if (isQuit(habit)) state = 'miss'; // a slip
       else if (value != null) state = 'partial';
       else state = isFixedDay(habit as Habit) ? 'miss' : 'off';
       cells.push({ date, inMonth: true, state });
@@ -145,7 +148,7 @@ export function quickCurrentStreak(habit: Habit, entryDates: Map<string, number>
     let d = today;
     for (let i = 0; i < lookbackDays; i++, d = addDays(d, -1)) {
       const v = entryDates.get(`${habit.id}|${d}`);
-      if (v != null && isCompleted(habit, v)) cnt.set(weekKey(d), (cnt.get(weekKey(d)) ?? 0) + 1);
+      if (isCompleted(habit, v)) cnt.set(weekKey(d), (cnt.get(weekKey(d)) ?? 0) + 1);
     }
     let streak = 0;
     let wk = weekKey(today);
@@ -159,13 +162,15 @@ export function quickCurrentStreak(habit: Habit, entryDates: Map<string, number>
   }
   let streak = 0;
   let d = today;
+  const start = habit.createdAt.slice(0, 10);
   for (let i = 0; i < lookbackDays; i++, d = addDays(d, -1)) {
+    if (isQuit(habit) && d < start) break; // clean days count from the start
     if (!habit.activeDays.includes(dow(d))) continue;
     const v = entryDates.get(`${habit.id}|${d}`);
     if (isSkip(v)) continue; // excused
     const done = isCompleted(habit, v);
     if (done) streak += 1;
-    else if (d === today) continue;
+    else if (d === today && !isQuit(habit)) continue; // a slip today does count
     else break;
   }
   return streak;

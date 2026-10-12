@@ -4,7 +4,8 @@ import { HabitIcon } from '../lib/icons';
 
 // Wellness × habit correlations: what your own data says about you.
 export function InsightsPanel() {
-  const { insights } = useApp();
+  const { insights, habits } = useApp();
+  const quitIds = new Set(habits.filter((h) => h.kind === 'quit').map((h) => h.id));
   if (!insights) return null;
   const mood = insights.moodImpact.slice(0, 3);
   const sleep = insights.sleepCompletion.filter((b) => b.pct != null && b.days >= 10);
@@ -25,9 +26,11 @@ export function InsightsPanel() {
                 : <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: m.color }} />}
             </span>
             <p className="text-[12.5px] leading-snug text-ink">
-              On days you complete <span className="font-semibold">{m.name}</span>, your mood averages{' '}
+              {quitIds.has(m.habitId) ? 'On days without' : 'On days you complete'}{' '}
+              <span className="font-semibold">{m.name}</span>, your mood averages{' '}
               <span className="num font-semibold text-mint">{m.avgMoodDone}</span> vs{' '}
-              <span className="num font-semibold text-ink-soft">{m.avgMoodMissed}</span> when you don't
+              <span className="num font-semibold text-ink-soft">{m.avgMoodMissed}</span>{' '}
+              {quitIds.has(m.habitId) ? 'when you slip' : "when you don't"}
               {m.diff < 0 ? ' — interesting, it runs the other way' : ''}.
             </p>
           </div>

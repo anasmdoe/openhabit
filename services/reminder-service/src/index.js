@@ -7,13 +7,22 @@
 import express from 'express';
 import pg from 'pg';
 import { metricsHandler, registerCustom } from './metrics.js';
-import { isDue, inQuietHours, signSnooze, verifySnooze, snoozeActions, SNOOZE_CHOICES } from './reminders.js';
+import { isDue, inQuietHours, signSnooze, verifySnooze, signDone, notificationActions, SNOOZE_CHOICES } from './reminders.js';
+import { sendPush } from './webpush.js';
 
 const PORT = process.env.PORT || 3006;
 const TICK_MS = parseInt(process.env.TICK_MS, 10) || 60_000;
 // Where phones reach the app (e.g. https://habits.example.com). Without it the
 // notifications carry no snooze buttons, since the links would be unreachable.
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').trim();
+
+// Web Push (reminders straight to the installed app/browser): enabled when the
+// VAPID key pair is set (scripts/init-env.sh generates one).
+const VAPID = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY ? {
+  publicKey: process.env.VAPID_PUBLIC_KEY,
+  privateKey: process.env.VAPID_PRIVATE_KEY,
+  subject: process.env.VAPID_SUBJECT || (/^https:/.test(PUBLIC_URL) ? PUBLIC_URL : 'mailto:openhabit@localhost'),
+} : null;
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET || JWT_SECRET.length < 32 || /change-me/i.test(JWT_SECRET)) {
@@ -71,7 +80,10 @@ const snoozesTotal = registerCustom('openhabit_reminder_snoozes_total', 'Reminde
 const tickErrors = registerCustom('openhabit_reminder_tick_errors_total', 'Reminder ticks that threw.', 'counter');
 const lastTickGauge = registerCustom('openhabit_reminder_last_tick_timestamp', 'Unix time of the last completed tick.', 'gauge');
 
-function notify(url, title, message, actions) {
+// One log line per push (habit id and outcome only; topic URLs and push
+// endpoints stay out of logs): the way to see delivery problems where /metrics
+// isn't scraped (AWS).
+function notifyNtfy(habitId, url, title, message, actions) {
   remindersSent.inc();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 4000);
@@ -80,15 +92,57 @@ function notify(url, title, message, actions) {
     headers: { Title: title, Priority: 'default', Tags: 'alarm_clock', ...(actions ? { Actions: actions } : {}) },
     body: message,
     signal: ctrl.signal,
-  }).catch(() => {}).finally(() => clearTimeout(t));
+  })
+    .then((r) => console.log(`reminder push habit=${habitId} status=${r.status}`))
+    .catch((e) => console.warn(`reminder push habit=${habitId} failed: ${e.name === 'AbortError' ? 'timeout' : e.message}`))
+    .finally(() => clearTimeout(t));
 }
 
-function actionsFor(habitId, date) {
-  if (!PUBLIC_URL) return undefined;
+async function notifyWebPush(habitId, sub, payload) {
+  remindersSent.inc();
+  try {
+    const status = await sendPush(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, VAPID,
+      { ttl: 6 * 3600, urgency: 'high' });
+    console.log(`reminder webpush habit=${habitId} status=${status}`);
+    // the browser unsubscribed or the subscription expired: forget it
+    if (status === 404 || status === 410) await pool.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
+  } catch (e) {
+    console.warn(`reminder webpush habit=${habitId} failed: ${e.name === 'AbortError' ? 'timeout' : e.message}`);
+  }
+}
+
+/** Signed one-tap links for a reminder (Done only for yes/no habits; numeric ones need a value). */
+function linksFor(h, date) {
+  const habitId = h.id;
   const expiresAt = Date.now() + 24 * 3_600_000;
-  const tokens = Object.fromEntries(SNOOZE_CHOICES.map((minutes) =>
-    [minutes, signSnooze(JWT_SECRET, { habitId, date, minutes, expiresAt })]));
-  return snoozeActions(PUBLIC_URL, tokens);
+  return {
+    doneToken: h.type === 'boolean' ? signDone(JWT_SECRET, { habitId, date, expiresAt }) : null,
+    snoozeTokens: Object.fromEntries(SNOOZE_CHOICES.map((minutes) =>
+      [minutes, signSnooze(JWT_SECRET, { habitId, date, minutes, expiresAt })])),
+  };
+}
+
+/** Sends one reminder to the user's ntfy topic and to every Web Push subscription. */
+async function deliver(h, date, title, message) {
+  const links = linksFor(h, date);
+  const sends = [];
+  // ntfy buttons need absolute URLs the phone can reach
+  if (h.ntfy_url) sends.push(notifyNtfy(h.id, h.ntfy_url, title, message, PUBLIC_URL ? notificationActions(PUBLIC_URL, links) : undefined));
+  if (VAPID) {
+    const { rows: subs } = await pool.query(
+      'SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1', [h.user_id]);
+    // the service worker calls these same-origin paths (browsers show at most 2 buttons)
+    const actions = links.doneToken
+      ? [{ action: 'done', title: 'Done', url: `/api/entries/done/${links.doneToken}` },
+        { action: 'snooze', title: 'Snooze 30 min', url: `/api/reminders/snooze/${links.snoozeTokens[30]}` }]
+      : SNOOZE_CHOICES.map((m) => ({
+        action: `snooze${m}`, title: m < 60 ? `Snooze ${m} min` : `Snooze ${m / 60} h`, url: `/api/reminders/snooze/${links.snoozeTokens[m]}`,
+      }));
+    const payload = { title, body: message, tag: `habit-${h.id}`, url: '/', actions };
+    for (const sub of subs) sends.push(notifyWebPush(h.id, sub, payload));
+  }
+  await Promise.all(sends);
 }
 
 /** Message for a habit that still needs doing today, or null if it's done/skipped/quota met. */
@@ -123,12 +177,13 @@ async function pendingMessage(h, now) {
 // ---- the tick --------------------------------------------------------------
 export async function tick() {
   const { rows } = await pool.query(
-    `SELECT h.id, h.name, h.type, h.unit, h.target::float AS target, h.target_type,
+    `SELECT h.id, h.user_id, h.name, h.type, h.unit, h.target::float AS target, h.target_type,
             h.schedule_type, h.frequency, h.active_days, h.reminder_time,
             u.ntfy_url, u.timezone, u.quiet_start, u.quiet_end
      FROM habits h
      JOIN users u ON u.id = h.user_id
-     WHERE NOT h.archived AND h.reminder_time <> '' AND u.ntfy_url <> ''`
+     WHERE NOT h.archived AND h.reminder_time <> '' AND h.kind = 'build'
+       AND (u.ntfy_url <> '' OR EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = u.id))`
   );
   if (!rows.length) return;
 
@@ -165,7 +220,7 @@ export async function tick() {
          ON CONFLICT DO NOTHING RETURNING 1`, [h.id, now.date]);
     if (!claim.rowCount) continue;
 
-    await notify(h.ntfy_url, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', msg, actionsFor(h.id, now.date));
+    await deliver(h, now.date, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', msg);
   }
 }
 

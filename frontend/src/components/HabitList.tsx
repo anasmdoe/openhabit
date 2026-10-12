@@ -1,10 +1,10 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
-import { useApp, today, THEME_CYCLE } from '../store';
+import { useApp, today, THEME_CYCLE, visibleHabits } from '../store';
 import { AccountMenu } from './Auth';
 import { InviteBell } from './Groups';
 import { MiniRing } from '../charts';
 import { HabitIcon } from '../lib/icons';
-import { dow, isCompleted, isFixedDay, isSkip, monthRange } from '../lib/stats';
+import { dow, isCompleted, isFixedDay, isQuit, isSkip, monthRange } from '../lib/stats';
 import { DAY_LETTERS, MONTH_NAMES } from '../lib/types';
 import type { Entry, Habit } from '../lib/types';
 
@@ -71,7 +71,7 @@ function AccentPicker() {
 }
 
 export function TopBar() {
-  const { theme, setTheme, adapter, openEditor, openArchived, resetDemo } = useApp();
+  const { theme, setTheme, adapter, openEditor, openArchived, resetDemo, setPauseOpen, habits } = useApp();
   const nextTheme = () => {
     const i = THEME_CYCLE.indexOf(theme);
     setTheme(THEME_CYCLE[(i + 1) % THEME_CYCLE.length]);
@@ -86,7 +86,7 @@ export function TopBar() {
               strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </span>
-        <span className="text-[14px] font-bold tracking-tight">OpenHabit</span>
+        <span className="text-[14px] font-bold tracking-tight max-[419px]:hidden">OpenHabit</span>
       </div>
       <div className="flex items-center gap-1.5">
       {adapter?.mode === 'local' && (
@@ -97,6 +97,12 @@ export function TopBar() {
             className="text-[11px] text-ink-soft hover:text-ink px-2 py-1 rounded-lg hover:bg-forest-850"
             data-tip="Regenerate demo data">reset</button>
         </>
+      )}
+      {habits.length > 0 && (
+        <IconBtn onClick={() => setPauseOpen(true)} label="Take a break (vacation, sick days)">
+          <path d="M9 7v10M15 7v10" strokeLinecap="round" />
+          <circle cx="12" cy="12" r="9" />
+        </IconBtn>
       )}
       <IconBtn onClick={openArchived} label="Archived habits">
         <path d="M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" />
@@ -153,8 +159,10 @@ const ICON_ONLY = 132;
 export function HabitList() {
   const {
     habits, entries, overview, gridYear, gridMonth, shiftGridMonth,
-    toggleEntry, setNumericEntry, openDetail, openEditor, reorderHabits,
+    toggleEntry, setNumericEntry, openDetail, openEditor, reorderHabits, categoryFilter,
   } = useApp();
+  const shown = visibleHabits(habits, categoryFilter);
+  const filtered = shown.length !== habits.length; // reordering needs the full list
 
   const [nameW, setNameW] = useState(() => {
     const v = parseInt(localStorage.getItem(NAME_W_KEY) ?? '', 10);
@@ -321,7 +329,7 @@ export function HabitList() {
             ))}
           </div>
 
-          {habits.map((habit, idx) => (
+          {shown.map((habit, idx) => (
             <div
               key={habit.id}
               className={`flex items-stretch border-b border-line last:border-b-0 transition-transform ${
@@ -333,7 +341,7 @@ export function HabitList() {
                 className="sticky left-0 z-10 bg-panel shrink-0 border-r border-line flex items-center min-w-0 group relative"
                 style={{ width: nameW }}
               >
-                <span
+                {filtered ? <span className="w-2 shrink-0" /> : <span
                   onPointerDown={(e) => startReorder(e, habit.id)}
                   className={`cursor-grab active:cursor-grabbing px-1 flex items-center text-ink-soft/50 hover:text-ink-soft ${
                     iconOnly ? 'absolute left-0 top-0 h-full z-10 opacity-40 hover:opacity-100' : 'self-stretch'
@@ -346,7 +354,7 @@ export function HabitList() {
                     <circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" />
                     <circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" />
                   </svg>
-                </span>
+                </span>}
                 <button
                   onClick={() => openDetail(habit.id)}
                   className={`flex-1 min-w-0 flex items-center gap-2 py-1 rounded-md hover:bg-forest-850/60 ${
@@ -416,6 +424,38 @@ export function HabitList() {
   );
 }
 
+// ---------------------------------------------------------- categories
+/** Filter chips for habit categories; filters Today and the grid. Hidden until a habit has one. */
+export function CategoryBar() {
+  const { habits, categoryFilter, setCategoryFilter } = useApp();
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const h of habits) if (h.category) m.set(h.category, (m.get(h.category) ?? 0) + 1);
+    return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [habits]);
+  if (!counts.length) return null;
+  const active = counts.some(([c]) => c === categoryFilter) ? categoryFilter : '';
+  const chip = (id: string, label: string, n: number) => (
+    <button
+      key={id || 'all'}
+      onClick={() => setCategoryFilter(id)}
+      aria-pressed={active === id}
+      className={`shrink-0 h-8 px-3 rounded-full border text-[12px] font-medium flex items-center gap-1.5 transition-colors ${
+        active === id ? 'border-mint/60 bg-mint/12 text-ink' : 'border-line text-ink-soft hover:text-ink hover:bg-forest-850'
+      }`}
+    >
+      {label}
+      <span className="num text-[10px] opacity-60">{n}</span>
+    </button>
+  );
+  return (
+    <nav className="flex gap-1.5 overflow-x-auto thin-scroll -my-0.5 py-0.5" aria-label="Habit categories">
+      {chip('', 'All', habits.length)}
+      {counts.map(([c, n]) => chip(c, c, n))}
+    </nav>
+  );
+}
+
 // ---------------------------------------------------------------- cells
 const SkipGlyph = ({ size = 15 }: { size?: number }) => (
   <svg viewBox="0 0 20 20" width={size} height={size} aria-hidden>
@@ -473,6 +513,41 @@ function DayCell({
       <div style={{ width: CELL }} className={`grid place-items-center shrink-0 ${todayBg}`}>
         <span className="w-1 h-1 rounded-full bg-forest-700" />
       </div>
+    );
+  }
+
+  if (isQuit(habit)) {
+    // a slip is the only thing logged; every other past day is a clean one
+    const slipped = value != null && !skipped && value >= 1;
+    const started = date >= habit.createdAt.slice(0, 10) || value != null;
+    const clean = !isFuture && !skipped && !slipped && started;
+    return (
+      <button
+        onClick={() => { navigator.vibrate?.(slipped ? 8 : [10, 30, 10]); onToggle(); }}
+        {...pressHandlers}
+        disabled={isFuture}
+        style={{ width: CELL }}
+        className={`cell-btn relative grid place-items-center shrink-0 h-full ${todayBg} ${isFuture ? 'opacity-25 cursor-default' : 'hover:bg-forest-850/60'}`}
+        aria-label={`${habit.name}, ${date}: ${skipped ? 'skipped' : slipped ? 'slipped' : clean ? 'clean' : 'not tracked'}`}
+        data-tip={skipped ? 'Skipped — streak preserved' : slipped ? 'Slipped — tap to undo' : clean ? 'Clean — tap if you slipped' : undefined}
+      >
+        {noteDot}
+        {skipped ? (
+          <SkipGlyph />
+        ) : slipped ? (
+          <svg key="slip" viewBox="0 0 20 20" className="w-[16px] h-[16px] pop" aria-hidden>
+            <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" fill="none" stroke="rgb(var(--slip))"
+              strokeWidth="2.4" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg key="clean" viewBox="0 0 20 20" className="w-[18px] h-[18px]" aria-hidden
+            style={{ opacity: clean ? (isToday ? 0.55 : 1) : 1 }}>
+            <path d="M4 10.5l4 4 8-9" fill="none"
+              stroke={clean ? 'rgb(var(--mint))' : 'rgb(var(--forest-700))'}
+              strokeWidth={clean ? 2.2 : 2} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
     );
   }
 

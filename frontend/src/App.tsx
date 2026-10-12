@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react';
 import { useApp } from './store';
-import { TopBar, HabitList, ArchivedModal } from './components/HabitList';
+import { TopBar, HabitList, ArchivedModal, CategoryBar } from './components/HabitList';
 import {
-  StatCards, MonthTrendPanel, MonthlyCompletionPanel, StreaksPanel, WellnessPanel,
+  StatCards, MonthTrendPanel, MonthlyCompletionPanel, StreaksPanel, WellnessPanel, CategoryPanel,
 } from './components/StatsPanels';
 import { HabitEditor } from './components/HabitEditor';
 import { HabitDetail } from './components/HabitDetail';
@@ -13,15 +13,26 @@ import { InsightsPanel } from './components/InsightsPanel';
 import { Celebration } from './components/Celebration';
 import { GroupsModal } from './components/Groups';
 import { JournalModal } from './components/Journal';
+import { PauseModal } from './components/Pause';
 
 export default function App() {
-  const { init, ready, editorHabit, authRequired, detailOpen, archivedOpen, paletteOpen } = useApp();
-  const modalOpen = editorHabit !== null || detailOpen || archivedOpen || paletteOpen;
+  const { init, ready, editorHabit, authRequired, detailOpen, archivedOpen, paletteOpen, pauseOpen } = useApp();
+  const modalOpen = editorHabit !== null || detailOpen || archivedOpen || paletteOpen || pauseOpen;
   const editorKey = editorHabit === 'new' ? 'new' : editorHabit ? editorHabit.id : 'closed';
 
   useEffect(() => {
     init();
   }, []);
+
+  // home-screen shortcuts (manifest "shortcuts"): /?action=new | pause
+  useEffect(() => {
+    if (!ready || authRequired) return;
+    const action = new URLSearchParams(window.location.search).get('action');
+    if (!action) return;
+    window.history.replaceState(null, '', window.location.pathname);
+    if (action === 'new') useApp.getState().openEditor('new');
+    if (action === 'pause') useApp.getState().setPauseOpen(true);
+  }, [ready, authRequired]);
 
   if (!ready) {
     return (
@@ -37,6 +48,7 @@ export default function App() {
     <div className="min-h-full w-full max-w-[1800px] mx-auto">
       <div className={`app-content px-3 sm:px-4 py-2 flex flex-col gap-3 ${modalOpen ? 'app-blur' : ''}`}>
         <TopBar />
+        <CategoryBar />
         <TodayFocus />
         <div className="grid gap-3 grid-cols-2 xl:grid-cols-6">
           <StatCards />
@@ -48,6 +60,7 @@ export default function App() {
           <MonthlyCompletionPanel />
           <StreaksPanel />
         </div>
+        <CategoryPanel />
         <InsightsPanel />
       </div>
 
@@ -58,6 +71,7 @@ export default function App() {
       <Celebration />
       <GroupsModal />
       <JournalModal />
+      <PauseModal />
     </div>
   );
 }

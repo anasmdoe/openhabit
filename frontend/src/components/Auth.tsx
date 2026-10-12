@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../store';
 import { exportCSV, exportJSON, importJSON, importLoopCSV } from '../lib/exportImport';
 import { authApi } from '../api';
+import { pushSupported, needsHomeScreen, currentSubscription, enablePush, disablePush } from '../lib/push';
 
 // Full-screen gate shown in API mode until a valid session exists.
 export function AuthGate() {
@@ -243,6 +244,7 @@ export function AccountMenu() {
                     Subscribe to the same topic in the ntfy app. Habit reminder times are set per habit.
                   </p>
                 </div>
+                <DevicePush />
                 <div>
                   <div className="text-[11px] text-ink-soft mb-1">Quiet hours (no reminders)</div>
                   <div className="flex items-center gap-2">
@@ -335,6 +337,51 @@ export function AccountMenu() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** "Reminders on this device": Web Push, shown only when the server has it set up. */
+function DevicePush() {
+  const [key, setKey] = useState<string | null>(null);
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+
+  React.useEffect(() => {
+    if (!pushSupported()) return;
+    authApi.pushKey().then((r) => setKey(r.publicKey)).catch(() => {});
+    currentSubscription().then((s) => setOn(Boolean(s))).catch(() => {});
+  }, []);
+  if (!pushSupported() || !key) return null;
+
+  const toggle = async () => {
+    setBusy(true);
+    setNote('');
+    try {
+      if (on) { await disablePush(); setOn(false); }
+      else { await enablePush(key); setOn(true); setNote('Reminders will appear on this device.'); }
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'Could not change notifications');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] text-ink-soft">Reminders on this device</div>
+        <button type="button" onClick={toggle} disabled={busy} aria-pressed={on}
+          className={`text-[11px] font-semibold rounded-lg px-2.5 py-1 ${on ? 'bg-mint text-forest-950' : 'border border-line text-ink'}`}>
+          {busy ? '…' : on ? 'On' : 'Turn on'}
+        </button>
+      </div>
+      <p className="text-[10px] text-ink-soft mt-1">
+        {needsHomeScreen()
+          ? 'On iPhone, first add OpenHabit to your Home Screen (Share → Add to Home Screen), then turn this on there.'
+          : note || 'Push notifications with Done and Snooze buttons, no extra app needed.'}
+      </p>
     </div>
   );
 }

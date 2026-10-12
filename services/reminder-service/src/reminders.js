@@ -1,5 +1,5 @@
 // Pure reminder rules (no I/O), unit-tested in reminders.test.js.
-import crypto from 'crypto';
+import { signAction, verifyAction } from './actions.js';
 
 // A reminder may go out up to this many minutes after its time, so a restart
 // or a slow tick doesn't lose it. reminders_sent keeps it to one per day.
@@ -23,36 +23,36 @@ export function inQuietHours(nowHm, start, end) {
   return s < e ? n >= s && n < e : n >= s || n < e;
 }
 
-// ---- signed snooze links ---------------------------------------------------
-// The link in the ntfy notification must work from a phone without a login,
-// so it carries its own HMAC signature over (habit, local date, minutes, expiry).
-const b64url = (buf) => Buffer.from(buf).toString('base64url');
-const actionKey = (secret) => crypto.createHmac('sha256', secret).update('openhabit:reminder-action:v1').digest();
+// ---- notification buttons --------------------------------------------------
+// Signed links (see actions.js) so they work from a phone without a login.
 
 export function signSnooze(secret, { habitId, date, minutes, expiresAt }) {
-  const payload = b64url(JSON.stringify({ h: habitId, d: date, m: minutes, e: Math.floor(expiresAt / 1000) }));
-  const sig = b64url(crypto.createHmac('sha256', actionKey(secret)).update(payload).digest());
-  return `${payload}.${sig}`;
+  return signAction(secret, { action: 'snooze', habitId, date, minutes, expiresAt });
 }
 
-/** Returns { habitId, date, minutes } for a valid, unexpired token, else null. */
+/** Returns { habitId, date, minutes } for a valid, unexpired snooze token, else null. */
 export function verifySnooze(secret, token, now = Date.now()) {
-  const [payload, sig, extra] = String(token).split('.');
-  if (!payload || !sig || extra !== undefined) return null;
-  const expected = crypto.createHmac('sha256', actionKey(secret)).update(payload).digest();
-  const given = Buffer.from(sig, 'base64url');
-  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
-  let data;
-  try { data = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch { return null; }
-  if (!data || typeof data.e !== 'number' || data.e * 1000 < now) return null;
-  if (!SNOOZE_CHOICES.includes(data.m) || typeof data.h !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.d)) return null;
-  return { habitId: data.h, date: data.d, minutes: data.m };
+  const s = verifyAction(secret, token, 'snooze', now);
+  return s && SNOOZE_CHOICES.includes(s.minutes) ? s : null;
 }
 
-/** ntfy `Actions` header value: one HTTP button per snooze choice. */
-export function snoozeActions(publicUrl, tokens) {
+export function signDone(secret, { habitId, date, expiresAt }) {
+  return signAction(secret, { action: 'done', habitId, date, expiresAt });
+}
+
+const snoozeLabel = (m) => `Snooze ${m < 60 ? `${m} min` : `${m / 60} h`}`;
+
+/**
+ * ntfy `Actions` header value (ntfy shows at most 3 buttons, ASCII labels only):
+ *   yes/no habits: Done, Snooze 30 min, Open
+ *   numeric habits (a value is needed, so no Done): Snooze 30 min, Snooze 1 h, Open
+ */
+export function notificationActions(publicUrl, { doneToken, snoozeTokens }) {
   const base = publicUrl.replace(/\/+$/, '');
-  return SNOOZE_CHOICES
-    .map((m) => `http, Snooze ${m < 60 ? `${m} min` : `${m / 60} h`}, ${base}/api/reminders/snooze/${tokens[m]}, method=POST, clear=true`)
-    .join('; ');
+  const snooze = (m) => `http, ${snoozeLabel(m)}, ${base}/api/reminders/snooze/${snoozeTokens[m]}, method=POST, clear=true`;
+  const buttons = doneToken
+    ? [`http, Done, ${base}/api/entries/done/${doneToken}, method=POST, clear=true`, snooze(SNOOZE_CHOICES[0])]
+    : SNOOZE_CHOICES.map(snooze);
+  buttons.push(`view, Open, ${base}/`);
+  return buttons.join('; ');
 }

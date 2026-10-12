@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useApp, today } from '../store';
 import { Bars, HBar, LineChart, MiniRing } from '../charts';
 import { quickCurrentStreak } from '../lib/periods';
-import { addDays, dow, isCompleted } from '../lib/stats';
+import { addDays, dow, isCompleted, isQuit } from '../lib/stats';
 import { shareCard } from '../lib/share';
 import { HabitIcon } from '../lib/icons';
 import { MONTH_NAMES } from '../lib/types';
@@ -44,6 +44,7 @@ export function StatCards() {
       let completed = 0;
       for (const h of habits) {
         if (!h.activeDays.includes(dow(date))) continue;
+        if (isQuit(h) && date < h.createdAt.slice(0, 10)) continue; // clean days count from the start
         scheduled += 1;
         if (isCompleted(h, lookup.get(`${h.id}|${date}`))) completed += 1;
       }
@@ -181,6 +182,51 @@ export function MonthlyCompletionPanel() {
         {!overview.habits.length && (
           <p className="px-2 py-4 text-[12px] text-ink-soft">Add habits to see monthly stats.</p>
         )}
+      </div>
+    </section>
+  );
+}
+
+// Combined month completion per category (shown once any habit has one).
+export function CategoryPanel() {
+  const { overview, habits, setCategoryFilter } = useApp();
+  const rows = useMemo(() => {
+    if (!overview || !habits.some((h) => h.category)) return [];
+    const cat = new Map(habits.map((h) => [h.id, h.category || 'Other']));
+    const agg = new Map<string, { goal: number; actual: number; colors: string[] }>();
+    for (const h of overview.habits) {
+      const c = cat.get(h.id) ?? 'Other';
+      const a = agg.get(c) ?? { goal: 0, actual: 0, colors: [] };
+      a.goal += h.goal; a.actual += h.actual; a.colors.push(h.color);
+      agg.set(c, a);
+    }
+    return [...agg.entries()]
+      .map(([name, a]) => ({ name, pct: a.goal ? Math.round((a.actual / a.goal) * 100) : 0, ...a }))
+      .sort((x, y) => y.pct - x.pct);
+  }, [overview, habits]);
+  if (!rows.length) return null;
+  return (
+    <section className="panel">
+      <div className="panel-head">By category · this month</div>
+      <div className="px-2 pb-2">
+        {rows.map((r) => (
+          <button
+            key={r.name}
+            onClick={() => { if (r.name !== 'Other') { setCategoryFilter(r.name); window.scrollTo({ top: 0, behavior: 'smooth' }); } }}
+            className="w-full flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-forest-850/60 text-left"
+          >
+            <span className="flex items-center gap-1.5 w-32 shrink-0 min-w-0">
+              <span className="flex -space-x-1 shrink-0" aria-hidden>
+                {r.colors.slice(0, 3).map((c, i) => (
+                  <span key={i} className="w-2.5 h-2.5 rounded-full ring-2 ring-[rgb(var(--panel))]" style={{ background: c }} />
+                ))}
+              </span>
+              <span className="text-[12px] font-medium truncate text-ink">{r.name}</span>
+            </span>
+            <div className="flex-1"><HBar pct={r.pct} color="rgb(var(--mint) / 0.75)" /></div>
+            <span className="num text-[11px] text-ink-soft w-9 text-right shrink-0" data-tip={`${r.actual} of ${r.goal} this month`}>{r.pct}%</span>
+          </button>
+        ))}
       </div>
     </section>
   );

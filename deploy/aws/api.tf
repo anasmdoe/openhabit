@@ -28,7 +28,7 @@ resource "aws_apigatewayv2_integration" "svc" {
 
 locals {
   routes = merge([
-    for svc, cfg in local.services : { for path in cfg.routes : "ANY ${path}" => svc }
+    for svc, paths in local.services : { for path in paths : "ANY ${path}" => svc }
   ]...)
 }
 
@@ -46,6 +46,53 @@ resource "aws_lambda_permission" "api" {
   statement_id  = "AllowApiGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.svc[each.key].function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
+}
+
+# ---- frontend from Lambda (enable_cdn = false) ---------------------------------
+# Everything that isn't /api/* falls through to $default and the web Lambda,
+# which sends the same security headers and CSP as the CloudFront policy.
+
+resource "aws_lambda_function" "web" {
+  count = var.enable_cdn ? 0 : 1
+
+  function_name    = "${var.name}-web"
+  role             = aws_iam_role.lambda.arn
+  runtime          = "nodejs22.x"
+  architectures    = [var.lambda_architecture]
+  handler          = "index.handler"
+  filename         = "${path.module}/build/web.zip"
+  source_code_hash = filebase64sha256("${path.module}/build/web.zip")
+  memory_size      = 128
+  timeout          = var.lambda_timeout
+
+  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy_attachment.lambda_managed]
+}
+
+resource "aws_apigatewayv2_integration" "web" {
+  count = var.enable_cdn ? 0 : 1
+
+  api_id                 = aws_apigatewayv2_api.api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.web[0].invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "web" {
+  count = var.enable_cdn ? 0 : 1
+
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "$default"
+  target    = "integrations/${aws_apigatewayv2_integration.web[0].id}"
+}
+
+resource "aws_lambda_permission" "web" {
+  count = var.enable_cdn ? 0 : 1
+
+  statement_id  = "AllowApiGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.web[0].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }

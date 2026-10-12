@@ -11,6 +11,20 @@ db_name = "openhabit"
 # reminder_interval_minutes = 5       # 1-15; see README for the database cost trade-off
 # public_url                = "https://habits.example.com"   # if you add a custom domain
 
+# Restricted sandboxes (tested on the KodeKloud AWS playground, which denies
+# CloudFront, EventBridge Scheduler, inline IAM policies, log retention, rule
+# tagging and iam:PassRole except on fixed role names):
+# create_database          = true                     # private RDS; Lambdas join the default VPC
+# nat_mode                 = "instance"               # internet for ntfy pushes (the playground releases Elastic IPs, so no NAT gateway)
+# db_admin_password        = "<16+ random chars>"     # better: export TF_VAR_db_admin_password
+# db_instance_class        = "db.t4g.micro"
+# enable_cdn               = false                    # a Lambda serves the frontend
+# use_managed_iam_policies = true
+# lambda_role_name         = "lambda_execution_role"
+# log_retention_days       = 0
+# tag_event_rule           = false
+# region                   = "us-east-1"
+
 # Optional SSO, e.g. Amazon Cognito or any OIDC provider:
 # oidc = {
 #   issuer        = "https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_XXXXXXX"

@@ -25,7 +25,7 @@ microservices for Kubernetes homelabs.
 |---|---|---|---|
 | **auth-service** | 3004 (+ OIDC/SSO) | `users` table | `/auth/register`, `/auth/login`, `/auth/me` |
 | **social-service** | 3005 | groups, invites, shares, reactions | `/groups`, `/invites`, `/join`, `/reactions` |
-| **reminder-service** | 3006 | `reminders_sent` | minute tick → ntfy pushes; `/reminders/snooze/:token` |
+| **reminder-service** | 3006 | `reminders_sent` | minute tick → ntfy + Web Push; `/reminders/snooze/:token` |
 | **habit-service** | 3001 | `habits` table | CRUD `/habits`, `/habits/reorder` |
 | **tracking-service** | 3002 | `entries`, `wellness` | `/entries` (+ `/bulk`), `/wellness` |
 | **analytics-service** | 3003 | read-only | `/analytics/overview`, `/analytics/habits/:id` |
@@ -59,6 +59,19 @@ it standalone.
 - **PWA + offline** — installable app; the shell works offline and any entries,
   skips, notes, or wellness logged while offline are queued locally and synced
   automatically when the connection returns
+- **Today at a glance** — a progress ring and one big tap target per habit
+  (full-width rows on phones): tap to check in, **+1** to count up measurable
+  habits (water, pages, sets), a streak flame per habit, and a gentle
+  *don't miss twice* nudge on habits missed yesterday
+- **Categories** — group habits (Health, Work, …); chips filter Today and the
+  grid, and *By category* shows each group's month completion
+- **Break a habit** — quit habits (smoking, doom-scrolling) where you log only
+  the slips: every other day counts, so your clean streak grows on its own.
+  Slips show as ✕; quit habits are never reminded
+- **Take a break** — vacation or sick? Pause chosen habits for a date range:
+  the days are skipped (excused), streaks survive, reminders stay quiet, and
+  days you already logged are left alone. Also on the installed app's
+  home-screen shortcut menu (long-press the icon), next to *New habit*
 - **Skip days** — tap a done checkmark again (or right-click / long-press any
   cell) to mark a day as skipped: it's excused from goals and your streak is
   preserved (`value = -1` in the API). Sick days shouldn't cost you a streak.
@@ -81,11 +94,23 @@ it standalone.
   Subscribe to the same topic in the ntfy mobile app for push notifications.
   Self-hosted ntfy works too — any http(s) topic URL.
   - **Quiet hours** (profile) silence reminders in a window such as 22:00–07:00.
-  - **Snooze** — set `PUBLIC_URL` (the address your phone uses to reach the
-    app) and notifications get *Snooze 30 min* / *Snooze 1 h* buttons. The
-    buttons call signed, 24-hour links, so no login is needed on the phone; a
-    snoozed reminder is re-sent only if the habit still isn't logged, and
-    waits out quiet hours.
+  - **Answer from the notification** — set `PUBLIC_URL` (the address your
+    phone uses to reach the app) and ntfy notifications get buttons: *Done*,
+    *Snooze 30 min* and *Open* for yes/no habits, *Snooze 30* / *Snooze 1 h* /
+    *Open* for numeric ones. The buttons call signed, 24-hour links, so no
+    login is needed on the phone; a snoozed reminder is re-sent only if the
+    habit still isn't logged, and waits out quiet hours.
+- **Reminders on this device (Web Push)** — no ntfy app needed: in the
+  profile, *Reminders on this device → Turn on* subscribes the browser or the
+  installed app, with the same *Done* / *Snooze* buttons. Works in Chrome,
+  Edge and Firefox (Android and desktop) and in Safari on iPhone/iPad once the
+  app is added to the Home Screen (iOS 16.4+). Needs HTTPS (or localhost) and
+  the `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` pair that `scripts/init-env.sh`
+  generates. Pushes go only to the big browser push services
+  (`PUSH_ENDPOINT_HOSTS` changes the list); devices the push service reports
+  as gone are dropped. Both channels can be on at once. Do we need a native
+  Android app? Not yet — see [docs/mobile-strategy.md](docs/mobile-strategy.md).
+  What's next, and the user research behind it: [docs/roadmap.md](docs/roadmap.md).
 - **Milestones & templates** — confetti + share card at 7/30/100/365-day
   streaks; first-run template packs (Morning routine, Fitness base, Digital detox)
 - **Export & import** — download your entire dataset as JSON (habits, entries
@@ -328,24 +353,24 @@ deploys as AWS Lambdas, so with no traffic you pay close to nothing:
 ```
 CloudFront ─┬─ /        → S3 (built frontend, private)
             └─ /api/*   → API Gateway (HTTP API) → one Lambda per service
-EventBridge Scheduler (every 5 min) → reminder Lambda
+EventBridge rule (every 5 min) → reminder Lambda
 Postgres over TLS (Neon, Supabase, Aiven, … or RDS) — no VPC, so no NAT gateway
 ```
 
 Every service keeps its Express app; `src/lambda.js` (a copy of
 `services/_shared/lambda.js`) replays API Gateway events against it, and
-EventBridge Scheduler replaces the reminder timer. Docker and Kubernetes keep
+an EventBridge rule replaces the reminder timer. Docker and Kubernetes keep
 working unchanged. CI runs the full smoke test through the Lambda handlers and
 through the packaged zips.
 
-**Deploy** (needs AWS credentials, the `aws` CLI, OpenTofu or Terraform, Node, `psql`):
+**Deploy** (needs AWS credentials, the `aws` CLI, OpenTofu or Terraform, and Node):
 
 ```bash
 scripts/init-env.sh                                        # secrets in .env (same as docker)
 # create a Postgres database (e.g. a free Neon project), then in .env:
 #   AWS_DB_ADMIN_URL=postgresql://owner:…@ep-….neon.tech/openhabit?sslmode=require
 cp deploy/aws/terraform.tfvars.example deploy/aws/terraform.tfvars   # set db_host (pooled host)
-scripts/deploy-aws.sh                                      # build → migrate → apply → upload
+scripts/deploy-aws.sh                                      # build → apply (runs migrations) → upload
 ```
 
 Re-run `scripts/deploy-aws.sh` for every update; it only redeploys Lambdas
@@ -354,7 +379,7 @@ removes everything except your database.
 
 **Costs and trade-offs**
 
-- Lambda, API Gateway, EventBridge Scheduler, S3 and CloudFront all bill per
+- Lambda, API Gateway, EventBridge, S3 and CloudFront all bill per
   request; a personal or family instance usually stays within AWS's free tiers
   (check current pricing for your region). API throttling (20 req/s, burst 50)
   caps the bill if someone hammers the API.
@@ -365,22 +390,36 @@ removes everything except your database.
 - The first request after idle is a cold start (about a second).
 - `/metrics`, Prometheus and Grafana don't apply here; use CloudWatch (logs are
   kept 14 days). The login rate limiter is per Lambda container.
-- Snooze buttons work out of the box: `PUBLIC_URL` is set to the CloudFront URL.
+- Snooze / Done buttons work out of the box: `PUBLIC_URL` is set to the app URL.
+  Web Push turns on when `.env` has the VAPID keys (`scripts/init-env.sh`).
 - SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
 - Next step on the roadmap: a DynamoDB storage backend, which removes the
   database's idle cost entirely.
+
+**Without a separate Postgres, or in a restricted sandbox.** `create_database = true`
+creates a small private RDS Postgres; the Lambdas then join the default VPC and
+only their security group can reach the database. VPC Lambdas have no internet
+access by themselves, so for ntfy pushes, webhooks and SSO set `nat_mode` to
+`"instance"` (a t3.micro NAT instance, ~$8/month) or `"gateway"` (managed NAT
+gateway, ~$32+/month). Each push is logged (`reminder push|webpush habit=… status=…`) in
+the reminder Lambda's CloudWatch logs. Database migrations always run from inside AWS
+(the `migrate` Lambda, on every apply that changes `db/init.sql`), so no `psql`
+is needed. For accounts that deny CloudFront, inline IAM policies, log
+retention or tagging, see the sandbox block in `terraform.tfvars.example`
+(verified end to end on the KodeKloud AWS playground; `node scripts/smoke-test.js
+--url <app_url>` tests a live deployment).
 
 ## Repository layout
 
 ```
 ├── frontend/                 # React 18 + Vite + Tailwind SPA
 ├── services/
-│   ├── auth-service/         # register/login, JWT, profile (ntfy, timezone)
+│   ├── auth-service/         # register/login, JWT, profile (ntfy, timezone, push devices)
 │   ├── habit-service/        # habits CRUD (schedules, reminders, webhooks)
 │   ├── tracking-service/     # entries (+ skips, notes) + wellness
 │   ├── analytics-service/    # stats, streaks, insights, group dashboards
 │   ├── social-service/       # groups, invites, sharing, reactions, group habits
-│   └── reminder-service/     # minute tick -> ntfy reminders, quiet hours, snooze links
+│   └── reminder-service/     # minute tick -> ntfy + Web Push reminders, quiet hours, action links
 ├── db/
 │   ├── init.sql              # schema + per-service roles (idempotent migration)
 │   └── seed.js               # demo data via the public API
@@ -390,7 +429,7 @@ removes everything except your database.
 ├── gateway/nginx.conf        # compose entrypoint (Ingress mirror)
 ├── k8s/                      # numbered manifests, apply in order
 │                             #   90-migrate-job, 95-backup-cronjob included
-├── deploy/aws/               # Terraform/OpenTofu: Lambda, API Gateway, CloudFront, S3, Scheduler
+├── deploy/aws/               # Terraform/OpenTofu: Lambda, API Gateway, CloudFront, S3, EventBridge
 └── docker-compose.yml        # + tools profile: seed, migrate, backup
 ```
 
@@ -402,11 +441,14 @@ POST   /api/auth/login                 {email, password} -> {token, user}
 GET    /api/auth/me                    current user
 PUT    /api/auth/me                    {name?, ntfyUrl?, timezone?, quietStart?, quietEnd?} and/or {currentPassword, newPassword}
 DELETE /api/auth/me                    {password} — deletes account + all data
+GET    /api/auth/push/key              {publicKey} for Web Push ("" = off)
+POST   /api/auth/push/subscriptions    a browser PushSubscription (JSON) — reminders to that device
+DELETE /api/auth/push/subscriptions    {endpoint}
 
 All routes below require:  Authorization: Bearer <token>
 
 GET    /api/habits                     list
-POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?}
+POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?, category?, kind?: build|quit}
 PUT    /api/habits/:id                 partial update (incl. archived)
 DELETE /api/habits/:id
 PUT    /api/habits/reorder             {ids: [...]}
@@ -422,6 +464,7 @@ PUT    /api/wellness                   upsert {date, mood?, sleepHours?}
 GET    /api/analytics/overview?year&month
 GET    /api/analytics/habits/:id
 POST   /api/reminders/snooze/:token     signed link from a notification (no auth header)
+POST   /api/entries/done/:token         signed "Done" link from a notification (no auth header)
 ```
 
 Conventions: dates are `YYYY-MM-DD`; weekdays are `0=Sunday … 6=Saturday`;

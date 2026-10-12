@@ -14,7 +14,7 @@ interface Item {
 export function CommandPalette() {
   const {
     habits, overview, openDetail, openEditor, openArchived,
-    shiftGridMonth, theme, setTheme, paletteOpen: open, setPaletteOpen: setOpen,
+    shiftGridMonth, theme, setTheme, paletteOpen: open, setPaletteOpen: setOpen, setPauseOpen,
   } = useApp();
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
@@ -64,9 +64,10 @@ export function CommandPalette() {
       { id: 'theme', label: 'Switch theme', hint: theme.replace('forest-', '').replace('-', ' '),
         run: close(() => setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])) },
       { id: 'archived', label: 'Archived habits', hint: 'manage', run: close(() => openArchived()) },
+      { id: 'pause', label: 'Take a break', hint: 'vacation, sick days', run: close(() => setPauseOpen(true)) },
     ];
     return [...habitItems, ...actions];
-  }, [habits, pctById, theme, openDetail, openEditor, openArchived, shiftGridMonth, setTheme]);
+  }, [habits, pctById, theme, openDetail, openEditor, openArchived, shiftGridMonth, setTheme, setPauseOpen]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
