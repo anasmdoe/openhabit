@@ -33,6 +33,17 @@ variable "create_database" {
   default     = false
 }
 
+variable "nat_mode" {
+  description = "With create_database: internet access for the VPC functions (ntfy pushes, webhooks, SSO). \"none\", \"gateway\" (managed NAT gateway, ~$32+/month) or \"instance\" (a t3.micro NAT instance, ~$8/month, no Elastic IP needed)."
+  type        = string
+  default     = "none"
+
+  validation {
+    condition     = contains(["none", "gateway", "instance"], var.nat_mode)
+    error_message = "nat_mode must be none, gateway or instance."
+  }
+}
+
 variable "db_instance_class" {
   type    = string
   default = "db.t4g.micro"

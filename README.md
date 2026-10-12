@@ -373,8 +373,10 @@ removes everything except your database.
 **Without a separate Postgres, or in a restricted sandbox.** `create_database = true`
 creates a small private RDS Postgres; the Lambdas then join the default VPC and
 only their security group can reach the database. VPC Lambdas have no internet
-access without a NAT gateway, so ntfy pushes, webhooks and SSO don't work in
-that mode — use it for testing. Database migrations always run from inside AWS
+access by themselves, so for ntfy pushes, webhooks and SSO set `nat_mode` to
+`"instance"` (a t3.micro NAT instance, ~$8/month) or `"gateway"` (managed NAT
+gateway, ~$32+/month). Each push is logged (`reminder push habit=… status=…`) in
+the reminder Lambda's CloudWatch logs. Database migrations always run from inside AWS
 (the `migrate` Lambda, on every apply that changes `db/init.sql`), so no `psql`
 is needed. For accounts that deny CloudFront, inline IAM policies, log
 retention or tagging, see the sandbox block in `terraform.tfvars.example`

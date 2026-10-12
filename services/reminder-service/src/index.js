@@ -71,7 +71,9 @@ const snoozesTotal = registerCustom('openhabit_reminder_snoozes_total', 'Reminde
 const tickErrors = registerCustom('openhabit_reminder_tick_errors_total', 'Reminder ticks that threw.', 'counter');
 const lastTickGauge = registerCustom('openhabit_reminder_last_tick_timestamp', 'Unix time of the last completed tick.', 'gauge');
 
-function notify(url, title, message, actions) {
+// One log line per push (habit id and outcome only; the topic URL stays out of
+// logs): the way to see delivery problems where /metrics isn't scraped (AWS).
+function notify(habitId, url, title, message, actions) {
   remindersSent.inc();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 4000);
@@ -80,7 +82,10 @@ function notify(url, title, message, actions) {
     headers: { Title: title, Priority: 'default', Tags: 'alarm_clock', ...(actions ? { Actions: actions } : {}) },
     body: message,
     signal: ctrl.signal,
-  }).catch(() => {}).finally(() => clearTimeout(t));
+  })
+    .then((r) => console.log(`reminder push habit=${habitId} status=${r.status}`))
+    .catch((e) => console.warn(`reminder push habit=${habitId} failed: ${e.name === 'AbortError' ? 'timeout' : e.message}`))
+    .finally(() => clearTimeout(t));
 }
 
 function actionsFor(habitId, date) {
@@ -165,7 +170,7 @@ export async function tick() {
          ON CONFLICT DO NOTHING RETURNING 1`, [h.id, now.date]);
     if (!claim.rowCount) continue;
 
-    await notify(h.ntfy_url, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', msg, actionsFor(h.id, now.date));
+    await notify(h.id, h.ntfy_url, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', msg, actionsFor(h.id, now.date));
   }
 }
 

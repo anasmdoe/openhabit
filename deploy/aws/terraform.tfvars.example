@@ -15,6 +15,7 @@ db_name = "openhabit"
 # CloudFront, EventBridge Scheduler, inline IAM policies, log retention, rule
 # tagging and iam:PassRole except on fixed role names):
 # create_database          = true                     # private RDS; Lambdas join the default VPC
+# nat_mode                 = "instance"               # internet for ntfy pushes (the playground releases Elastic IPs, so no NAT gateway)
 # db_admin_password        = "<16+ random chars>"     # better: export TF_VAR_db_admin_password
 # db_instance_class        = "db.t4g.micro"
 # enable_cdn               = false                    # a Lambda serves the frontend

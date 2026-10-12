@@ -4,20 +4,25 @@
 #
 # create_database keeps the instance private: the Lambdas join the default VPC
 # and only their security group may connect. VPC Lambdas have no internet
-# access without a NAT gateway (~$30+/month), so ntfy reminder pushes, webhooks
-# and SSO discovery don't work in this mode — it's meant for sandboxes and
-# testing. For production, use an external Postgres (db_host) instead.
+# access unless nat_mode is set (NAT gateway or a cheap NAT instance), so without it ntfy
+# reminder pushes, webhooks and SSO discovery don't work. For production, an
+# external Postgres (db_host) keeps the Lambdas out of a VPC and costs nothing idle.
 
 data "aws_vpc" "default" {
   count   = var.create_database ? 1 : 0
   default = true
 }
 
+# the VPC's default (public) subnets — not the private ones nat_mode adds
 data "aws_subnets" "default" {
   count = var.create_database ? 1 : 0
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.default[0].id]
+  }
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
   }
 }
 
@@ -33,6 +38,18 @@ resource "aws_security_group" "lambda" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = [data.aws_vpc.default[0].cidr_block]
+  }
+
+  # with the NAT gateway: ntfy pushes, webhooks and SSO discovery (HTTP/HTTPS only)
+  dynamic "egress" {
+    for_each = local.nat ? [80, 443] : []
+    content {
+      description = "Outbound HTTP(S) through the NAT gateway"
+      from_port   = egress.value
+      to_port     = egress.value
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
   }
 }
 
@@ -86,6 +103,114 @@ resource "aws_db_instance" "db" {
   }
 }
 
+# ---- optional internet egress (nat_mode) -----------------------------------------
+# The VPC functions move to two private subnets whose default route goes through
+# either a managed NAT gateway or a small NAT instance in a public default subnet.
+# The database stays private either way.
+
+data "aws_availability_zones" "available" {
+  count = local.nat ? 1 : 0
+  state = "available"
+}
+
+resource "aws_subnet" "private" {
+  count             = local.nat ? 2 : 0
+  vpc_id            = data.aws_vpc.default[0].id
+  cidr_block        = cidrsubnet(data.aws_vpc.default[0].cidr_block, 8, 200 + count.index)
+  availability_zone = data.aws_availability_zones.available[0].names[count.index]
+  tags              = { Name = "${var.name}-private-${count.index}" }
+}
+
+resource "aws_eip" "nat" {
+  count  = local.nat && var.nat_mode == "gateway" ? 1 : 0
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "nat" {
+  count         = local.nat && var.nat_mode == "gateway" ? 1 : 0
+  allocation_id = aws_eip.nat[0].id
+  subnet_id     = data.aws_subnets.default[0].ids[0]
+  tags          = { Name = var.name }
+}
+
+# NAT instance: Amazon Linux forwarding and masquerading for the private subnets.
+data "aws_ssm_parameter" "al2023" {
+  count = local.nat && var.nat_mode == "instance" ? 1 : 0
+  name  = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
+resource "aws_security_group" "nat" {
+  count       = local.nat && var.nat_mode == "instance" ? 1 : 0
+  name        = "${var.name}-nat"
+  description = "${var.name} NAT instance: forwards traffic from the Lambda functions only"
+  vpc_id      = data.aws_vpc.default[0].id
+
+  ingress {
+    description     = "Traffic to forward, from the Lambda functions"
+    from_port       = 0
+    to_port         = 0
+    protocol        = "-1"
+    security_groups = [aws_security_group.lambda[0].id]
+  }
+  egress {
+    description = "Forwarded traffic to the internet"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "nat" {
+  count                       = local.nat && var.nat_mode == "instance" ? 1 : 0
+  ami                         = data.aws_ssm_parameter.al2023[0].value
+  instance_type               = "t3.micro"
+  subnet_id                   = data.aws_subnets.default[0].ids[0]
+  vpc_security_group_ids      = [aws_security_group.nat[0].id]
+  associate_public_ip_address = true
+  source_dest_check           = false
+
+  credit_specification {
+    cpu_credits = "standard"
+  }
+  metadata_options {
+    http_tokens = "required"
+  }
+
+  user_data = <<-EOT
+    #!/bin/bash
+    set -e
+    echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/90-nat.conf
+    sysctl --system
+    dnf install -y iptables-services
+    IF=$(ip route show default | awk '{print $5; exit}')
+    iptables -t nat -A POSTROUTING -o "$IF" -j MASQUERADE
+    iptables -P FORWARD ACCEPT
+    iptables -F FORWARD
+    service iptables save
+    systemctl enable --now iptables
+  EOT
+
+  tags = { Name = "${var.name}-nat" }
+}
+
+resource "aws_route_table" "private" {
+  count  = local.nat ? 1 : 0
+  vpc_id = data.aws_vpc.default[0].id
+
+  route {
+    cidr_block           = "0.0.0.0/0"
+    nat_gateway_id       = var.nat_mode == "gateway" ? aws_nat_gateway.nat[0].id : null
+    network_interface_id = var.nat_mode == "instance" ? aws_instance.nat[0].primary_network_interface_id : null
+  }
+}
+
+resource "aws_route_table_association" "private" {
+  count          = local.nat ? 2 : 0
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private[0].id
+}
+
 # Lets the functions attach to the VPC (create_database only).
 data "aws_iam_policy_document" "lambda_vpc" {
   statement {
@@ -106,8 +231,10 @@ resource "aws_iam_role_policy" "lambda_vpc" {
 
 locals {
   # functions that talk to the database join the VPC when it's private
+  nat = var.create_database && var.nat_mode != "none"
+
   vpc_config = var.create_database ? [{
-    subnet_ids         = data.aws_subnets.default[0].ids
+    subnet_ids         = local.nat ? aws_subnet.private[*].id : data.aws_subnets.default[0].ids
     security_group_ids = [aws_security_group.lambda[0].id]
   }] : []
 
