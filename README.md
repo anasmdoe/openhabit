@@ -142,6 +142,7 @@ it standalone.
 createdb openhabit && psql openhabit < db/init.sql
 
 # 2. Services (each in its own terminal, or use a process manager)
+export JWT_SECRET=$(openssl rand -base64 48)          # same value for every service
 cd services/habit-service     && npm i && npm start   # :3001
 cd services/tracking-service  && npm i && npm start   # :3002
 cd services/analytics-service && npm i && npm start   # :3003
@@ -157,8 +158,10 @@ Prerequisites: Docker Desktop, or Docker Engine ≥ 24 with the compose plugin
 (`docker compose version` should work).
 
 ```bash
-# 0. Pick a JWT secret (any long random string; all services must share it)
-export JWT_SECRET=$(openssl rand -base64 48)
+# 0. Create .env with a JWT secret (all services share it; they refuse to
+#    start if it is missing, under 32 chars, or a "change-me" placeholder)
+cp .env.example .env
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48)|" .env
 
 # 1. Build all five images and start the stack
 docker compose up --build -d
@@ -181,6 +184,10 @@ docker compose run --rm seed     # creates demo@home.lab / demo-password-123
 > `kubectl apply -f k8s/90-migrate-job.yaml`.
 > Only pre-auth (single-user) versions require a reset (`down -v`), because
 > per-user scoping changed row ownership.
+>
+> Installs that never set `JWT_SECRET` were signing logins with a public
+> placeholder; services now refuse to start until it is set (see step 0).
+> Setting it signs everyone out once.
 
 Day-to-day commands:
 
@@ -410,3 +417,22 @@ and k8s Prometheus: service down, DB unreachable (per service), reminder loop
 stalled (>5 min without a tick), reminder tick errors, 5xx rate >5%, p95
 latency >1s, and pg pool saturation. Point Alertmanager (or Grafana alerting)
 at them to get notified — an ntfy receiver works nicely here too.
+
+## Tests & CI
+
+```bash
+cd frontend && npm test                 # unit tests for streak/score/schedule math
+scripts/test-init-sql.sh                # applies db/init.sql twice, proves it is idempotent
+node scripts/sync-configmap.js          # copy db/init.sql into k8s/10-postgres.yaml
+node scripts/sync-configmap.js --check  # fail if they have drifted
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs all of the above on every push
+and pull request, plus `npm ci` for every service (catches lockfile drift) and a
+Docker build of every image.
+
+## License
+
+OpenHabit is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+You may use, modify and self-host it freely; if you run a modified version as a
+network service, you must offer its source code to that service's users.
