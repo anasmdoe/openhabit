@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Secrets — jwt_secret and
+# db_passwords — come from .env via scripts/deploy-aws.sh; don't put them here.
+
+region = "ap-south-1"
+
+# Postgres reachable over TLS, e.g. Neon's pooled host:
+db_host = "ep-example-123456-pooler.ap-southeast-1.aws.neon.tech"
+db_name = "openhabit"
+
+# allow_registration        = false   # once your accounts exist
+# reminder_interval_minutes = 5       # 1-15; see README for the database cost trade-off
+# public_url                = "https://habits.example.com"   # if you add a custom domain
+
+# Optional SSO, e.g. Amazon Cognito or any OIDC provider:
+# oidc = {
+#   issuer        = "https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_XXXXXXX"
+#   client_id     = "xxxxxxxx"
+#   client_secret = "xxxxxxxx"
+#   provider_name = "Cognito"
+# }

@@ -3,11 +3,17 @@
 // logged in as its own least-privilege role, and drives the main user flows.
 // Fails on any unexpected status, 5xx, or "permission denied" in service logs.
 //
+//   node scripts/smoke-test.js           services as HTTP servers (docker/k8s shape)
+//   node scripts/smoke-test.js --lambda  the same flows through each service's AWS
+//                                        Lambda handler (API Gateway v2 events, and
+//                                        EventBridge Scheduler events for reminders)
+//
 // Prerequisites: db/init.sql applied, role passwords set (db/set-db-passwords.sh),
 // `npm ci` done in each service, `psql` on PATH. Connection via the PG* variables
 // (an admin login, used only to fast-forward a snooze) and the <SERVICE>_DB_PASSWORD
 // variables (same names as .env).
 const { spawn, execFileSync } = require('child_process');
+const { pathToFileURL } = require('url');
 const crypto = require('crypto');
 const http = require('http');
 const path = require('path');
@@ -24,6 +30,9 @@ const SERVICES = {
 };
 const serviceDir = (name) => name.replace(/\d+$/, '');
 
+const LAMBDA = process.argv.includes('--lambda');
+const handlers = {};
+let schedulerErrors = 0;
 const procs = [];
 const logs = {};
 const failures = [];
@@ -50,6 +59,59 @@ function start(name) {
   procs.push(p);
 }
 
+/** Lambda mode: import each service's handler with that service's own environment. */
+async function loadHandlers() {
+  logs.lambda = '';
+  const origError = console.error;
+  console.error = (...a) => { logs.lambda += `${a.join(' ')}\n`; origError(...a); };
+  for (const name of Object.keys(SERVICES).filter((n) => n === serviceDir(n))) {
+    Object.assign(process.env, {
+      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2',
+    });
+    // SMOKE_LAMBDA_DIR=<dir> runs the unpacked deploy zips (<dir>/<svc>/src/lambda.js)
+    const file = process.env.SMOKE_LAMBDA_DIR
+      ? path.resolve(process.env.SMOKE_LAMBDA_DIR, name, 'src', 'lambda.js')
+      : path.join(root, 'services', `${name}-service`, 'src', 'lambda.js');
+    handlers[name] = (await import(pathToFileURL(file).href)).handler;
+  }
+}
+
+/** One request to a service, as an HTTP call or as an API Gateway v2 Lambda event. */
+async function request(svc, method, url, headers = {}, body) {
+  if (!LAMBDA) {
+    const res = await fetch(`http://localhost:${SERVICES[svc]}${url}`, { method, headers, body });
+    return { status: res.status, text: await res.text() };
+  }
+  const [rawPath, rawQueryString = ''] = url.split('?');
+  const out = await handlers[serviceDir(svc)]({
+    version: '2.0',
+    rawPath: `/api${rawPath}`,
+    rawQueryString,
+    headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])),
+    requestContext: { http: { method, path: `/api${rawPath}`, sourceIp: '203.0.113.7' } },
+    body,
+    isBase64Encoded: false,
+  });
+  return { status: out.statusCode, text: Buffer.from(out.body ?? '', out.isBase64Encoded ? 'base64' : 'utf8').toString() };
+}
+
+/** Lambda mode: EventBridge Scheduler stand-in, delivering each tick twice at once
+ * (the scheduler is at-least-once, so the handler must not double-send). */
+function startScheduler() {
+  let running = true;
+  (async () => {
+    while (running) {
+      const ev = { source: 'aws.scheduler', 'detail-type': 'Scheduled Event' };
+      const results = await Promise.allSettled([handlers.reminder(ev), handlers.reminder(ev)]);
+      for (const r of results) {
+        if (r.status === 'rejected') { schedulerErrors++; console.error('scheduled tick failed:', r.reason); }
+      }
+      await sleep(300);
+    }
+  })();
+  return () => { running = false; };
+}
+
 async function waitHealthy(name) {
   for (let i = 0; i < 50; i++) {
     try {
@@ -63,15 +125,11 @@ async function waitHealthy(name) {
 
 /** Calls a service and records a failure unless the status is in `expect`. */
 async function call(svc, method, url, { token, body, expect = [200, 201, 204] } = {}) {
-  const res = await fetch(`http://localhost:${SERVICES[svc]}${url}`, {
-    method,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
+  const res = await request(svc, method, url, {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+  }, body !== undefined ? JSON.stringify(body) : undefined);
+  const { text } = res;
   let json;
   try { json = text ? JSON.parse(text) : null; } catch { json = text; }
   const ok = expect.includes(res.status);
@@ -109,8 +167,15 @@ async function main() {
   await new Promise((r) => ntfy.listen(0, r));
   const ntfyUrl = `http://localhost:${ntfy.address().port}/openhabit-smoke`;
 
-  for (const name of Object.keys(SERVICES)) start(name);
-  await Promise.all(Object.keys(SERVICES).map(waitHealthy));
+  let stopScheduler = () => {};
+  if (LAMBDA) {
+    await loadHandlers();
+    stopScheduler = startScheduler();
+  } else {
+    for (const name of Object.keys(SERVICES)) start(name);
+    await Promise.all(Object.keys(SERVICES).map(waitHealthy));
+  }
+  console.log(`mode: ${LAMBDA ? 'AWS Lambda handlers' : 'HTTP services'}`);
 
   // ---- auth --------------------------------------------------------------
   const tag = crypto.randomBytes(4).toString('hex');
@@ -199,7 +264,8 @@ async function main() {
   const due = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stretch', reminderTime: hhmm() } });
   check(await waitFor(() => pushesFor('Stretch').length > 0), 'reminder: due habit pushed');
   await sleep(1500);
-  check(pushesFor('Stretch').length === 1, `reminder: exactly one push across 2 replicas (got ${pushesFor('Stretch').length})`);
+  check(pushesFor('Stretch').length === 1,
+    `reminder: exactly one push across ${LAMBDA ? 'duplicate scheduler deliveries' : '2 replicas'} (got ${pushesFor('Stretch').length})`);
 
   // Snooze: the notification carries signed links; the button POSTs one.
   const push = pushesFor('Stretch')[0] ?? { actions: '' };
@@ -225,11 +291,12 @@ async function main() {
   await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '', quietEnd: '' } });
   check(await waitFor(() => pushesFor('Hush').length === 1), 'reminder: sent after quiet hours were cleared');
 
-  const metrics = await (await fetch(`http://localhost:${SERVICES.reminder}/metrics`)).text();
+  const metrics = (await request('reminder', 'GET', '/metrics')).text;
   const metric = (n) => Number((metrics.match(new RegExp(`^${n}(?:\\{[^}]*\\})? (\\S+)`, 'm')) || [])[1] ?? NaN);
   const ticks = metric('openhabit_reminder_ticks_total');
   const tickErrors = metric('openhabit_reminder_tick_errors_total');
-  check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
+  if (LAMBDA) check(schedulerErrors === 0, `reminder: scheduled invocations without errors (errors=${schedulerErrors})`);
+  else check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
   check(metric('openhabit_reminder_snoozes_total') === 1, 'reminder: snooze counted in metrics');
 
   // ---- teardown flows: token revoke, group & account deletion ---------------
@@ -241,6 +308,7 @@ async function main() {
     await call('auth', 'DELETE', '/auth/me', { token: t, body: { password: 'smoke-password-1' } });
   }
 
+  stopScheduler();
   ntfy.close();
 }
 

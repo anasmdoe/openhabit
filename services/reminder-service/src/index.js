@@ -23,7 +23,7 @@ if (!JWT_SECRET || JWT_SECRET.length < 32 || /change-me/i.test(JWT_SECRET)) {
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://openhabit:openhabit@localhost:5432/openhabit',
-  max: 5,
+  max: Number(process.env.PG_POOL_MAX) || 5,
 });
 
 // ---- timezone-aware "now" ------------------------------------------------
@@ -205,8 +205,6 @@ app.post('/reminders/snooze/:token', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`reminder-service listening on :${PORT}, tick=${TICK_MS}ms`));
-
 let ticks = 0;
 async function runTick() {
   try {
@@ -219,5 +217,16 @@ async function runTick() {
     console.error('tick failed:', e.message);
   }
 }
-runTick();
-setInterval(runTick, TICK_MS);
+
+// On AWS Lambda, src/lambda.js serves `app` instead (see services/_shared/lambda.js)
+// and EventBridge Scheduler calls onSchedule() in place of the interval below.
+export { app };
+export async function onSchedule() {
+  await tick(); // throws, so a failed tick shows up as a Lambda error
+  await pruneSent();
+}
+if (process.env.OPENHABIT_RUNTIME !== 'lambda') {
+  app.listen(PORT, () => console.log(`reminder-service listening on :${PORT}, tick=${TICK_MS}ms`));
+  runTick();
+  setInterval(runTick, TICK_MS);
+}

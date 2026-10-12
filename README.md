@@ -320,6 +320,56 @@ Notes for the cluster:
   above for running one on demand and restoring; adjust the `schedule` and
   `BACKUP_KEEP` in that file to taste.
 
+## AWS serverless (pay per use)
+
+For a small instance, always-on containers are wasted money. The same code also
+deploys as AWS Lambdas, so with no traffic you pay close to nothing:
+
+```
+CloudFront ─┬─ /        → S3 (built frontend, private)
+            └─ /api/*   → API Gateway (HTTP API) → one Lambda per service
+EventBridge Scheduler (every 5 min) → reminder Lambda
+Postgres over TLS (Neon, Supabase, Aiven, … or RDS) — no VPC, so no NAT gateway
+```
+
+Every service keeps its Express app; `src/lambda.js` (a copy of
+`services/_shared/lambda.js`) replays API Gateway events against it, and
+EventBridge Scheduler replaces the reminder timer. Docker and Kubernetes keep
+working unchanged. CI runs the full smoke test through the Lambda handlers and
+through the packaged zips.
+
+**Deploy** (needs AWS credentials, the `aws` CLI, OpenTofu or Terraform, Node, `psql`):
+
+```bash
+scripts/init-env.sh                                        # secrets in .env (same as docker)
+# create a Postgres database (e.g. a free Neon project), then in .env:
+#   AWS_DB_ADMIN_URL=postgresql://owner:…@ep-….neon.tech/openhabit?sslmode=require
+cp deploy/aws/terraform.tfvars.example deploy/aws/terraform.tfvars   # set db_host (pooled host)
+scripts/deploy-aws.sh                                      # build → migrate → apply → upload
+```
+
+Re-run `scripts/deploy-aws.sh` for every update; it only redeploys Lambdas
+whose code changed. `tofu destroy` (or `terraform destroy`) in `deploy/aws`
+removes everything except your database.
+
+**Costs and trade-offs**
+
+- Lambda, API Gateway, EventBridge Scheduler, S3 and CloudFront all bill per
+  request; a personal or family instance usually stays within AWS's free tiers
+  (check current pricing for your region). API throttling (20 req/s, burst 50)
+  caps the bill if someone hammers the API.
+- Reminders: each scheduled run queries Postgres. With a scale-to-zero database
+  (Neon) a short interval keeps it awake and uses compute hours, so the default
+  is every 5 minutes (`reminder_interval_minutes`, 1–15); reminders can then
+  arrive up to that late.
+- The first request after idle is a cold start (about a second).
+- `/metrics`, Prometheus and Grafana don't apply here; use CloudWatch (logs are
+  kept 14 days). The login rate limiter is per Lambda container.
+- Snooze buttons work out of the box: `PUBLIC_URL` is set to the CloudFront URL.
+- SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
+- Next step on the roadmap: a DynamoDB storage backend, which removes the
+  database's idle cost entirely.
+
 ## Repository layout
 
 ```
@@ -340,6 +390,7 @@ Notes for the cluster:
 ├── gateway/nginx.conf        # compose entrypoint (Ingress mirror)
 ├── k8s/                      # numbered manifests, apply in order
 │                             #   90-migrate-job, 95-backup-cronjob included
+├── deploy/aws/               # Terraform/OpenTofu: Lambda, API Gateway, CloudFront, S3, Scheduler
 └── docker-compose.yml        # + tools profile: seed, migrate, backup
 ```
 
@@ -443,6 +494,8 @@ at them to get notified — an ntfy receiver works nicely here too.
 cd frontend && npm test                 # unit tests for streak/score/schedule math
 scripts/test-init-sql.sh                # applies db/init.sql twice, proves it is idempotent
 node scripts/smoke-test.js              # all services, each as its own DB role, end to end
+node scripts/smoke-test.js --lambda     # the same flows through the AWS Lambda handlers
+(cd deploy/aws && tofu test)            # Terraform stack, offline with a mocked AWS provider
 node scripts/sync-configmap.js          # copy db/ files into k8s/10-postgres.yaml
 node scripts/sync-configmap.js --check  # fail if they have drifted
 ```

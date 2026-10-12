@@ -3,7 +3,7 @@ import crypto from 'crypto';
 
 // A reminder may go out up to this many minutes after its time, so a restart
 // or a slow tick doesn't lose it. reminders_sent keeps it to one per day.
-export const CATCH_UP_MINUTES = 15;
+export const CATCH_UP_MINUTES = Number(process.env.REMINDER_CATCH_UP_MINUTES) || 15;
 export const SNOOZE_CHOICES = [30, 60];
 
 const toMinutes = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
