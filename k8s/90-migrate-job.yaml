@@ -16,13 +16,36 @@ spec:
       containers:
         - name: migrate
           image: postgres:16-alpine
-          command: ["psql", "-h", "postgres", "-U", "openhabit", "-d", "openhabit", "-v", "ON_ERROR_STOP=1", "-f", "/init/init.sql"]
+          # wait for Postgres, apply the schema, then (re)apply service role passwords
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              until pg_isready -q; do echo "waiting for postgres"; sleep 2; done
+              psql -X -v ON_ERROR_STOP=1 -f /init/init.sql
+              bash /init/set-db-passwords.sh
           env:
+            - name: PGHOST
+              value: postgres
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_USER
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_DB
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:
                   name: postgres-credentials
                   key: POSTGRES_PASSWORD
+          envFrom:
+            - secretRef:
+                name: db-role-passwords
           volumeMounts:
             - name: init
               mountPath: /init
@@ -30,3 +53,4 @@ spec:
         - name: init
           configMap:
             name: postgres-init
+            defaultMode: 0755

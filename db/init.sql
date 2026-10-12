@@ -74,22 +74,22 @@ CREATE TABLE IF NOT EXISTS wellness (
 );
 
 -- ============================================================
--- Per-service roles (least privilege). Local-dev passwords;
--- production overrides via env / secrets.
+-- Per-service roles (least privilege). Created without a password;
+-- db/set-db-passwords.sh sets them from <SERVICE>_DB_PASSWORD.
 -- ============================================================
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'auth_svc') THEN
-    CREATE ROLE auth_svc LOGIN PASSWORD 'auth_svc';
+    CREATE ROLE auth_svc LOGIN;  -- password set by db/set-db-passwords.sh
   END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'habit_svc') THEN
-    CREATE ROLE habit_svc LOGIN PASSWORD 'habit_svc';
+    CREATE ROLE habit_svc LOGIN;  -- password set by db/set-db-passwords.sh
   END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'tracking_svc') THEN
-    CREATE ROLE tracking_svc LOGIN PASSWORD 'tracking_svc';
+    CREATE ROLE tracking_svc LOGIN;  -- password set by db/set-db-passwords.sh
   END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'analytics_svc') THEN
-    CREATE ROLE analytics_svc LOGIN PASSWORD 'analytics_svc';
+    CREATE ROLE analytics_svc LOGIN;  -- password set by db/set-db-passwords.sh
   END IF;
 END
 $$;
@@ -186,7 +186,7 @@ CREATE INDEX IF NOT EXISTS idx_reactions_to ON reactions (to_user, created_at);
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'social_svc') THEN
-    CREATE ROLE social_svc LOGIN PASSWORD 'social_svc';
+    CREATE ROLE social_svc LOGIN;  -- password set by db/set-db-passwords.sh
   END IF;
 END
 $$;
@@ -204,7 +204,7 @@ GRANT SELECT ON users TO analytics_svc;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'reminder_svc') THEN
-    CREATE ROLE reminder_svc LOGIN PASSWORD 'reminder_svc';
+    CREATE ROLE reminder_svc LOGIN;  -- password set by db/set-db-passwords.sh
   END IF;
 END
 $$;

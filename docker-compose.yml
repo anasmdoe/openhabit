@@ -7,9 +7,17 @@ services:
       POSTGRES_USER: openhabit
       POSTGRES_PASSWORD: openhabit
       POSTGRES_DB: openhabit
+      # read by db/set-db-passwords.sh when a fresh volume is initialised
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-}
+      HABIT_DB_PASSWORD: ${HABIT_DB_PASSWORD:-}
+      TRACKING_DB_PASSWORD: ${TRACKING_DB_PASSWORD:-}
+      ANALYTICS_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-}
+      SOCIAL_DB_PASSWORD: ${SOCIAL_DB_PASSWORD:-}
+      REMINDER_DB_PASSWORD: ${REMINDER_DB_PASSWORD:-}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+      - ./db/set-db-passwords.sh:/docker-entrypoint-initdb.d/20-set-db-passwords.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openhabit"]
       interval: 5s
@@ -19,9 +27,9 @@ services:
   auth-service:
     build: ./services/auth-service
     environment:
-      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      DATABASE_URL: postgres://auth_svc:${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is not set - run scripts/init-env.sh}@postgres:5432/openhabit
       PORT: "3004"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
       # set ALLOW_REGISTRATION: "false" once your accounts exist
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -37,9 +45,9 @@ services:
   habit-service:
     build: ./services/habit-service
     environment:
-      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      DATABASE_URL: postgres://habit_svc:${HABIT_DB_PASSWORD:?HABIT_DB_PASSWORD is not set - run scripts/init-env.sh}@postgres:5432/openhabit
       PORT: "3001"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,9 +56,9 @@ services:
   tracking-service:
     build: ./services/tracking-service
     environment:
-      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      DATABASE_URL: postgres://tracking_svc:${TRACKING_DB_PASSWORD:?TRACKING_DB_PASSWORD is not set - run scripts/init-env.sh}@postgres:5432/openhabit
       PORT: "3002"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +67,7 @@ services:
   reminder-service:
     build: ./services/reminder-service
     environment:
-      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      DATABASE_URL: postgres://reminder_svc:${REMINDER_DB_PASSWORD:?REMINDER_DB_PASSWORD is not set - run scripts/init-env.sh}@postgres:5432/openhabit
       PORT: "3006"
     depends_on:
       postgres:
@@ -69,9 +77,9 @@ services:
   social-service:
     build: ./services/social-service
     environment:
-      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      DATABASE_URL: postgres://social_svc:${SOCIAL_DB_PASSWORD:?SOCIAL_DB_PASSWORD is not set - run scripts/init-env.sh}@postgres:5432/openhabit
       PORT: "3005"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,9 +88,9 @@ services:
   analytics-service:
     build: ./services/analytics-service
     environment:
-      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      DATABASE_URL: postgres://analytics_svc:${ANALYTICS_DB_PASSWORD:?ANALYTICS_DB_PASSWORD is not set - run scripts/init-env.sh}@postgres:5432/openhabit
       PORT: "3003"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set - copy .env.example to .env and fill it in}
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,10 +151,20 @@ services:
     image: postgres:16-alpine
     profiles: ["tools"]
     volumes:
-      - ./db/init.sql:/init.sql:ro
+      - ./db:/db:ro
     environment:
+      PGHOST: postgres
+      PGUSER: openhabit
       PGPASSWORD: openhabit
-    entrypoint: ["psql", "-h", "postgres", "-U", "openhabit", "-d", "openhabit", "-v", "ON_ERROR_STOP=1", "-f", "/init.sql"]
+      PGDATABASE: openhabit
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-}
+      HABIT_DB_PASSWORD: ${HABIT_DB_PASSWORD:-}
+      TRACKING_DB_PASSWORD: ${TRACKING_DB_PASSWORD:-}
+      ANALYTICS_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-}
+      SOCIAL_DB_PASSWORD: ${SOCIAL_DB_PASSWORD:-}
+      REMINDER_DB_PASSWORD: ${REMINDER_DB_PASSWORD:-}
+    # schema first, then (re)apply the service role passwords from .env
+    entrypoint: ["bash", "-c", "psql -X -v ON_ERROR_STOP=1 -f /db/init.sql && bash /db/set-db-passwords.sh"]
     depends_on:
       postgres:
         condition: service_healthy

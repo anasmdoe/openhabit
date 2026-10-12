@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit -p .
+      - run: npm test
+      - run: npm run build
+
+  services:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth, habit, tracking, analytics, social, reminder]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm ci (fails on lockfile drift)
+        run: npm ci --omit=dev
+      - name: Syntax check
+        run: for f in src/*.js; do node --check "$f"; done
+      - name: metrics.js matches services/_shared
+        run: cmp ../_shared/metrics.js src/metrics.js
+
+  database:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: openhabit
+          POSTGRES_PASSWORD: openhabit
+          POSTGRES_DB: openhabit
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U openhabit"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: openhabit
+      PGPASSWORD: openhabit
+      PGDATABASE: openhabit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: k8s ConfigMap matches db/
+        run: node scripts/sync-configmap.js --check
+      - name: init.sql is idempotent
+        run: scripts/test-init-sql.sh
+      - name: Generate service role passwords
+        run: |
+          for svc in AUTH HABIT TRACKING ANALYTICS SOCIAL REMINDER; do
+            echo "${svc}_DB_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          done
+      - name: Set service role passwords
+        run: db/set-db-passwords.sh
+      - name: Install service dependencies
+        run: for d in services/*-service; do (cd "$d" && npm ci --omit=dev); done
+      - name: End-to-end smoke test (each service as its own role)
+        run: node scripts/smoke-test.js
+
+  docker:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - services/auth-service
+          - services/habit-service
+          - services/tracking-service
+          - services/analytics-service
+          - services/social-service
+          - services/reminder-service
+          - frontend
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build ${{ matrix.image }}
