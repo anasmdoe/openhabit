@@ -266,6 +266,22 @@ async function main() {
   await call('analytics', 'GET', `/analytics/habits/${h2.id}`, { token: A });
   await call('analytics', 'GET', '/analytics/insights', { token: A });
 
+  // ---- categories, quit habits, pause --------------------------------------
+  const quitH = await call('habit', 'POST', '/habits', {
+    token: A, body: { name: 'Smoking', kind: 'quit', category: ' Health ', reminderTime: hhmm() },
+  });
+  check(quitH.kind === 'quit' && quitH.category === 'Health', 'habits: quit habit with a trimmed category');
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', kind: 'quit', type: 'numeric' }, expect: [400] });
+  await call('habit', 'PUT', `/habits/${quitH.id}`, { token: A, body: { type: 'numeric' }, expect: [400] });
+  await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: quitH.id, date: daysAgo(2), value: 1 } });
+  const qd = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
+  check(qd.currentStreak === 2 && qd.history.reduce((n, m) => n + m.completions, 0) === 1,
+    `analytics: quit habit counts clean days since the slip (streak ${qd.currentStreak})`);
+  const pauseDays = [1, 2, 3].map((n) => ({ habitId: h1.id, date: daysAgo(-n), value: -1 })); // next 3 days
+  await call('tracking', 'POST', '/entries/bulk', { token: A, body: { entries: pauseDays } });
+  const qo = await call('analytics', 'GET', '/analytics/overview', { token: A });
+  check(qo.habits.some((h) => h.id === quitH.id), 'analytics: overview includes the quit habit');
+
   // ---- groups ------------------------------------------------------------
   const g = await call('social', 'POST', '/groups', { token: A, body: { name: 'Smoke crew' } });
   await call('social', 'POST', '/join', { token: B, body: { code: g.inviteCode } });
@@ -305,6 +321,7 @@ async function main() {
     await sleep(1500);
     check(pushesFor('Stretch').length === 1,
       `reminder: exactly one push across ${LAMBDA ? 'duplicate scheduler deliveries' : '2 replicas'} (got ${pushesFor('Stretch').length})`);
+    check(pushesFor('Smoking').length === 0, 'reminder: quit habits are never nagged');
 
     // Buttons: signed links (Done, Snooze 30 min) plus Open; the ntfy app POSTs them.
     const push = pushesFor('Stretch')[0] ?? { actions: '' };

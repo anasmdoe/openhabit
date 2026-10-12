@@ -1,7 +1,7 @@
 // OpenHabit service worker: app-shell caching for offline use, and Web Push
 // reminders with Done / Snooze buttons.
 // API calls are network-only; offline writes are queued by the app itself.
-const VERSION = 'openhabit-v2';
+const VERSION = 'openhabit-v3';
 const CORE = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png'];
 
 self.addEventListener('install', (e) => {

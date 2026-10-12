@@ -58,6 +58,8 @@ interface AppState {
   loginWithSSO(): void;
   gridYear: number;
   gridMonth: number; // 1-12, the month shown in the habit grid
+  categoryFilter: string; // '' = all categories (Today + grid)
+  setCategoryFilter(c: string): void;
 
   shiftGridMonth(delta: number): Promise<void>;
   reorderHabits(ids: string[]): Promise<void>;
@@ -72,6 +74,10 @@ interface AppState {
   init(): Promise<void>;
   openArchived(): Promise<void>;
   closeArchived(): void;
+  pauseOpen: boolean;
+  setPauseOpen(open: boolean): void;
+  /** Vacation / sick days: skip every open day from..to for these habits. Returns days paused. */
+  pauseHabits(habitIds: string[], from: string, to: string): Promise<number>;
   restoreHabit(id: string): Promise<void>;
   refresh(): Promise<void>;
   refreshOverview(): Promise<void>;
@@ -120,6 +126,13 @@ function syncTimezone(user: User | null) {
 }
 
 const MILESTONES = new Set([7, 30, 100, 365]);
+const CATEGORY_KEY = 'openhabit.category';
+
+/** Habits in the selected category (all of them when the filter is empty or stale). */
+export function visibleHabits(habits: Habit[], filter: string): Habit[] {
+  if (!filter || !habits.some((h) => h.category === filter)) return habits;
+  return habits.filter((h) => h.category === filter);
+}
 
 function maybeCelebrate(
   habit: Habit,
@@ -234,6 +247,11 @@ export const useApp = create<AppState>((set, get) => ({
   },
   gridYear: new Date().getFullYear(),
   gridMonth: new Date().getMonth() + 1,
+  categoryFilter: (() => { try { return localStorage.getItem(CATEGORY_KEY) ?? ''; } catch { return ''; } })(),
+  setCategoryFilter(c) {
+    try { localStorage.setItem(CATEGORY_KEY, c); } catch { /* private mode */ }
+    set({ categoryFilter: c });
+  },
 
   async shiftGridMonth(delta) {
     const { gridYear, gridMonth } = get();
@@ -302,6 +320,23 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   closeArchived: () => set({ archivedOpen: false }),
+  pauseOpen: false,
+  setPauseOpen: (open) => set({ pauseOpen: open }),
+  async pauseHabits(habitIds, from, to) {
+    const { adapter, entries } = get();
+    if (!adapter || from > to) return 0;
+    const taken = new Set(entries.map((e) => `${e.habitId}|${e.date}`));
+    const batch: Entry[] = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      for (const id of habitIds) {
+        // never overwrite a day that already has a check-in, value or slip
+        if (!taken.has(`${id}|${d}`)) batch.push({ habitId: id, date: d, value: SKIP, notes: '' });
+      }
+    }
+    if (batch.length) await adapter.bulkPutEntries(batch);
+    await get().refresh();
+    return batch.length;
+  },
 
   async restoreHabit(id) {
     const { adapter } = get();

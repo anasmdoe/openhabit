@@ -324,6 +324,22 @@ data:
 
     GRANT SELECT, INSERT, UPDATE, DELETE ON push_subscriptions TO auth_svc;
     GRANT SELECT, DELETE ON push_subscriptions TO reminder_svc;
+
+    -- ============================================================
+    -- Habit categories ("Health", "Work", …) and quit habits. A quit
+    -- habit is a yes/no, every-day habit where an entry records a
+    -- slip: days without one are the successes.
+    -- ============================================================
+    ALTER TABLE habits ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT '';
+    ALTER TABLE habits ADD COLUMN IF NOT EXISTS kind     TEXT NOT NULL DEFAULT 'build';
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_constraint WHERE conname = 'habits_kind_check') THEN
+        ALTER TABLE habits ADD CONSTRAINT habits_kind_check CHECK (
+          kind = 'build' OR (kind = 'quit' AND type = 'boolean' AND schedule_type = 'weekdays'));
+      END IF;
+    END
+    $$;
   set-db-passwords.sh: |
     #!/usr/bin/env bash
     # Sets the login password of each per-service database role (created by

@@ -182,7 +182,7 @@ export async function tick() {
             u.ntfy_url, u.timezone, u.quiet_start, u.quiet_end
      FROM habits h
      JOIN users u ON u.id = h.user_id
-     WHERE NOT h.archived AND h.reminder_time <> ''
+     WHERE NOT h.archived AND h.reminder_time <> '' AND h.kind = 'build'
        AND (u.ntfy_url <> '' OR EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = u.id))`
   );
   if (!rows.length) return;

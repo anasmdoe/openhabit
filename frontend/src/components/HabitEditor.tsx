@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
 import { DAY_LETTERS } from '../lib/types';
+import type { HabitKind } from '../lib/types';
 import { HabitIcon, ICON_NAMES } from '../lib/icons';
 
 const COLORS = [
@@ -18,7 +19,7 @@ const COLORS = [
 ];
 
 export function HabitEditor() {
-  const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit, user } = useApp();
+  const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit, user, habits } = useApp();
   const isNew = editorHabit === 'new';
   const existing = isNew || !editorHabit ? null : editorHabit;
 
@@ -35,9 +36,19 @@ export function HabitEditor() {
   const [frequency, setFrequency] = useState(existing?.frequency ?? 3);
   const [webhookUrl, setWebhookUrl] = useState(existing?.webhookUrl ?? '');
   const [reminderTime, setReminderTime] = useState(existing?.reminderTime ?? '');
+  const [kind, setKind] = useState<HabitKind>(existing?.kind ?? 'build');
+  const [category, setCategory] = useState(existing?.category ?? '');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!editorHabit) return null;
+
+  const quit = kind === 'quit';
+  const categories = [...new Set(habits.map((h) => h.category).filter(Boolean))].sort();
+  const pickKind = (k: HabitKind, t: 'boolean' | 'numeric') => {
+    setKind(k);
+    setType(t);
+    if (k === 'quit') { setScheduleType('weekdays'); setActiveDays([0, 1, 2, 3, 4, 5, 6]); }
+  };
 
   const toggleDay = (d: number) =>
     setActiveDays((prev) =>
@@ -61,8 +72,10 @@ export function HabitEditor() {
         activeDays,
         scheduleType,
         frequency,
-        webhookUrl: webhookUrl.trim(),
-        reminderTime,
+        webhookUrl: quit ? '' : webhookUrl.trim(),
+        reminderTime: quit ? '' : reminderTime,
+        category: category.trim(),
+        kind,
       },
       existing?.id
     );
@@ -83,18 +96,24 @@ export function HabitEditor() {
         </div>
         <div className="p-4 flex flex-col gap-4">
           {isNew && (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <TypeCard
-                active={type === 'boolean'}
-                onClick={() => setType('boolean')}
+                active={!quit && type === 'boolean'}
+                onClick={() => pickKind('build', 'boolean')}
                 title="Yes or No"
-                desc="e.g. Did you wake up early today? Did you exercise?"
+                desc="e.g. Did you exercise? Did you plan your day?"
               />
               <TypeCard
-                active={type === 'numeric'}
-                onClick={() => setType('numeric')}
+                active={!quit && type === 'numeric'}
+                onClick={() => pickKind('build', 'numeric')}
                 title="Measurable"
-                desc="e.g. How many kilometers did you run? How many pages did you read?"
+                desc="e.g. How many km did you run? Pages read?"
+              />
+              <TypeCard
+                active={quit}
+                onClick={() => pickKind('quit', 'boolean')}
+                title="Break a habit"
+                desc="e.g. Smoking, doom-scrolling. Log only the slips."
               />
             </div>
           )}
@@ -103,19 +122,40 @@ export function HabitEditor() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={type === 'boolean' ? 'Wake up at 05:00' : 'Running'}
+              placeholder={quit ? 'Smoking' : type === 'boolean' ? 'Wake up at 05:00' : 'Running'}
               autoFocus
               className="input"
             />
           </Field>
 
+          {quit && (
+            <p className="text-[11px] text-ink-soft -mt-2 leading-snug">
+              Every day without a slip counts as a win, so your clean streak grows on its own.
+              Tap a day only when you slipped.
+            </p>
+          )}
+
           <Field label="Question" hint="Shown when hovering the habit">
             <input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder={type === 'boolean' ? 'Did you wake up at 05:00?' : 'How many Km did you run today?'}
+              placeholder={quit ? 'Why I am quitting' : type === 'boolean' ? 'Did you wake up at 05:00?' : 'How many Km did you run today?'}
               className="input"
             />
+          </Field>
+
+          <Field label="Category" hint="optional — groups habits, e.g. Health, Work">
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              list="habit-categories"
+              maxLength={40}
+              placeholder="Health"
+              className="input"
+            />
+            <datalist id="habit-categories">
+              {categories.map((c) => <option key={c} value={c} />)}
+            </datalist>
           </Field>
 
           {type === 'numeric' && (
@@ -138,7 +178,7 @@ export function HabitEditor() {
             </div>
           )}
 
-          <Field label="Schedule">
+          {!quit && <Field label="Schedule">
             <div className="flex gap-1.5 mb-2.5">
               {([['weekdays', 'Fixed days'], ['per_week', 'Times per week']] as const).map(([id, label]) => (
                 <button
@@ -192,7 +232,7 @@ export function HabitEditor() {
                 <span className="text-[12px] text-ink-soft">times per week, any days</span>
               </div>
             )}
-          </Field>
+          </Field>}
 
           <Field label="Icon" hint="optional">
             <div className="grid grid-cols-9 gap-1">
@@ -222,7 +262,7 @@ export function HabitEditor() {
             </div>
           </Field>
 
-          <Field label="Reminder" hint="optional — needs an ntfy topic in your profile">
+          {!quit && <Field label="Reminder" hint="optional — ntfy or this device, set in your profile">
             <div className="flex items-center gap-2">
               <input
                 className="input num w-32"
@@ -237,12 +277,12 @@ export function HabitEditor() {
             </div>
             {reminderTime && user && !user.ntfyUrl && (
               <p className="text-[11px] text-amber-400 mt-1">
-                No reminder will be sent yet: add your ntfy topic under Account → Edit profile.
+                Reminders need an ntfy topic or “Reminders on this device” turned on (Account → Edit profile).
               </p>
             )}
-          </Field>
+          </Field>}
 
-          <Field label="Webhook" hint="optional — POST when you complete it (not a reminder)">
+          {!quit && <Field label="Webhook" hint="optional — POST when you complete it (not a reminder)">
             <input
               className="input"
               type="url"
@@ -251,7 +291,7 @@ export function HabitEditor() {
               onChange={(e) => setWebhookUrl(e.target.value)}
               maxLength={500}
             />
-          </Field>
+          </Field>}
 
           <Field label="Color">
             <div className="flex gap-1.5 flex-wrap items-center">

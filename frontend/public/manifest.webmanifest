@@ -37,5 +37,32 @@
       "type": "image/svg+xml",
       "purpose": "maskable"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "New habit",
+      "short_name": "New habit",
+      "url": "/?action=new",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Take a break",
+      "short_name": "Pause",
+      "description": "Vacation or sick days: keep your streaks",
+      "url": "/?action=pause",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
   ]
 }

@@ -29,8 +29,14 @@ export const weekKey = (s: string) => {
 export const SKIP = -1;
 export const isSkip = (v: number | null | undefined) => v === SKIP;
 
+// Quit habits: an entry records a slip, so a day with none counts as done
+// (callers keep future days out).
+export const isQuit = (h: Pick<Habit, 'kind'>) => h.kind === 'quit';
+
 export function isCompleted(habit: Habit, value: number | undefined | null): boolean {
-  if (value == null || isSkip(value)) return false;
+  if (isSkip(value)) return false;
+  if (isQuit(habit)) return value == null || value < 1;
+  if (value == null) return false;
   if (habit.type === 'boolean') return value >= 1;
   return habit.targetType === 'at_most' ? value <= habit.target : value >= habit.target;
 }
@@ -109,7 +115,7 @@ export function computeOverview(
       p.goal += 1;
       goal += 1;
       scheduled += 1;
-      if (isCompleted(p.h, value)) {
+      if (isCompleted(p.h, value) && (!isQuit(p.h) || dateStr <= today)) {
         completed += 1;
         completedTotal += 1;
         p.actual += 1;
@@ -186,7 +192,7 @@ export function computeHabitDetail(habit: Habit, entries: Entry[]): HabitDetail 
       const value = entryMap.get(d)?.value;
       if (isSkip(value)) continue;
       const done = isCompleted(habit, value);
-      if (!done && d === today) continue; // today is still open: not a miss yet
+      if (!done && d === today && !isQuit(habit)) continue; // today is still open (a slip, though, counts)
       wd[dow(d)].scheduled += 1;
       if (done) {
         wd[dow(d)].completed += 1;
@@ -246,7 +252,8 @@ export function computeHabitDetail(habit: Habit, entries: Entry[]): HabitDetail 
     const key = date.slice(0, 7);
     if (!hist.has(key)) hist.set(key, { completions: 0, sum: 0 });
     const h = hist.get(key)!;
-    if (isCompleted(habit, entry.value)) h.completions += 1;
+    // quit habits: entries are slips, so the history counts slips
+    if (isQuit(habit) ? entry.value >= 1 : isCompleted(habit, entry.value)) h.completions += 1;
     if (habit.type === 'numeric' && entry.value >= 0) h.sum += entry.value;
   }
 

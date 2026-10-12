@@ -76,7 +76,7 @@ async function auth(req, res, next) {
 const HABIT_COLS = `id, name, question, type, unit, target::float AS target,
   target_type AS "targetType", color, icon, schedule_type AS "scheduleType",
   frequency, webhook_url AS "webhookUrl", reminder_time AS "reminderTime", active_days AS "activeDays",
-  position, archived, created_at AS "createdAt"`;
+  position, archived, category, kind, created_at AS "createdAt"`;
 
 const asyncH = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
@@ -99,6 +99,8 @@ function validateHabit(body, partial = false) {
     activeDays: (v) => Array.isArray(v) && v.length > 0 && v.every((d) => Number.isInteger(d) && d >= 0 && d <= 6),
     position: (v) => Number.isInteger(v),
     archived: (v) => typeof v === 'boolean',
+    category: (v) => typeof v === 'string' && v.trim().length <= 40,
+    kind: (v) => ['build', 'quit'].includes(v),
   };
   for (const [key, check] of Object.entries(fields)) {
     if (body[key] === undefined) {
@@ -106,7 +108,11 @@ function validateHabit(body, partial = false) {
       continue;
     }
     if (!check(body[key])) errors.push(`invalid ${key}`);
-    else out[key] = body[key];
+    else out[key] = typeof body[key] === 'string' && key === 'category' ? body[key].trim() : body[key];
+  }
+  // a quit habit is yes/no and daily: logging it records a slip
+  if (out.kind === 'quit' && (out.type === 'numeric' || out.scheduleType === 'per_week')) {
+    errors.push('a quit habit is yes/no and scheduled by weekday');
   }
   return { errors, out };
 }
@@ -141,9 +147,9 @@ app.post('/habits', asyncH(async (req, res) => {
   if (errors.length) return res.status(400).json({ errors });
   const { rows } = await pool.query(
     `INSERT INTO habits (user_id, name, question, type, unit, target, target_type, color, icon,
-       schedule_type, frequency, webhook_url, reminder_time, active_days, position)
+       schedule_type, frequency, webhook_url, reminder_time, active_days, position, category, kind)
      VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $11, $12, $13, $14, $15, $8,
-       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)))
+       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)), $16, $17)
      RETURNING ${HABIT_COLS}`,
     [
       out.name.trim(),
@@ -161,6 +167,8 @@ app.post('/habits', asyncH(async (req, res) => {
       out.frequency ?? 3,
       out.webhookUrl ?? '',
       out.reminderTime ?? '',
+      out.category ?? '',
+      out.kind ?? 'build',
     ]
   );
   res.status(201).json(rows[0]);
@@ -194,7 +202,7 @@ app.put('/habits/:id', asyncH(async (req, res) => {
     targetType: 'target_type', color: 'color', icon: 'icon', activeDays: 'active_days',
     scheduleType: 'schedule_type', frequency: 'frequency', webhookUrl: 'webhook_url',
     reminderTime: 'reminder_time',
-    position: 'position', archived: 'archived',
+    position: 'position', archived: 'archived', category: 'category', kind: 'kind',
   };
   const sets = [];
   const vals = [];
@@ -220,6 +228,8 @@ app.delete('/habits/:id', asyncH(async (req, res) => {
 
 // ---- error handling ---------------------------------------------------
 app.use((err, _req, res, _next) => {
+  // habits_kind_check: e.g. turning a quit habit numeric through a partial update
+  if (err.code === '23514') return res.status(400).json({ errors: ['a quit habit is yes/no and scheduled by weekday'] });
   console.error(err);
   res.status(500).json({ error: 'internal error' });
 });

@@ -20,7 +20,7 @@ function habit(over: Partial<Habit> = {}): Habit {
   return {
     id: 'h1', name: 'Test', question: '', type: 'boolean', unit: '', target: 1,
     targetType: 'at_least', color: '#000', icon: '', scheduleType: 'weekdays', frequency: 7,
-    webhookUrl: '', reminderTime: '', activeDays: ALL_DAYS, position: 0, archived: false,
+    webhookUrl: '', reminderTime: '', activeDays: ALL_DAYS, position: 0, archived: false, category: '', kind: 'build',
     createdAt: '2026-01-01T00:00:00Z', ...over,
   };
 }
@@ -193,5 +193,51 @@ describe('quickCurrentStreak (list view)', () => {
     const entries = [...daysAgo(h, [0, 1, 3, 5]), ...daysAgo(h, [2], SKIP)];
     // done 0, 1, 3 + skipped 2 (excused, not counted); day 4 missed ends it
     expect(quickCurrentStreak(h, map(h, entries))).toBe(3);
+  });
+});
+
+describe('quit habits (an entry is a slip)', () => {
+  const quit = (createdDaysAgo: number) =>
+    habit({ kind: 'quit', createdAt: `${addDays(TODAY, -createdDaysAgo)}T00:00:00Z` });
+  const lookupOf = (h: Habit, entries: Entry[]) =>
+    new Map(entries.map((e) => [`${h.id}|${e.date}`, e.value]));
+
+  it('days without a slip count as done; a slip or skip does not', () => {
+    const h = quit(10);
+    expect(isCompleted(h, undefined)).toBe(true);
+    expect(isCompleted(h, 0)).toBe(true);
+    expect(isCompleted(h, 1)).toBe(false);
+    expect(isCompleted(h, SKIP)).toBe(false);
+  });
+
+  it('the clean streak counts from the start, not from before the habit existed', () => {
+    const h = quit(5); // created 5 days ago: days -5..0 are clean
+    expect(computeHabitDetail(h, []).currentStreak).toBe(6);
+    expect(quickCurrentStreak(h, new Map())).toBe(6);
+  });
+
+  it('a slip resets the streak; a slip today means a streak of 0', () => {
+    const h = quit(20);
+    const slip3 = daysAgo(h, [3]);
+    expect(computeHabitDetail(h, slip3).currentStreak).toBe(3);
+    expect(quickCurrentStreak(h, lookupOf(h, slip3))).toBe(3);
+    const slipToday = daysAgo(h, [0]);
+    expect(computeHabitDetail(h, slipToday).currentStreak).toBe(0);
+    expect(quickCurrentStreak(h, lookupOf(h, slipToday))).toBe(0);
+  });
+
+  it('a skipped day is excused, and the history counts slips', () => {
+    const h = quit(20);
+    const entries = [...daysAgo(h, [2], SKIP), ...daysAgo(h, [8, 9])];
+    const d = computeHabitDetail(h, entries);
+    expect(d.currentStreak).toBe(7); // days 7..0 minus the skip on day 2
+    expect(d.history.reduce((n, m) => n + m.completions, 0)).toBe(2);
+  });
+
+  it('the month overview never counts future days as clean', () => {
+    const h = quit(60);
+    const o = computeOverview([h], [], [], 2026, 10);
+    expect(o.habits[0].actual).toBe(14); // Oct 1..14, no slips
+    expect(o.habits[0].goal).toBe(31);
   });
 });

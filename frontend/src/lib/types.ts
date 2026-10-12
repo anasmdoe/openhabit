@@ -1,5 +1,7 @@
 export type HabitType = 'boolean' | 'numeric';
 export type TargetType = 'at_least' | 'at_most';
+/** build: do it; quit: an entry records a slip, so days without one are the wins */
+export type HabitKind = 'build' | 'quit';
 
 export interface Habit {
   id: string;
@@ -18,6 +20,8 @@ export interface Habit {
   activeDays: number[]; // 0=Sun .. 6=Sat
   position: number;
   archived: boolean;
+  category: string; // '' = none
+  kind: HabitKind;
   createdAt: string;
 }
 

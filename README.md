@@ -59,6 +59,19 @@ it standalone.
 - **PWA + offline** — installable app; the shell works offline and any entries,
   skips, notes, or wellness logged while offline are queued locally and synced
   automatically when the connection returns
+- **Today at a glance** — a progress ring and one big tap target per habit
+  (full-width rows on phones): tap to check in, **+1** to count up measurable
+  habits (water, pages, sets), a streak flame per habit, and a gentle
+  *don't miss twice* nudge on habits missed yesterday
+- **Categories** — group habits (Health, Work, …); chips filter Today and the
+  grid, and *By category* shows each group's month completion
+- **Break a habit** — quit habits (smoking, doom-scrolling) where you log only
+  the slips: every other day counts, so your clean streak grows on its own.
+  Slips show as ✕; quit habits are never reminded
+- **Take a break** — vacation or sick? Pause chosen habits for a date range:
+  the days are skipped (excused), streaks survive, reminders stay quiet, and
+  days you already logged are left alone. Also on the installed app's
+  home-screen shortcut menu (long-press the icon), next to *New habit*
 - **Skip days** — tap a done checkmark again (or right-click / long-press any
   cell) to mark a day as skipped: it's excused from goals and your streak is
   preserved (`value = -1` in the API). Sick days shouldn't cost you a streak.
@@ -97,6 +110,7 @@ it standalone.
   (`PUSH_ENDPOINT_HOSTS` changes the list); devices the push service reports
   as gone are dropped. Both channels can be on at once. Do we need a native
   Android app? Not yet — see [docs/mobile-strategy.md](docs/mobile-strategy.md).
+  What's next, and the user research behind it: [docs/roadmap.md](docs/roadmap.md).
 - **Milestones & templates** — confetti + share card at 7/30/100/365-day
   streaks; first-run template packs (Morning routine, Fitness base, Digital detox)
 - **Export & import** — download your entire dataset as JSON (habits, entries
@@ -434,7 +448,7 @@ DELETE /api/auth/push/subscriptions    {endpoint}
 All routes below require:  Authorization: Bearer <token>
 
 GET    /api/habits                     list
-POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?}
+POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?, category?, kind?: build|quit}
 PUT    /api/habits/:id                 partial update (incl. archived)
 DELETE /api/habits/:id
 PUT    /api/habits/reorder             {ids: [...]}

@@ -93,7 +93,7 @@ app.post('/entries/done/:token', asyncH(async (req, res) => {
   const a = verifyAction(JWT_SECRET, req.params.token, 'done');
   if (!a) return res.status(403).type('text').send('This link is invalid or has expired.');
   const { rows } = await pool.query(
-    `SELECT user_id AS "userId", name FROM habits WHERE id = $1 AND type = 'boolean' AND NOT archived`,
+    `SELECT user_id AS "userId", name FROM habits WHERE id = $1 AND type = 'boolean' AND kind = 'build' AND NOT archived`,
     [a.habitId]
   );
   if (!rows.length) return res.status(404).type('text').send('Habit not found.');
@@ -151,7 +151,7 @@ async function completionWebhook(habitId, userId, date, value) {
   if (value === -1) return;
   const { rows } = await pool.query(
     `SELECT name, type, target::float AS target, target_type AS "targetType", webhook_url AS url
-     FROM habits WHERE id = $1 AND user_id = $2 AND webhook_url <> ''`,
+     FROM habits WHERE id = $1 AND user_id = $2 AND webhook_url <> '' AND kind = 'build'`,
     [habitId, userId]
   );
   if (!rows.length) return;

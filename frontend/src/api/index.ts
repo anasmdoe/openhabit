@@ -1,7 +1,7 @@
 // Data layer with two adapters:
 //   api   — talks to the microservices through /api/* (gateway or ingress)
 //   local — localStorage, used when no backend is reachable (demo / offline)
-import type { Entry, Habit, HabitDetail, Insights, Overview, WellnessDay } from '../lib/types';
+import type { Entry, Habit, HabitDetail, HabitKind, Insights, Overview, WellnessDay } from '../lib/types';
 import { computeHabitDetail, computeInsights, computeOverview, todayISO, addDays } from '../lib/stats';
 
 export type DataMode = 'api' | 'local';
@@ -20,6 +20,8 @@ export interface HabitInput {
   webhookUrl?: string;
   reminderTime?: string;
   activeDays?: number[];
+  category?: string;
+  kind?: HabitKind;
 }
 
 export interface DataAdapter {
@@ -274,6 +276,7 @@ function seedDemo(): LocalDB {
   ): Habit => ({
     id: uuid(), name, question, type, unit, target, targetType: 'at_least',
     color, icon, scheduleType, frequency, webhookUrl: '', reminderTime: '', activeDays, position, archived: false,
+    category: '', kind: 'build',
     createdAt: `${addDays(today, -120)}T00:00:00Z`,
   });
 
@@ -285,8 +288,11 @@ function seedDemo(): LocalDB {
     mk('Day planning', 'Did you plan your day?', 'boolean', '', 1, '#E0685B', 'pen', [1, 2, 3, 4, 5], 4),
     mk('No sugar', 'Did you avoid sugar?', 'boolean', '', 1, '#63C7B2', 'food', [0, 1, 2, 3, 4, 5, 6], 5),
     mk('Meditation', 'How many minutes did you meditate?', 'numeric', 'min', 10, '#8FB4E3', 'meditate', [0, 1, 2, 3, 4, 5, 6], 6),
-    mk('Social media detox', 'Did you stay off social media?', 'boolean', '', 1, '#D9A0C3', 'nophone', [0, 1, 2, 3, 4, 5, 6], 7),
+    mk('Social media scrolling', 'Tap on a day you slipped', 'boolean', '', 1, '#D9A0C3', 'nophone', [0, 1, 2, 3, 4, 5, 6], 7),
   ];
+  const categories = ['Morning', 'Fitness', 'Fitness', 'Mind', 'Morning', 'Health', 'Mind', 'Mind'];
+  habits.forEach((h, i) => { h.category = categories[i]; });
+  habits[7].kind = 'quit'; // a habit to break: entries are slips
 
   // deterministic pseudo-random completion patterns
   let s = 42;
@@ -300,7 +306,7 @@ function seedDemo(): LocalDB {
     const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
     habits.forEach((h, hi) => {
       if (!h.activeDays.includes(weekday)) return;
-      if (rand() > rates[hi]) return;
+      if (h.kind === 'quit' ? (i === 0 || rand() < 0.92) : rand() > rates[hi]) return; // quit: occasional slips, none today
       let value = 1;
       if (h.type === 'numeric') {
         const factor = 0.6 + rand() * 1.2;
@@ -352,6 +358,8 @@ const localAdapter: DataAdapter = {
       activeDays: input.activeDays ?? [0, 1, 2, 3, 4, 5, 6],
       position: db.habits.length,
       archived: false,
+      category: (input.category ?? '').trim(),
+      kind: input.kind ?? 'build',
       createdAt: new Date().toISOString(),
     };
     db.habits.push(habit);

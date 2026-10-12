@@ -94,8 +94,12 @@ const weekKey = (s) => { // Monday-start week bucket
 const SKIP = -1;
 const isSkip = (v) => v === SKIP;
 
+// quit habits: an entry records a slip, so a day with none counts as done
+// (callers keep future days out)
 function isCompleted(habit, value) {
-  if (value == null || isSkip(value)) return false;
+  if (isSkip(value)) return false;
+  if (habit.kind === 'quit') return value == null || value < 1;
+  if (value == null) return false;
   if (habit.type === 'boolean') return value >= 1;
   return habit.targetType === 'at_most' ? value <= habit.target : value >= habit.target;
 }
@@ -112,7 +116,7 @@ async function loadHabits(userId) {
     `SELECT h.id, h.name, h.question, h.type, h.unit, h.target::float AS target,
             h.target_type AS "targetType", h.color, h.icon,
             h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays",
-            h.position,
+            h.position, h.kind,
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
      FROM habits h
      LEFT JOIN entries e ON e.habit_id = h.id
@@ -162,7 +166,7 @@ function quickStreak(habit, valById) {
     let d = today;
     for (let i = 0; i < 400; i++, d = addDays(d, -1)) {
       const v = valById.get(d);
-      if (v != null && isCompleted(habit, v)) cnt.set(weekKey(d), (cnt.get(weekKey(d)) ?? 0) + 1);
+      if (isCompleted(habit, v)) cnt.set(weekKey(d), (cnt.get(weekKey(d)) ?? 0) + 1);
     }
     let streak = 0;
     let wk = weekKey(today);
@@ -176,11 +180,12 @@ function quickStreak(habit, valById) {
   let streak = 0;
   let d = today;
   for (let i = 0; i < 400; i++, d = addDays(d, -1)) {
+    if (habit.kind === 'quit' && d < habit.createdDate) break; // clean days count from the start
     if (!habit.activeDays.includes(dow(d))) continue;
     const v = valById.get(d);
     if (isSkip(v)) continue;
-    if (v != null && isCompleted(habit, v)) streak += 1;
-    else if (d === today) continue;
+    if (isCompleted(habit, v)) streak += 1;
+    else if (d === today && habit.kind !== 'quit') continue; // a slip today does count
     else break;
   }
   return streak;
@@ -242,7 +247,7 @@ function milestoneCrossings(habit, valById, windowDays = 14) {
       if (!habit.activeDays.includes(dow(d)) || d < habit.createdDate) continue;
       const v = valById.get(d);
       if (isSkip(v)) continue;
-      if (v != null && isCompleted(habit, v)) {
+      if (isCompleted(habit, v)) {
         count += 1;
         if (DAY_MILESTONES.includes(count) && d >= cutoff) {
           out.push({ milestone: count, unit: 'days', date: d });
@@ -254,7 +259,7 @@ function milestoneCrossings(habit, valById, windowDays = 14) {
   } else {
     const cnt = new Map();
     for (const [d, v] of valById) {
-      if (v != null && isCompleted(habit, v)) cnt.set(weekKey(d), (cnt.get(weekKey(d)) ?? 0) + 1);
+      if (isCompleted(habit, v)) cnt.set(weekKey(d), (cnt.get(weekKey(d)) ?? 0) + 1);
     }
     const thisWeek = weekKey(today);
     let count = 0;
@@ -320,7 +325,7 @@ app.get('/analytics/overview', asyncH(async (req, res) => {
       p.goal += 1;
       goal += 1;
       scheduled += 1;
-      if (isCompleted(p.h, value)) {
+      if (isCompleted(p.h, value) && (p.h.kind !== 'quit' || dateStr <= today)) {
         completed += 1;
         completedTotal += 1;
         p.actual += 1;
@@ -391,6 +396,7 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT h.id, h.name, h.question, h.type, h.unit, h.target::float AS target, h.target_type AS "targetType",
             h.color, h.icon, h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays",
+            h.kind, h.category,
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
      FROM habits h
      LEFT JOIN entries e ON e.habit_id = h.id
@@ -418,7 +424,7 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
       const value = entryMap.get(d);
       if (isSkip(value)) continue; // excused: streak and score untouched
       const done = isCompleted(habit, value);
-      if (!done && d === today) continue; // today is still open: not a miss yet
+      if (!done && d === today && habit.kind !== 'quit') continue; // today is still open: not a miss yet
       wd[dow(d)].scheduled += 1;
       if (done) {
         wd[dow(d)].completed += 1;
@@ -479,7 +485,8 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
     const key = date.slice(0, 7);
     if (!hist.has(key)) hist.set(key, { completions: 0, sum: 0 });
     const h = hist.get(key);
-    if (isCompleted(habit, value)) h.completions += 1;
+    // quit habits: entries are slips, so the history counts slips
+    if (habit.kind === 'quit' ? value >= 1 : isCompleted(habit, value)) h.completions += 1;
     if (habit.type === 'numeric' && value >= 0) h.sum += value;
   }
 
@@ -596,7 +603,7 @@ app.get('/analytics/groups/:id', asyncH(async (req, res) => {
   const { rows: shared } = await pool.query(
     `SELECT h.id, h.name, h.color, h.icon, h.type, h.unit, h.target::float AS target,
             h.target_type AS "targetType", h.schedule_type AS "scheduleType",
-            h.frequency, h.active_days AS "activeDays", h.user_id AS "userId",
+            h.frequency, h.active_days AS "activeDays", h.user_id AS "userId", h.kind,
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)),'YYYY-MM-DD') AS "createdDate"
      FROM habit_shares hs
      JOIN habits h ON h.id = hs.habit_id AND NOT h.archived
@@ -664,7 +671,7 @@ app.get('/analytics/groups/:id', asyncH(async (req, res) => {
         for (let d = start; d <= end && d <= today; d = addDays(d, 1)) weeks.add(weekKey(d));
         for (const wk of weeks) {
           let c = 0;
-          for (let i = 0; i < 7; i++) { const v = valById.get(addDays(wk, i)); if (v != null && isCompleted(h, v)) c++; }
+          for (let i = 0; i < 7; i++) { const v = valById.get(addDays(wk, i)); if (isCompleted(h, v)) c++; }
           hGoal += h.frequency;
           hActual += Math.min(c, h.frequency);
         }
@@ -686,7 +693,8 @@ app.get('/analytics/groups/:id', asyncH(async (req, res) => {
         const v = valById.get(d);
         let st = 'off';
         if (isSkip(v)) st = 'skip';
-        else if (v != null && isCompleted(h, v)) st = 'done';
+        else if (h.kind === 'quit' && d < h.createdDate) st = 'off';
+        else if (isCompleted(h, v)) st = 'done';
         else if (isFixedDay(h) ? h.activeDays.includes(dow(d)) : true) st = (d <= today ? 'miss' : 'off');
         strip.push(st);
       }
