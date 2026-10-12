@@ -1,0 +1,71 @@
+# Two Ingresses: the API one rewrites /api/<service-path> -> /<service-path>,
+# the frontend one serves everything else. Assumes ingress-nginx.
+# Set `host` to whatever DNS name you use in your homelab.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openhabit-api
+  namespace: openhabit
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: habits.home.lab          # <-- change to your hostname
+      http:
+        paths:
+          - path: /api/(groups.*|invites.*|join|reactions.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: social-service
+                port:
+                  number: 3005
+          - path: /api/(auth.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 3004
+          - path: /api/(habits.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: habit-service
+                port:
+                  number: 3001
+          - path: /api/((?:entries|wellness).*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: tracking-service
+                port:
+                  number: 3002
+          - path: /api/(analytics.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: analytics-service
+                port:
+                  number: 3003
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openhabit-frontend
+  namespace: openhabit
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: habits.home.lab          # <-- change to your hostname
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

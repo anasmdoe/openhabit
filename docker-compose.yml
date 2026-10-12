@@ -1,0 +1,198 @@
+name: openhabit
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: openhabit
+      POSTGRES_PASSWORD: openhabit
+      POSTGRES_DB: openhabit
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openhabit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  auth-service:
+    build: ./services/auth-service
+    environment:
+      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      PORT: "3004"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      # set ALLOW_REGISTRATION: "false" once your accounts exist
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      OIDC_POST_LOGIN_URI: ${OIDC_POST_LOGIN_URI:-/}
+      OIDC_PROVIDER_NAME: ${OIDC_PROVIDER_NAME:-SSO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  habit-service:
+    build: ./services/habit-service
+    environment:
+      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      PORT: "3001"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tracking-service:
+    build: ./services/tracking-service
+    environment:
+      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      PORT: "3002"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  reminder-service:
+    build: ./services/reminder-service
+    environment:
+      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      PORT: "3006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  social-service:
+    build: ./services/social-service
+    environment:
+      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      PORT: "3005"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  analytics-service:
+    build: ./services/analytics-service
+    environment:
+      DATABASE_URL: postgres://openhabit:openhabit@postgres:5432/openhabit
+      PORT: "3003"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - auth-service
+      - habit-service
+      - tracking-service
+      - analytics-service
+      - social-service
+    restart: unless-stopped
+
+  # One-shot demo data loader. Run manually:
+  #   docker compose run --rm seed
+  # Apply schema upgrades to an existing database (no data loss):
+  #   docker compose run --rm migrate
+  # One-off / cron-able backup:  docker compose run --rm backup
+  # Writes ./backups/openhabit-<timestamp>.sql.gz and keeps the newest BACKUP_KEEP.
+  backup:
+    image: postgres:16-alpine
+    profiles: ["tools"]
+    volumes:
+      - ./backups:/backups
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-openhabit}
+      BACKUP_KEEP: "14"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        ts="$$(date -u +%Y%m%d-%H%M%S)"
+        out="/backups/openhabit-$${ts}.sql.gz"
+        pg_dump --clean --if-exists --no-owner --no-privileges -h postgres -U openhabit openhabit \
+          | gzip -9 > "$${out}.partial"
+        mv "$${out}.partial" "$${out}"
+        gzip -t "$${out}"
+        echo "wrote $$(wc -c < "$${out}") bytes -> $${out}"
+        ls -1t /backups/openhabit-*.sql.gz 2>/dev/null \
+          | tail -n +"$$((BACKUP_KEEP + 1))" \
+          | while read -r old; do echo "pruning $${old}"; rm -f "$${old}"; done
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    image: postgres:16-alpine
+    profiles: ["tools"]
+    volumes:
+      - ./db/init.sql:/init.sql:ro
+    environment:
+      PGPASSWORD: openhabit
+    entrypoint: ["psql", "-h", "postgres", "-U", "openhabit", "-d", "openhabit", "-v", "ON_ERROR_STOP=1", "-f", "/init.sql"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    image: node:22-alpine
+    profiles: ["tools"]
+    working_dir: /work
+    volumes:
+      - ./db/seed.js:/work/seed.js:ro
+    command: ["node", "seed.js", "http://gateway:8080/api", "demo@home.lab", "demo-password-123"]
+    depends_on:
+      - gateway
+
+  # ---- Observability (opt-in): docker compose --profile monitoring up -d ----
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["monitoring"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["monitoring"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3030:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  promdata:
+  grafanadata:
+  pgdata:

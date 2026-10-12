@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backups
+  namespace: openhabit
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+  # If your cluster has a preferred class for bulk/cheap storage, set it here.
+  # storageClassName: standard
+---
+# Nightly logical backup of the whole database to a PVC, gzip-compressed,
+# with rotation. Restore instructions are in the README.
+#
+# Schedule is 02:30 in the cluster's timezone. Adjust `schedule` as needed.
+# Retention is controlled by BACKUP_KEEP (number of most-recent dumps to keep).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: openhabit
+spec:
+  schedule: "30 2 * * *"
+  concurrencyPolicy: Forbid          # never overlap two dumps
+  startingDeadlineSeconds: 3600      # if a node was down, still run when it returns
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 70             # postgres uid in the alpine image
+            runAsGroup: 70
+            fsGroup: 70               # so the mounted PVC is writable
+          containers:
+            - name: pg-dump
+              image: postgres:16-alpine
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: POSTGRES_PASSWORD
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: POSTGRES_DB
+                - name: BACKUP_KEEP
+                  value: "14"         # keep the 14 most recent dumps (~2 weeks nightly)
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  ts="$(date -u +%Y%m%d-%H%M%S)"
+                  out="/backups/openhabit-${ts}.sql.gz"
+                  echo "dumping ${PGDATABASE} -> ${out}"
+                  # --clean --if-exists makes the dump self-contained for restore.
+                  pg_dump --clean --if-exists --no-owner --no-privileges \
+                    | gzip -9 > "${out}.partial"
+                  mv "${out}.partial" "${out}"        # atomic: partials never look complete
+                  # verify the gzip is intact before we trust it for rotation
+                  gzip -t "${out}"
+                  bytes="$(wc -c < "${out}")"
+                  echo "wrote ${bytes} bytes"
+                  # rotation: keep the newest $BACKUP_KEEP, delete the rest
+                  ls -1t /backups/openhabit-*.sql.gz 2>/dev/null \
+                    | tail -n +"$((BACKUP_KEEP + 1))" \
+                    | while read -r old; do echo "pruning ${old}"; rm -f "${old}"; done
+                  echo "backup complete"
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: postgres-backups

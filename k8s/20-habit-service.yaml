@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: habit-service
+  namespace: openhabit
+  labels:
+    app: habit-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: habit-service
+  template:
+    metadata:
+      labels:
+        app: habit-service
+    spec:
+      containers:
+      - name: habit-service
+        image: openhabit/habit-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3001
+        env:
+        - name: PORT
+          value: '3001'
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JWT_SECRET
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/openhabit
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 3001
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3001
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: habit-service
+  namespace: openhabit
+  annotations:
+    prometheus.io/scrape: 'true'
+    prometheus.io/port: '3001'
+    prometheus.io/path: /metrics
+spec:
+  selector:
+    app: habit-service
+  ports:
+  - port: 3001
+    targetPort: 3001

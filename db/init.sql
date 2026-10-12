@@ -1,0 +1,228 @@
+-- OpenHabit database schema (multi-user)
+-- Ownership: users -> auth-service | habits -> habit-service
+--            entries, wellness -> tracking-service | analytics: read-only
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ============================================================
+-- users (owned by auth-service)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS users (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email         TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL DEFAULT '',
+  password_hash TEXT,                        -- NULL for SSO-only accounts
+  oidc_sub      TEXT,                         -- OIDC subject (unique per issuer)
+  oidc_iss      TEXT,                         -- OIDC issuer that vouches for oidc_sub
+  ntfy_url      TEXT NOT NULL DEFAULT '',    -- ntfy topic URL for reminders
+  timezone      TEXT NOT NULL DEFAULT 'UTC', -- IANA name, auto-set by the app
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
+-- habits (owned by habit-service)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS habits (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  question    TEXT NOT NULL DEFAULT '',
+  type        TEXT NOT NULL DEFAULT 'boolean' CHECK (type IN ('boolean', 'numeric')),
+  unit        TEXT NOT NULL DEFAULT '',
+  target      NUMERIC NOT NULL DEFAULT 1,
+  target_type TEXT NOT NULL DEFAULT 'at_least' CHECK (target_type IN ('at_least', 'at_most')),
+  color       TEXT NOT NULL DEFAULT '#7FD1AE',
+  icon        TEXT NOT NULL DEFAULT '',
+  schedule_type TEXT NOT NULL DEFAULT 'weekdays' CHECK (schedule_type IN ('weekdays', 'per_week')),
+  frequency   INTEGER NOT NULL DEFAULT 3 CHECK (frequency BETWEEN 1 AND 7), -- times/week for per_week
+  webhook_url TEXT NOT NULL DEFAULT '',
+  reminder_time TEXT NOT NULL DEFAULT '',    -- 'HH:MM' local time, '' = off
+  active_days INTEGER[] NOT NULL DEFAULT '{0,1,2,3,4,5,6}', -- 0=Sunday .. 6=Saturday
+  position    INTEGER NOT NULL DEFAULT 0,
+  archived    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_habits_user ON habits (user_id, archived, position);
+
+-- ============================================================
+-- entries (owned by tracking-service); user scoping via habit FK
+-- value = -1 is the SKIP sentinel: day excused, streak preserved
+-- ============================================================
+CREATE TABLE IF NOT EXISTS entries (
+  habit_id  UUID NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
+  date      DATE NOT NULL,
+  value     NUMERIC NOT NULL DEFAULT 1,
+  notes     TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (habit_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entries_date ON entries (date);
+
+-- ============================================================
+-- wellness (owned by tracking-service) - per user per day
+-- ============================================================
+CREATE TABLE IF NOT EXISTS wellness (
+  user_id     UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  date        DATE NOT NULL,
+  mood        INTEGER CHECK (mood BETWEEN 1 AND 5),
+  sleep_hours NUMERIC CHECK (sleep_hours >= 0 AND sleep_hours <= 24),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, date)
+);
+
+-- ============================================================
+-- Per-service roles (least privilege). Local-dev passwords;
+-- production overrides via env / secrets.
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'auth_svc') THEN
+    CREATE ROLE auth_svc LOGIN PASSWORD 'auth_svc';
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'habit_svc') THEN
+    CREATE ROLE habit_svc LOGIN PASSWORD 'habit_svc';
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'tracking_svc') THEN
+    CREATE ROLE tracking_svc LOGIN PASSWORD 'tracking_svc';
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'analytics_svc') THEN
+    CREATE ROLE analytics_svc LOGIN PASSWORD 'analytics_svc';
+  END IF;
+END
+$$;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON users    TO auth_svc;
+GRANT SELECT, INSERT, UPDATE, DELETE ON habits   TO habit_svc;
+GRANT SELECT                          ON habits   TO tracking_svc, analytics_svc;
+GRANT SELECT, INSERT, UPDATE, DELETE ON entries  TO tracking_svc;
+GRANT SELECT, INSERT, UPDATE, DELETE ON wellness TO tracking_svc;
+GRANT SELECT                          ON entries, wellness TO analytics_svc;
+
+-- ============================================================
+-- collaboration (owned by social-service)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS groups (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  icon        TEXT NOT NULL DEFAULT '',
+  owner_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  invite_code TEXT NOT NULL UNIQUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id  UUID NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+  user_id   UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  role      TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members (user_id);
+
+CREATE TABLE IF NOT EXISTS group_invites (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  group_id      UUID NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+  inviter_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  invitee_email TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (group_id, invitee_email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_invites_email ON group_invites (lower(invitee_email), status);
+
+-- which habits a user exposes to a given group (opt-in, per habit)
+CREATE TABLE IF NOT EXISTS habit_shares (
+  habit_id  UUID NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
+  group_id  UUID NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+  PRIMARY KEY (habit_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_habit_shares_group ON habit_shares (group_id);
+
+-- habits owned by a group: everyone tracks the same thing
+CREATE TABLE IF NOT EXISTS group_habits (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  group_id   UUID NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  question   TEXT NOT NULL DEFAULT '',
+  icon       TEXT NOT NULL DEFAULT '',
+  color      TEXT NOT NULL DEFAULT '#7FD1AE',
+  created_by UUID REFERENCES users (id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_habits_group ON group_habits (group_id);
+
+-- each member's check-in on a group habit (value 1 = done, -1 = skip/excused)
+CREATE TABLE IF NOT EXISTS group_habit_entries (
+  group_habit_id UUID NOT NULL REFERENCES group_habits (id) ON DELETE CASCADE,
+  user_id        UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  date           DATE NOT NULL,
+  value          NUMERIC NOT NULL DEFAULT 1,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (group_habit_id, user_id, date)
+);
+
+-- reactions on a member's shared habit (e.g. a flame on a streak)
+CREATE TABLE IF NOT EXISTS reactions (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  group_id   UUID NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+  from_user  UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  to_user    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  habit_id   UUID NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
+  emoji      TEXT NOT NULL DEFAULT '🔥',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (group_id, from_user, to_user, habit_id, emoji)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reactions_to ON reactions (to_user, created_at);
+
+-- social-service role
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'social_svc') THEN
+    CREATE ROLE social_svc LOGIN PASSWORD 'social_svc';
+  END IF;
+END
+$$;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON groups, group_members, group_invites, habit_shares, reactions TO social_svc;
+GRANT SELECT, INSERT, UPDATE, DELETE ON group_habits, group_habit_entries TO social_svc;
+GRANT SELECT ON users  TO social_svc;   -- resolve invitee emails, member names
+GRANT SELECT ON habits TO social_svc;   -- validate habit ownership on share
+-- analytics reads shared data to build the group dashboard
+GRANT SELECT ON groups, group_members, habit_shares, reactions TO analytics_svc;
+GRANT SELECT ON group_habits, group_habit_entries TO analytics_svc;
+GRANT SELECT ON users TO analytics_svc;
+
+-- reminder-service: strictly read-only
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'reminder_svc') THEN
+    CREATE ROLE reminder_svc LOGIN PASSWORD 'reminder_svc';
+  END IF;
+END
+$$;
+GRANT SELECT ON users, habits, entries TO reminder_svc;
+
+-- ============================================================
+-- Idempotent upgrades — safe to re-run on existing databases.
+-- Fresh installs get these via CREATE TABLE above; older volumes
+-- converge by running:  docker compose run --rm migrate
+-- ============================================================
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS icon          TEXT    NOT NULL DEFAULT '';
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS schedule_type TEXT    NOT NULL DEFAULT 'weekdays';
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS frequency     INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS webhook_url   TEXT    NOT NULL DEFAULT '';
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS reminder_time  TEXT    NOT NULL DEFAULT '';
+ALTER TABLE users  ADD COLUMN IF NOT EXISTS ntfy_url       TEXT    NOT NULL DEFAULT '';
+ALTER TABLE users  ADD COLUMN IF NOT EXISTS timezone       TEXT    NOT NULL DEFAULT 'UTC';
+ALTER TABLE users  ADD COLUMN IF NOT EXISTS oidc_sub       TEXT;
+ALTER TABLE users  ADD COLUMN IF NOT EXISTS oidc_iss       TEXT;
+ALTER TABLE users  ALTER COLUMN password_hash DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc ON users (oidc_iss, oidc_sub) WHERE oidc_sub IS NOT NULL;

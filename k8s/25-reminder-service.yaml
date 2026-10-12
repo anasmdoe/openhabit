@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reminder-service
+  namespace: openhabit
+  labels:
+    app: reminder-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reminder-service
+  template:
+    metadata:
+      labels:
+        app: reminder-service
+    spec:
+      containers:
+      - name: reminder-service
+        image: openhabit/reminder-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3006
+        env:
+        - name: PORT
+          value: '3006'
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/openhabit
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 3006
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3006
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reminder-service
+  namespace: openhabit
+  annotations:
+    prometheus.io/scrape: 'true'
+    prometheus.io/port: '3006'
+    prometheus.io/path: /metrics
+spec:
+  selector:
+    app: reminder-service
+  ports:
+  - port: 3006
+    targetPort: 3006

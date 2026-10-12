@@ -1,0 +1,32 @@
+# One-off schema migration for existing deployments (no data loss).
+# Usage after upgrading manifests:
+#   kubectl apply -f k8s/90-migrate-job.yaml
+#   kubectl -n openhabit wait --for=condition=complete job/db-migrate
+#   kubectl -n openhabit delete job db-migrate
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: openhabit
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: postgres:16-alpine
+          command: ["psql", "-h", "postgres", "-U", "openhabit", "-d", "openhabit", "-v", "ON_ERROR_STOP=1", "-f", "/init/init.sql"]
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: init
+              mountPath: /init
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init

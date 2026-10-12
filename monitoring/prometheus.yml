@@ -1,0 +1,24 @@
+# Scrapes every OpenHabit service's /metrics endpoint on the compose network.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: openhabit
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - auth-service:3004
+          - habit-service:3001
+          - tracking-service:3002
+          - analytics-service:3003
+          - social-service:3005
+          - reminder-service:3006
+        labels:
+          stack: openhabit
+    relabel_configs:
+      # use the service name (host part of the target) as a clean instance label
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        target_label: instance
+        replacement: '$1'

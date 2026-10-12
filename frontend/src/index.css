@@ -1,0 +1,213 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   OpenHabit — minimal (Loop / uhabits inspired)
+   Same variable names as before; values re-tuned to a quiet,
+   near-monochrome surface so habit colors do the talking.
+   ============================================================ */
+:root,
+:root[data-theme='forest-dark'] {
+  --forest-950: 15 17 19;    /* page background   */
+  --forest-900: 22 25 28;    /* card surface      */
+  --forest-850: 28 32 36;    /* raised / hover    */
+  --forest-800: 36 41 46;    /* pressed / chip    */
+  --forest-700: 47 53 59;    /* strong border     */
+  --mint: 120 200 165;       /* fallback accent   */
+  --cream: 230 232 234;
+  --panel: 22 25 28;
+  --panel-head: 22 25 28;
+  --panel-head-text: 139 144 150;
+  --ink: 230 232 234;
+  --ink-soft: 139 144 150;
+  --line: 34 39 44;
+  --cell: 28 32 36;
+  color-scheme: dark;
+}
+
+:root[data-theme='pitch-black'] {
+  --forest-950: 0 0 0;       /* true black — OLED friendly */
+  --forest-900: 9 9 10;
+  --forest-850: 17 17 19;
+  --forest-800: 26 26 29;
+  --forest-700: 42 42 46;
+  --mint: 120 200 165;
+  --cream: 235 236 238;
+  --panel: 9 9 10;
+  --panel-head: 9 9 10;
+  --panel-head-text: 125 128 133;
+  --ink: 235 236 238;
+  --ink-soft: 125 128 133;
+  --line: 23 23 26;
+  --cell: 17 17 19;
+  color-scheme: dark;
+}
+
+:root[data-theme='forest-light'] {
+  --forest-950: 245 246 247;
+  --forest-900: 255 255 255;
+  --forest-850: 241 243 244;
+  --forest-800: 232 234 236;
+  --forest-700: 209 213 216;
+  --mint: 34 130 96;
+  --cream: 27 29 31;
+  --panel: 255 255 255;
+  --panel-head: 255 255 255;
+  --panel-head-text: 107 112 117;
+  --ink: 27 29 31;
+  --ink-soft: 107 112 117;
+  --line: 227 229 232;
+  --cell: 241 243 244;
+  color-scheme: light;
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  @apply bg-forest-950 text-ink font-sans antialiased;
+}
+
+/* quiet cards instead of ledger panels */
+.panel {
+  @apply bg-panel border border-line rounded-xl overflow-hidden;
+}
+.panel-head {
+  @apply text-panel-head-text px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] flex items-center justify-between;
+}
+
+.num { font-variant-numeric: tabular-nums; }
+
+.thin-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+.thin-scroll::-webkit-scrollbar-thumb { background: rgb(var(--forest-700)); border-radius: 3px; }
+
+button { cursor: pointer; }
+
+:focus-visible {
+  outline: 2px solid rgb(var(--mint));
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+.cell-btn { transition: transform 80ms ease, background-color 120ms ease; }
+.cell-btn:active { transform: scale(0.88); }
+
+/* completion micro-animation: springy pop on check */
+@keyframes pop {
+  0% { transform: scale(0.5); }
+  60% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+.pop { animation: pop 180ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg,
+    rgb(var(--forest-850)) 25%,
+    rgb(var(--forest-800)) 50%,
+    rgb(var(--forest-850)) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: 8px;
+}
+
+/* subtle grain on pitch black to avoid the dead-void feel */
+:root[data-theme='pitch-black'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* confetti */
+@keyframes confetti-fall {
+  0% { top: -4%; opacity: 1; }
+  100% { top: 104%; opacity: 0.4; }
+}
+.confetti {
+  position: absolute;
+  top: -4%;
+  border-radius: 1.5px;
+  animation: confetti-fall linear forwards;
+}
+
+/* mobile bottom sheet slide-up */
+@keyframes sheet-up {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.sheet-in { animation: sheet-up 200ms ease-out; }
+
+
+/* modal backdrop: dim; blur comes from .app-blur on the page content,
+   because backdrop-filter is GPU-blocklisted on some Linux browsers */
+.backdrop {
+  @apply fixed inset-0 z-40 bg-black/40;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* applied to the dashboard wrapper while any modal is open */
+.app-blur {
+  filter: blur(6px);
+  pointer-events: none;
+  user-select: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .app-content { transition: filter 160ms ease; }
+}
+
+/* styled tooltips: rounded pill, thin border, dimmed */
+[data-tip] { position: relative; }
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  border: 1px solid rgb(var(--line));
+  background: rgb(var(--forest-900) / 0.92);
+  color: rgb(var(--ink-soft));
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  z-index: 60;
+}
+[data-tip-below]:hover::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+
+/* segmented period toggle */
+.seg { @apply inline-flex rounded-lg border border-line overflow-hidden; }
+.seg > button {
+  @apply px-2.5 py-1 text-[11px] font-medium text-ink-soft;
+}
+.seg > button[aria-pressed='true'] {
+  @apply bg-forest-800 text-ink;
+}
+.seg > button + button { border-left: 1px solid rgb(var(--line)); }
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+
+.input {
+  @apply bg-forest-850 border border-line rounded-lg px-3 py-2 text-sm w-full;
+}

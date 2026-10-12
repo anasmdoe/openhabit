@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: social-service
+  namespace: openhabit
+  labels:
+    app: social-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: social-service
+  template:
+    metadata:
+      labels:
+        app: social-service
+    spec:
+      containers:
+      - name: social-service
+        image: openhabit/social-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3005
+        env:
+        - name: PORT
+          value: '3005'
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JWT_SECRET
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PASSWORD
+        - name: DATABASE_URL
+          value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/openhabit
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 3005
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3005
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: social-service
+  namespace: openhabit
+  annotations:
+    prometheus.io/scrape: 'true'
+    prometheus.io/port: '3005'
+    prometheus.io/path: /metrics
+spec:
+  selector:
+    app: social-service
+  ports:
+  - port: 3005
+    targetPort: 3005
