@@ -113,6 +113,14 @@ it standalone.
   Checkmarks.csv matrix, auto-detects yes/no vs numeric habits, unscales Loop's
   ×1000 numeric values, matches habits by name (creating any missing), and
   upserts every check-in — so re-running it is safe.
+- **Personal API tokens** — create long-lived tokens in the account menu for
+  Shortcuts, NFC tags, cron scripts, and Home Assistant. Tokens are scoped to
+  the data plane: they can log entries and read everything, but can never
+  change your password, delete the account, or mint more tokens — so a leaked
+  automation token can't take over the account. Revoke any token individually;
+  "last used" shows which are still alive. Only a SHA-256 hash is stored.
+- **Journal** — every note you've jotted on a cell, collected chronologically
+  in one reading surface (account menu → Journal).
 - **Minimal home** — no app chrome, no banners: just the habit grid (most recent
   days first, uhabits style) with a monthly progress ring in front of every name.
   Day columns adapt to screen width (14 on desktop, ~4 on phones).
@@ -368,3 +376,37 @@ Grafana: http://localhost:3030 (admin/admin by default — override with
 existing cluster Prometheus discovers them automatically. For a self-contained
 setup, `kubectl apply -f k8s/50-monitoring.yaml` deploys a minimal Prometheus
 (with RBAC for endpoint discovery) and Grafana.
+
+## Using the API (automations)
+
+Create a token in the account menu → **API tokens**, then call any endpoint
+with `Authorization: Bearer oh_...`:
+
+```bash
+# list your habits (find the id you want to automate)
+curl -s https://habits.example.com/api/habits \
+  -H "Authorization: Bearer oh_YOURTOKEN"
+
+# mark a habit done today (the Shortcuts / NFC-tag one-liner)
+curl -s -X PUT https://habits.example.com/api/entries \
+  -H "Authorization: Bearer oh_YOURTOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"habitId\":\"<id>\",\"date\":\"$(date +%F)\",\"value\":1}"
+```
+
+**Apple Shortcuts**: add a "Get Contents of URL" action → URL
+`https://<host>/api/entries`, Method PUT, Headers `Authorization: Bearer oh_...`,
+Request Body JSON with `habitId`, `date` (Current Date formatted `yyyy-MM-dd`),
+and `value: 1`. Save it, say "Hey Siri, <shortcut name>" — or write the
+shortcut to an NFC tag via the Shortcuts Automation tab.
+
+Tokens work on all data endpoints (habits, entries, wellness, analytics,
+groups) and `GET /api/auth/me`. Account management always requires signing in.
+
+## Alerting
+
+`monitoring/alerts.yml` ships 7 Prometheus rules, preloaded in both the compose
+and k8s Prometheus: service down, DB unreachable (per service), reminder loop
+stalled (>5 min without a tick), reminder tick errors, 5xx rate >5%, p95
+latency >1s, and pg pool saturation. Point Alertmanager (or Grafana alerting)
+at them to get notified — an ntfy receiver works nicely here too.

@@ -93,6 +93,12 @@ export const authApi = {
     }),
   me: () => req<User>('/auth/me'),
   config: () => req<{ registration: boolean; oidc: { enabled: boolean; name?: string } }>('/auth/config'),
+  listTokens: () => req<{ id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }[]>('/auth/tokens'),
+  createToken: (name: string) =>
+    req<{ id: string; name: string; prefix: string; token: string }>('/auth/tokens', {
+      method: 'POST', body: JSON.stringify({ name }),
+    }),
+  revokeToken: (id: string) => req<void>(`/auth/tokens/${id}`, { method: 'DELETE' }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
   updateName: (name: string) =>

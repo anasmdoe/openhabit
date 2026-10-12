@@ -68,11 +68,41 @@ function verifyToken(token) {
   }
 }
 
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const h = req.headers.authorization || '';
-  const payload = verifyToken(h.startsWith('Bearer ') ? h.slice(7) : null);
+  const raw = h.startsWith('Bearer ') ? h.slice(7) : null;
+
+  // personal API token (long-lived, "oh_" prefix)
+  if (raw && raw.startsWith('oh_')) {
+    try {
+      const hash = crypto.createHash('sha256').update(raw).digest('hex');
+      const { rows } = await pool.query(
+        `SELECT t.id AS tid, u.id, u.email FROM api_tokens t
+         JOIN users u ON u.id = t.user_id WHERE t.token_hash = $1`,
+        [hash]
+      );
+      if (!rows.length) return res.status(401).json({ error: 'unauthorized' });
+      req.userId = rows[0].id;
+      req.email = rows[0].email;
+      req.authMethod = 'token';
+      // touch last_used_at at most once a minute (fire-and-forget)
+      pool.query(
+        `UPDATE api_tokens SET last_used_at = now()
+         WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')`,
+        [rows[0].tid]
+      ).catch(() => {});
+      return next();
+    } catch (e) {
+      return next(e);
+    }
+  }
+
+  // session JWT
+  const payload = verifyToken(raw);
   if (!payload) return res.status(401).json({ error: 'unauthorized' });
   req.userId = payload.sub;
+  req.email = payload.email;
+  req.authMethod = 'jwt';
   next();
 }
 
@@ -147,6 +177,53 @@ app.post('/auth/login', asyncH(async (req, res) => {
   res.json({ token: signToken(user), user });
 }));
 
+// control-plane routes require a real session, not an API token — a leaked
+// automation token must not be able to mint tokens or take over the account
+const requireSession = (req, res, next) =>
+  req.authMethod === 'token'
+    ? res.status(403).json({ error: 'this action requires signing in (API tokens cannot manage the account)' })
+    : next();
+
+// ---- personal API tokens ------------------------------------------------
+const MAX_TOKENS_PER_USER = 20;
+
+app.get('/auth/tokens', auth, requireSession, asyncH(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, name, prefix, last_used_at AS "lastUsedAt", created_at AS "createdAt"
+     FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC`,
+    [req.userId]
+  );
+  res.json(rows);
+}));
+
+app.post('/auth/tokens', auth, requireSession, asyncH(async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : '';
+  if (!name) return res.status(400).json({ error: 'a name is required (e.g. "Shortcuts on my phone")' });
+  const { rows: cnt } = await pool.query(
+    'SELECT count(*)::int AS n FROM api_tokens WHERE user_id = $1', [req.userId]);
+  if (cnt[0].n >= MAX_TOKENS_PER_USER) return res.status(429).json({ error: 'token limit reached' });
+
+  const token = 'oh_' + crypto.randomBytes(32).toString('base64url');
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  const { rows } = await pool.query(
+    `INSERT INTO api_tokens (user_id, name, token_hash, prefix)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, name, prefix, created_at AS "createdAt"`,
+    [req.userId, name, hash, token.slice(0, 12) + '…']
+  );
+  // the plaintext token is returned exactly once
+  res.status(201).json({ ...rows[0], token });
+}));
+
+app.delete('/auth/tokens/:id', auth, requireSession, asyncH(async (req, res) => {
+  const { rowCount } = await pool.query(
+    'DELETE FROM api_tokens WHERE id = $1 AND user_id = $2',
+    [req.params.id, req.userId]
+  );
+  if (!rowCount) return res.status(404).json({ error: 'token not found' });
+  res.status(204).end();
+}));
+
 // tells the SPA whether password login/registration and SSO are available
 app.get('/auth/config', (_req, res) => {
   res.json({
@@ -216,7 +293,7 @@ app.get('/auth/me', auth, asyncH(async (req, res) => {
 }));
 
 // change name and/or password
-app.put('/auth/me', auth, asyncH(async (req, res) => {
+app.put('/auth/me', auth, requireSession, asyncH(async (req, res) => {
   const { name, currentPassword, newPassword } = req.body;
   if (newPassword !== undefined) {
     if (!validPassword(newPassword)) return res.status(400).json({ error: 'new password must be at least 8 characters' });
@@ -243,7 +320,7 @@ app.put('/auth/me', auth, asyncH(async (req, res) => {
 }));
 
 // delete account and (via FK cascade) all habits, entries, wellness
-app.delete('/auth/me', auth, asyncH(async (req, res) => {
+app.delete('/auth/me', auth, requireSession, asyncH(async (req, res) => {
   const { password } = req.body ?? {};
   const { rows } = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.userId]);
   if (!rows.length || !(await verifyPassword(password ?? '', rows[0].password_hash)))

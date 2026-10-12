@@ -32,12 +32,41 @@ function verifyToken(token) {
   } catch { return null; }
 }
 
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const h = req.headers.authorization || '';
-  const payload = verifyToken(h.startsWith('Bearer ') ? h.slice(7) : null);
+  const raw = h.startsWith('Bearer ') ? h.slice(7) : null;
+
+  // personal API token (long-lived, "oh_" prefix)
+  if (raw && raw.startsWith('oh_')) {
+    try {
+      const hash = crypto.createHash('sha256').update(raw).digest('hex');
+      const { rows } = await pool.query(
+        `SELECT t.id AS tid, u.id, u.email FROM api_tokens t
+         JOIN users u ON u.id = t.user_id WHERE t.token_hash = $1`,
+        [hash]
+      );
+      if (!rows.length) return res.status(401).json({ error: 'unauthorized' });
+      req.userId = rows[0].id;
+      req.email = rows[0].email;
+      req.authMethod = 'token';
+      // touch last_used_at at most once a minute (fire-and-forget)
+      pool.query(
+        `UPDATE api_tokens SET last_used_at = now()
+         WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')`,
+        [rows[0].tid]
+      ).catch(() => {});
+      return next();
+    } catch (e) {
+      return next(e);
+    }
+  }
+
+  // session JWT
+  const payload = verifyToken(raw);
   if (!payload) return res.status(401).json({ error: 'unauthorized' });
   req.userId = payload.sub;
   req.email = payload.email;
+  req.authMethod = 'jwt';
   next();
 }
 

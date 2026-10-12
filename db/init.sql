@@ -226,3 +226,25 @@ ALTER TABLE users  ADD COLUMN IF NOT EXISTS oidc_sub       TEXT;
 ALTER TABLE users  ADD COLUMN IF NOT EXISTS oidc_iss       TEXT;
 ALTER TABLE users  ALTER COLUMN password_hash DROP NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc ON users (oidc_iss, oidc_sub) WHERE oidc_sub IS NOT NULL;
+
+-- ============================================================
+-- Personal API tokens (long-lived, for automations/Shortcuts).
+-- Only the SHA-256 hash is stored; the token is shown once.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  prefix       TEXT NOT NULL,               -- first chars, for identification in the UI
+  last_used_at TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens (user_id);
+
+-- auth-service manages tokens; data-plane services verify them
+GRANT SELECT, INSERT, UPDATE, DELETE ON api_tokens TO auth_svc;
+GRANT SELECT, UPDATE ON api_tokens TO habit_svc, tracking_svc, analytics_svc, social_svc;
+-- token auth resolves the user's email at request time
+GRANT SELECT ON users TO habit_svc, tracking_svc;
