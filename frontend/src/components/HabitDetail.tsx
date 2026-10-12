@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useApp } from '../store';
 import { Bars, LineChart } from '../charts';
 import { DAY_LETTERS } from '../lib/types';
 import { HabitIcon } from '../lib/icons';
+import { useSheetDrag } from '../lib/useSheetDrag';
 import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, todayISO, weekKey } from '../lib/stats';
 import type { HabitDetail as HabitDetailData } from '../lib/types';
 import {
@@ -13,6 +14,8 @@ export function HabitDetail() {
   const { detailOpen, detail, closeDetail, openEditor, habits } = useApp();
   const [scorePeriod, setScorePeriod] = useState<Period>('week');
   const [histPeriod, setHistPeriod] = useState<Period>('month');
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useSheetDrag(sheetRef, detailOpen, closeDetail); // pull down from the top (or the handle) to close
 
   const score = useMemo(() => (detail ? aggregateScore(detail, scorePeriod) : []), [detail, scorePeriod]);
   const hist = useMemo(() => (detail ? aggregateHistory(detail, histPeriod) : []), [detail, histPeriod]);
@@ -32,14 +35,15 @@ export function HabitDetail() {
   return (
     <div className="fixed inset-0 z-30 flex items-end sm:items-stretch sm:justify-end bg-black/40" style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }} onClick={closeDetail}>
       <div
-        className="sheet-in w-full sm:max-w-xl h-[92vh] sm:h-full bg-forest-950 rounded-t-2xl sm:rounded-none border-t sm:border-t-0 sm:border-l border-line overflow-y-auto thin-scroll"
+        ref={sheetRef}
+        className="sheet-in w-full sm:max-w-xl h-[92vh] sm:h-full bg-forest-950 rounded-t-2xl sm:rounded-none border-t sm:border-t-0 sm:border-l border-line overflow-y-auto thin-scroll overscroll-y-contain"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Habit details"
       >
         {/* grab handle (mobile) */}
-        <div className="sm:hidden sticky top-0 z-20 bg-forest-950 pt-2.5 pb-1 grid place-items-center rounded-t-2xl" onClick={closeDetail}>
+        <div data-grab className="sm:hidden sticky top-0 z-20 bg-forest-950 pt-2.5 pb-3 grid place-items-center rounded-t-2xl" onClick={closeDetail}>
           <div className="w-10 h-1 rounded-full bg-forest-700" />
         </div>
         {!detail ? (
