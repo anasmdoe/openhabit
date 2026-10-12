@@ -3,8 +3,8 @@
 # init.sql) from the <SERVICE>_DB_PASSWORD environment variables. Safe to re-run;
 # run it after init.sql on every migrate so password rotations take effect.
 #
-# Connection: standard libpq variables (PGHOST, PGUSER, PGPASSWORD, PGDATABASE).
-# Inside the postgres image's /docker-entrypoint-initdb.d it falls back to
+# Connection: standard libpq variables (PGHOST, PGUSER, PGPASSWORD, PGDATABASE),
+# or a connection URL as the first argument (cloud Postgres, e.g. Neon). Inside the postgres image's /docker-entrypoint-initdb.d it falls back to
 # POSTGRES_USER / POSTGRES_DB over the local socket.
 
 # The postgres image *sources* non-executable *.sh init files; run in our own
@@ -29,7 +29,7 @@ for svc in auth habit tracking analytics social reminder; do
   args+=(-v "${svc}_pw=$pw")
 done
 
-psql -X -q -v ON_ERROR_STOP=1 "${args[@]}" <<'SQL'
+psql -X -q -v ON_ERROR_STOP=1 "${args[@]}" "$@" <<'SQL'
 ALTER ROLE auth_svc      PASSWORD :'auth_pw';
 ALTER ROLE habit_svc     PASSWORD :'habit_pw';
 ALTER ROLE tracking_svc  PASSWORD :'tracking_pw';

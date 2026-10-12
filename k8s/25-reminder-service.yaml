@@ -24,6 +24,13 @@ spec:
         env:
         - name: PORT
           value: '3006'
+        - name: JWT_SECRET            # signs the snooze links in notifications
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JWT_SECRET
+        - name: PUBLIC_URL            # e.g. https://habits.home.lab; enables snooze buttons
+          value: ''
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:

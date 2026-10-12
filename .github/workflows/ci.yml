@@ -48,8 +48,12 @@ jobs:
         run: npm ci --omit=dev
       - name: Syntax check
         run: for f in src/*.js; do node --check "$f"; done
-      - name: metrics.js matches services/_shared
-        run: cmp ../_shared/metrics.js src/metrics.js
+      - name: Unit tests
+        run: npm test --if-present
+      - name: metrics.js and lambda.js match services/_shared
+        run: |
+          cmp ../_shared/metrics.js src/metrics.js
+          cmp ../_shared/lambda.js src/lambda.js
 
   database:
     runs-on: ubuntu-24.04
@@ -89,6 +93,38 @@ jobs:
         run: for d in services/*-service; do (cd "$d" && npm ci --omit=dev); done
       - name: End-to-end smoke test (each service as its own role)
         run: node scripts/smoke-test.js
+      - name: Same flows through the AWS Lambda handlers
+        run: node scripts/smoke-test.js --lambda
+      - name: Same flows through the packaged Lambda zips
+        run: |
+          scripts/build-lambdas.sh
+          dir=$(mktemp -d)
+          for svc in auth habit tracking analytics social reminder; do
+            unzip -q "deploy/aws/build/$svc.zip" -d "$dir/$svc"
+          done
+          SMOKE_LAMBDA_DIR="$dir" node scripts/smoke-test.js --lambda
+
+  terraform:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: deploy/aws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.8.8
+      - name: Build Lambda packages (the config hashes them)
+        working-directory: .
+        run: scripts/build-lambdas.sh
+      - run: tofu fmt -check -recursive
+      - run: tofu init -backend=false -input=false
+      - run: tofu validate
+      - name: Offline stack tests (mocked AWS provider)
+        run: tofu test
 
   docker:
     runs-on: ubuntu-24.04

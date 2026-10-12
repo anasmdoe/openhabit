@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 const PORT = process.env.PORT || 3001;
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://openhabit:openhabit@localhost:5432/openhabit',
-  max: 10,
+  max: Number(process.env.PG_POOL_MAX) || 10,
 });
 
 const app = express();
@@ -224,4 +224,8 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'internal error' });
 });
 
-app.listen(PORT, () => console.log(`habit-service listening on :${PORT}`));
+// On AWS Lambda, src/lambda.js serves `app` instead (see services/_shared/lambda.js).
+export { app };
+if (process.env.OPENHABIT_RUNTIME !== 'lambda') {
+  app.listen(PORT, () => console.log(`habit-service listening on :${PORT}`));
+}

@@ -115,6 +115,8 @@ export function AccountMenu() {
   const loopRef = React.useRef<HTMLInputElement>(null);
   const { adapter, refresh, updateProfile } = useApp();
   const [ntfyDraft, setNtfyDraft] = useState('');
+  const [quietStart, setQuietStart] = useState('');
+  const [quietEnd, setQuietEnd] = useState('');
 
   const doImport = async (f: File | undefined) => {
     if (!f || !adapter) return;
@@ -172,7 +174,7 @@ export function AccountMenu() {
                   </div>
                 </div>
                 <MenuBtn icon={<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0" strokeLinecap="round" />}
-                  onClick={() => { setNameDraft(user.name); setNtfyDraft(user.ntfyUrl ?? ''); setView('profile'); }}
+                  onClick={() => { setNameDraft(user.name); setNtfyDraft(user.ntfyUrl ?? ''); setQuietStart(user.quietStart ?? ''); setQuietEnd(user.quietEnd ?? ''); setView('profile'); }}
                   data-menu-profile>
                   Edit profile
                 </MenuBtn>
@@ -241,6 +243,25 @@ export function AccountMenu() {
                     Subscribe to the same topic in the ntfy app. Habit reminder times are set per habit.
                   </p>
                 </div>
+                <div>
+                  <div className="text-[11px] text-ink-soft mb-1">Quiet hours (no reminders)</div>
+                  <div className="flex items-center gap-2">
+                    <input className="input flex-1" type="time" aria-label="Quiet hours start"
+                      value={quietStart} onChange={(e) => setQuietStart(e.target.value)} />
+                    <span className="text-[11px] text-ink-soft">to</span>
+                    <input className="input flex-1" type="time" aria-label="Quiet hours end"
+                      value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} />
+                    {(quietStart || quietEnd) && (
+                      <button type="button" className="text-[11px] text-ink-soft underline"
+                        onClick={() => { setQuietStart(''); setQuietEnd(''); }}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-ink-soft mt-1">
+                    e.g. 22:00 to 07:00. Snoozed reminders wait until quiet hours end.
+                  </p>
+                </div>
                 <p className="text-[11px] text-ink-soft truncate">
                   Signed in as {user.email} · {user.timezone || 'UTC'}
                 </p>
@@ -250,7 +271,10 @@ export function AccountMenu() {
                   <button
                     className="text-[12px] font-semibold bg-mint text-forest-950 rounded-lg px-3 py-1.5"
                     onClick={async () => {
-                      try { await updateProfile({ name: nameDraft.trim(), ntfyUrl: ntfyDraft.trim() }); setMsg('Saved'); }
+                      try {
+                        await updateProfile({ name: nameDraft.trim(), ntfyUrl: ntfyDraft.trim(), quietStart, quietEnd });
+                        setMsg('Saved');
+                      }
                       catch (e) { setMsg(e instanceof Error ? e.message : 'failed'); }
                     }}
                   >

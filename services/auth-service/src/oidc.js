@@ -41,25 +41,34 @@ async function getJwks(uri) {
   return jwksCache;
 }
 
-// ---- transient state store (CSRF + nonce), 10-min TTL ---------------------
-const stateStore = new Map(); // state -> { nonce, createdAt }
-export function newState() {
-  const state = crypto.randomBytes(16).toString('base64url');
+// ---- signed state (CSRF + nonce), 10-min TTL ------------------------------
+// Self-contained rather than kept in memory, so the callback can be served by
+// any instance (several replicas, or a different AWS Lambda container). The
+// authorization code it accompanies is single-use at the provider.
+const STATE_TTL_MS = 10 * 60_000;
+const stateKey = () => crypto.createHmac('sha256', process.env.JWT_SECRET || '').update('openhabit:oidc-state:v1').digest();
+
+export function newState(now = Date.now()) {
   const nonce = crypto.randomBytes(16).toString('base64url');
-  stateStore.set(state, { nonce, createdAt: Date.now() });
-  return { state, nonce };
+  const payload = Buffer.from(JSON.stringify({ n: nonce, e: now + STATE_TTL_MS })).toString('base64url');
+  const sig = crypto.createHmac('sha256', stateKey()).update(payload).digest('base64url');
+  return { state: `${payload}.${sig}`, nonce };
 }
-function takeState(state) {
-  const rec = stateStore.get(state);
-  if (!rec) return null;
-  stateStore.delete(state);
-  if (Date.now() - rec.createdAt > 10 * 60_000) return null;
-  return rec;
+
+/** Returns { nonce } for a valid, unexpired state, else null. */
+export function takeState(state, now = Date.now()) {
+  const [payload, sig, extra] = String(state).split('.');
+  if (!payload || !sig || extra !== undefined) return null;
+  const expected = crypto.createHmac('sha256', stateKey()).update(payload).digest();
+  const given = Buffer.from(sig, 'base64url');
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+  try {
+    const { n, e } = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return typeof n === 'string' && typeof e === 'number' && e > now ? { nonce: n } : null;
+  } catch {
+    return null;
+  }
 }
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of stateStore) if (now - v.createdAt > 10 * 60_000) stateStore.delete(k);
-}, 60_000).unref();
 
 // ---- build the authorize URL ----------------------------------------------
 export async function authorizeUrl() {

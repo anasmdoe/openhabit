@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
   oidc_iss      TEXT,                         -- OIDC issuer that vouches for oidc_sub
   ntfy_url      TEXT NOT NULL DEFAULT '',    -- ntfy topic URL for reminders
   timezone      TEXT NOT NULL DEFAULT 'UTC', -- IANA name, auto-set by the app
+  quiet_start   TEXT NOT NULL DEFAULT '',    -- 'HH:MM' local; no reminders from here...
+  quiet_end     TEXT NOT NULL DEFAULT '',    -- ...until here (may wrap midnight); '' = off
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -248,3 +250,22 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON api_tokens TO auth_svc;
 GRANT SELECT, UPDATE ON api_tokens TO habit_svc, tracking_svc, analytics_svc, social_svc;
 -- token auth resolves the user's email at request time
 GRANT SELECT ON users TO habit_svc, tracking_svc;
+
+-- ============================================================
+-- Reminder bookkeeping (owned by reminder-service). One row per
+-- habit per local day, claimed atomically before sending, so
+-- restarts and extra replicas never double-send. snoozed_until is
+-- set by the signed snooze link in the notification.
+-- ============================================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS quiet_start TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS quiet_end   TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS reminders_sent (
+  habit_id      UUID NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
+  local_date    DATE NOT NULL,
+  sent_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  snoozed_until TIMESTAMPTZ,
+  PRIMARY KEY (habit_id, local_date)
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON reminders_sent TO reminder_svc;

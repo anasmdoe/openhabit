@@ -25,7 +25,7 @@ microservices for Kubernetes homelabs.
 |---|---|---|---|
 | **auth-service** | 3004 (+ OIDC/SSO) | `users` table | `/auth/register`, `/auth/login`, `/auth/me` |
 | **social-service** | 3005 | groups, invites, shares, reactions | `/groups`, `/invites`, `/join`, `/reactions` |
-| **reminder-service** | 3006 | — (read-only) | internal: minute tick → ntfy pushes |
+| **reminder-service** | 3006 | `reminders_sent` | minute tick → ntfy pushes; `/reminders/snooze/:token` |
 | **habit-service** | 3001 | `habits` table | CRUD `/habits`, `/habits/reorder` |
 | **tracking-service** | 3002 | `entries`, `wellness` | `/entries` (+ `/bulk`), `/wellness` |
 | **analytics-service** | 3003 | read-only | `/analytics/overview`, `/analytics/habits/:id` |
@@ -76,8 +76,16 @@ it standalone.
   time per habit; the reminder-service checks every minute (in *your* timezone,
   auto-detected by the app) and nudges only when the habit is due and not yet
   logged. Completed, skipped, and quota-met habits stay silent; one reminder
-  per habit per day. Subscribe to the same topic in the ntfy mobile app for
-  push notifications. Self-hosted ntfy works too — any http(s) topic URL.
+  per habit per day, recorded in the database so restarts never double-send
+  (and a reminder missed during a restart still goes out within 15 minutes).
+  Subscribe to the same topic in the ntfy mobile app for push notifications.
+  Self-hosted ntfy works too — any http(s) topic URL.
+  - **Quiet hours** (profile) silence reminders in a window such as 22:00–07:00.
+  - **Snooze** — set `PUBLIC_URL` (the address your phone uses to reach the
+    app) and notifications get *Snooze 30 min* / *Snooze 1 h* buttons. The
+    buttons call signed, 24-hour links, so no login is needed on the phone; a
+    snoozed reminder is re-sent only if the habit still isn't logged, and
+    waits out quiet hours.
 - **Milestones & templates** — confetti + share card at 7/30/100/365-day
   streaks; first-run template packs (Morning routine, Fitness base, Digital detox)
 - **Export & import** — download your entire dataset as JSON (habits, entries
@@ -312,6 +320,56 @@ Notes for the cluster:
   above for running one on demand and restoring; adjust the `schedule` and
   `BACKUP_KEEP` in that file to taste.
 
+## AWS serverless (pay per use)
+
+For a small instance, always-on containers are wasted money. The same code also
+deploys as AWS Lambdas, so with no traffic you pay close to nothing:
+
+```
+CloudFront ─┬─ /        → S3 (built frontend, private)
+            └─ /api/*   → API Gateway (HTTP API) → one Lambda per service
+EventBridge Scheduler (every 5 min) → reminder Lambda
+Postgres over TLS (Neon, Supabase, Aiven, … or RDS) — no VPC, so no NAT gateway
+```
+
+Every service keeps its Express app; `src/lambda.js` (a copy of
+`services/_shared/lambda.js`) replays API Gateway events against it, and
+EventBridge Scheduler replaces the reminder timer. Docker and Kubernetes keep
+working unchanged. CI runs the full smoke test through the Lambda handlers and
+through the packaged zips.
+
+**Deploy** (needs AWS credentials, the `aws` CLI, OpenTofu or Terraform, Node, `psql`):
+
+```bash
+scripts/init-env.sh                                        # secrets in .env (same as docker)
+# create a Postgres database (e.g. a free Neon project), then in .env:
+#   AWS_DB_ADMIN_URL=postgresql://owner:…@ep-….neon.tech/openhabit?sslmode=require
+cp deploy/aws/terraform.tfvars.example deploy/aws/terraform.tfvars   # set db_host (pooled host)
+scripts/deploy-aws.sh                                      # build → migrate → apply → upload
+```
+
+Re-run `scripts/deploy-aws.sh` for every update; it only redeploys Lambdas
+whose code changed. `tofu destroy` (or `terraform destroy`) in `deploy/aws`
+removes everything except your database.
+
+**Costs and trade-offs**
+
+- Lambda, API Gateway, EventBridge Scheduler, S3 and CloudFront all bill per
+  request; a personal or family instance usually stays within AWS's free tiers
+  (check current pricing for your region). API throttling (20 req/s, burst 50)
+  caps the bill if someone hammers the API.
+- Reminders: each scheduled run queries Postgres. With a scale-to-zero database
+  (Neon) a short interval keeps it awake and uses compute hours, so the default
+  is every 5 minutes (`reminder_interval_minutes`, 1–15); reminders can then
+  arrive up to that late.
+- The first request after idle is a cold start (about a second).
+- `/metrics`, Prometheus and Grafana don't apply here; use CloudWatch (logs are
+  kept 14 days). The login rate limiter is per Lambda container.
+- Snooze buttons work out of the box: `PUBLIC_URL` is set to the CloudFront URL.
+- SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
+- Next step on the roadmap: a DynamoDB storage backend, which removes the
+  database's idle cost entirely.
+
 ## Repository layout
 
 ```
@@ -322,7 +380,7 @@ Notes for the cluster:
 │   ├── tracking-service/     # entries (+ skips, notes) + wellness
 │   ├── analytics-service/    # stats, streaks, insights, group dashboards
 │   ├── social-service/       # groups, invites, sharing, reactions, group habits
-│   └── reminder-service/     # minute tick -> ntfy reminders (read-only)
+│   └── reminder-service/     # minute tick -> ntfy reminders, quiet hours, snooze links
 ├── db/
 │   ├── init.sql              # schema + per-service roles (idempotent migration)
 │   └── seed.js               # demo data via the public API
@@ -332,6 +390,7 @@ Notes for the cluster:
 ├── gateway/nginx.conf        # compose entrypoint (Ingress mirror)
 ├── k8s/                      # numbered manifests, apply in order
 │                             #   90-migrate-job, 95-backup-cronjob included
+├── deploy/aws/               # Terraform/OpenTofu: Lambda, API Gateway, CloudFront, S3, Scheduler
 └── docker-compose.yml        # + tools profile: seed, migrate, backup
 ```
 
@@ -341,7 +400,7 @@ Notes for the cluster:
 POST   /api/auth/register              {email, password, name?} -> {token, user}
 POST   /api/auth/login                 {email, password} -> {token, user}
 GET    /api/auth/me                    current user
-PUT    /api/auth/me                    {name?} and/or {currentPassword, newPassword}
+PUT    /api/auth/me                    {name?, ntfyUrl?, timezone?, quietStart?, quietEnd?} and/or {currentPassword, newPassword}
 DELETE /api/auth/me                    {password} — deletes account + all data
 
 All routes below require:  Authorization: Bearer <token>
@@ -362,6 +421,7 @@ PUT    /api/wellness                   upsert {date, mood?, sleepHours?}
 
 GET    /api/analytics/overview?year&month
 GET    /api/analytics/habits/:id
+POST   /api/reminders/snooze/:token     signed link from a notification (no auth header)
 ```
 
 Conventions: dates are `YYYY-MM-DD`; weekdays are `0=Sunday … 6=Saturday`;
@@ -434,6 +494,8 @@ at them to get notified — an ntfy receiver works nicely here too.
 cd frontend && npm test                 # unit tests for streak/score/schedule math
 scripts/test-init-sql.sh                # applies db/init.sql twice, proves it is idempotent
 node scripts/smoke-test.js              # all services, each as its own DB role, end to end
+node scripts/smoke-test.js --lambda     # the same flows through the AWS Lambda handlers
+(cd deploy/aws && tofu test)            # Terraform stack, offline with a mocked AWS provider
 node scripts/sync-configmap.js          # copy db/ files into k8s/10-postgres.yaml
 node scripts/sync-configmap.js --check  # fail if they have drifted
 ```

@@ -15,7 +15,7 @@ const ALLOW_REGISTRATION = process.env.ALLOW_REGISTRATION !== 'false';
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://openhabit:openhabit@localhost:5432/openhabit',
-  max: 10,
+  max: Number(process.env.PG_POOL_MAX) || 10,
 });
 
 const app = express();
@@ -130,8 +130,10 @@ setInterval(() => {
   for (const [k, v] of attempts) if (v.resetAt < now) attempts.delete(k);
 }, 60_000).unref();
 
-const PUBLIC_USER = `id, email, name, ntfy_url AS "ntfyUrl", timezone, created_at AS "createdAt"`;
+const PUBLIC_USER = `id, email, name, ntfy_url AS "ntfyUrl", timezone,
+  quiet_start AS "quietStart", quiet_end AS "quietEnd", created_at AS "createdAt"`;
 const VALID_TZ = new Set([...Intl.supportedValuesOf('timeZone'), 'UTC']);
+const validHm = (v) => typeof v === 'string' && (v === '' || /^([01]\d|2[0-3]):[0-5]\d$/.test(v));
 const validNtfy = (v) => typeof v === 'string' && v.length <= 300 && (v === '' || /^https?:\/\//.test(v));
 const validEmail = (e) => typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 254;
 const validPassword = (p) => typeof p === 'string' && p.length >= 8 && p.length <= 128;
@@ -319,6 +321,12 @@ app.put('/auth/me', auth, requireSession, asyncH(async (req, res) => {
       return res.status(400).json({ error: 'unknown timezone' });
     await pool.query('UPDATE users SET timezone = $1 WHERE id = $2', [timezone, req.userId]);
   }
+  const { quietStart, quietEnd } = req.body;
+  if (quietStart !== undefined || quietEnd !== undefined) {
+    if (!validHm(quietStart) || !validHm(quietEnd) || (quietStart === '') !== (quietEnd === ''))
+      return res.status(400).json({ error: 'quiet hours need both a start and an end (HH:MM), or neither' });
+    await pool.query('UPDATE users SET quiet_start = $1, quiet_end = $2 WHERE id = $3', [quietStart, quietEnd, req.userId]);
+  }
   const { rows } = await pool.query(`SELECT ${PUBLIC_USER} FROM users WHERE id = $1`, [req.userId]);
   res.json(rows[0]);
 }));
@@ -338,4 +346,8 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'internal error' });
 });
 
-app.listen(PORT, () => console.log(`auth-service listening on :${PORT}`));
+// On AWS Lambda, src/lambda.js serves `app` instead (see services/_shared/lambda.js).
+export { app };
+if (process.env.OPENHABIT_RUNTIME !== 'lambda') {
+  app.listen(PORT, () => console.log(`auth-service listening on :${PORT}`));
+}
