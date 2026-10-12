@@ -32,11 +32,15 @@ locals {
       OIDC_PROVIDER_NAME  = var.oidc.provider_name
       OIDC_REDIRECT_URI   = var.oidc.issuer == "" ? "" : "${local.public_url}/api/auth/oidc/callback"
       OIDC_POST_LOGIN_URI = "${local.public_url}/"
+      VAPID_PUBLIC_KEY    = var.vapid.public_key
     }
     reminder = {
       PUBLIC_URL = local.public_url
       # the catch-up window must outlast the gap between scheduled runs
       REMINDER_CATCH_UP_MINUTES = tostring(max(15, var.reminder_interval_minutes + 5))
+      VAPID_PUBLIC_KEY          = var.vapid.public_key
+      VAPID_PRIVATE_KEY         = var.vapid.private_key
+      VAPID_SUBJECT             = var.vapid.subject
     }
   }
 

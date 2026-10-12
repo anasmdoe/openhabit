@@ -230,6 +230,60 @@ app.delete('/auth/tokens/:id', auth, requireSession, asyncH(async (req, res) => 
   res.status(204).end();
 }));
 
+// ---- Web Push subscriptions (reminders on this device) --------------------
+// The browser subscribes with the server's VAPID public key; reminder-service
+// delivers to every subscription of the user. Endpoints must be HTTPS URLs of
+// a known push service (PUSH_ENDPOINT_HOSTS), so reminders can't be pointed
+// at arbitrary hosts.
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const PUSH_HOSTS = (process.env.PUSH_ENDPOINT_HOSTS
+  || 'fcm.googleapis.com,push.services.mozilla.com,push.apple.com,notify.windows.com')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+const MAX_PUSH_SUBSCRIPTIONS = 10;
+const B64URL = /^[A-Za-z0-9_-]+$/;
+
+function validPushEndpoint(endpoint) {
+  let u;
+  try { u = new URL(endpoint); } catch { return false; }
+  const host = u.hostname.toLowerCase();
+  const allowed = PUSH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  const local = host === 'localhost' || host === '127.0.0.1'; // only if listed (tests)
+  return allowed && (u.protocol === 'https:' || (local && u.protocol === 'http:')) && endpoint.length <= 1000;
+}
+
+app.get('/auth/push/key', auth, (_req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY || null });
+});
+
+app.post('/auth/push/subscriptions', auth, requireSession, asyncH(async (req, res) => {
+  if (!VAPID_PUBLIC_KEY) return res.status(404).json({ error: 'push notifications are not configured on this server' });
+  const { endpoint, keys } = req.body ?? {};
+  if (typeof endpoint !== 'string' || !validPushEndpoint(endpoint))
+    return res.status(400).json({ error: 'unsupported push endpoint' });
+  const p256dh = keys?.p256dh;
+  const authKey = keys?.auth;
+  if (typeof p256dh !== 'string' || !B64URL.test(p256dh) || Buffer.from(p256dh, 'base64url').length !== 65
+    || typeof authKey !== 'string' || !B64URL.test(authKey) || Buffer.from(authKey, 'base64url').length !== 16)
+    return res.status(400).json({ error: 'invalid subscription keys' });
+  const { rows: cnt } = await pool.query(
+    'SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id = $1 AND endpoint <> $2', [req.userId, endpoint]);
+  if (cnt[0].n >= MAX_PUSH_SUBSCRIPTIONS) return res.status(429).json({ error: 'too many devices; remove one first' });
+  // a browser belongs to whoever signed in on it last
+  await pool.query(
+    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+    [req.userId, endpoint, p256dh, authKey]
+  );
+  res.status(201).json({ ok: true });
+}));
+
+app.delete('/auth/push/subscriptions', auth, requireSession, asyncH(async (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (typeof endpoint !== 'string') return res.status(400).json({ error: 'endpoint is required' });
+  await pool.query('DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2', [req.userId, endpoint]);
+  res.status(204).end();
+}));
+
 // tells the SPA whether password login/registration and SSO are available
 app.get('/auth/config', (_req, res) => {
   res.json({

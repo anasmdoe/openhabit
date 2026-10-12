@@ -36,7 +36,9 @@ TF_VAR_db_admin_url="${AWS_DB_ADMIN_URL:-}"
 TF_VAR_db_passwords=$(node -e 'const e = process.env; console.log(JSON.stringify({
   auth: e.AUTH_DB_PASSWORD, habit: e.HABIT_DB_PASSWORD, tracking: e.TRACKING_DB_PASSWORD,
   analytics: e.ANALYTICS_DB_PASSWORD, social: e.SOCIAL_DB_PASSWORD, reminder: e.REMINDER_DB_PASSWORD }))')
-export TF_VAR_jwt_secret TF_VAR_db_admin_url TF_VAR_db_passwords
+TF_VAR_vapid=$(node -e 'const e = process.env; console.log(JSON.stringify({
+  public_key: e.VAPID_PUBLIC_KEY || "", private_key: e.VAPID_PRIVATE_KEY || "", subject: e.VAPID_SUBJECT || "" }))')
+export TF_VAR_jwt_secret TF_VAR_db_admin_url TF_VAR_db_passwords TF_VAR_vapid
 "$TF" -chdir=deploy/aws init -input=false
 "$TF" -chdir=deploy/aws apply -input=false ${AUTO_APPROVE:+-auto-approve}
 

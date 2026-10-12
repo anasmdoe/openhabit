@@ -25,7 +25,7 @@ microservices for Kubernetes homelabs.
 |---|---|---|---|
 | **auth-service** | 3004 (+ OIDC/SSO) | `users` table | `/auth/register`, `/auth/login`, `/auth/me` |
 | **social-service** | 3005 | groups, invites, shares, reactions | `/groups`, `/invites`, `/join`, `/reactions` |
-| **reminder-service** | 3006 | `reminders_sent` | minute tick → ntfy pushes; `/reminders/snooze/:token` |
+| **reminder-service** | 3006 | `reminders_sent` | minute tick → ntfy + Web Push; `/reminders/snooze/:token` |
 | **habit-service** | 3001 | `habits` table | CRUD `/habits`, `/habits/reorder` |
 | **tracking-service** | 3002 | `entries`, `wellness` | `/entries` (+ `/bulk`), `/wellness` |
 | **analytics-service** | 3003 | read-only | `/analytics/overview`, `/analytics/habits/:id` |
@@ -81,11 +81,22 @@ it standalone.
   Subscribe to the same topic in the ntfy mobile app for push notifications.
   Self-hosted ntfy works too — any http(s) topic URL.
   - **Quiet hours** (profile) silence reminders in a window such as 22:00–07:00.
-  - **Snooze** — set `PUBLIC_URL` (the address your phone uses to reach the
-    app) and notifications get *Snooze 30 min* / *Snooze 1 h* buttons. The
-    buttons call signed, 24-hour links, so no login is needed on the phone; a
-    snoozed reminder is re-sent only if the habit still isn't logged, and
-    waits out quiet hours.
+  - **Answer from the notification** — set `PUBLIC_URL` (the address your
+    phone uses to reach the app) and ntfy notifications get buttons: *Done*,
+    *Snooze 30 min* and *Open* for yes/no habits, *Snooze 30* / *Snooze 1 h* /
+    *Open* for numeric ones. The buttons call signed, 24-hour links, so no
+    login is needed on the phone; a snoozed reminder is re-sent only if the
+    habit still isn't logged, and waits out quiet hours.
+- **Reminders on this device (Web Push)** — no ntfy app needed: in the
+  profile, *Reminders on this device → Turn on* subscribes the browser or the
+  installed app, with the same *Done* / *Snooze* buttons. Works in Chrome,
+  Edge and Firefox (Android and desktop) and in Safari on iPhone/iPad once the
+  app is added to the Home Screen (iOS 16.4+). Needs HTTPS (or localhost) and
+  the `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` pair that `scripts/init-env.sh`
+  generates. Pushes go only to the big browser push services
+  (`PUSH_ENDPOINT_HOSTS` changes the list); devices the push service reports
+  as gone are dropped. Both channels can be on at once. Do we need a native
+  Android app? Not yet — see [docs/mobile-strategy.md](docs/mobile-strategy.md).
 - **Milestones & templates** — confetti + share card at 7/30/100/365-day
   streaks; first-run template packs (Morning routine, Fitness base, Digital detox)
 - **Export & import** — download your entire dataset as JSON (habits, entries
@@ -365,7 +376,8 @@ removes everything except your database.
 - The first request after idle is a cold start (about a second).
 - `/metrics`, Prometheus and Grafana don't apply here; use CloudWatch (logs are
   kept 14 days). The login rate limiter is per Lambda container.
-- Snooze buttons work out of the box: `PUBLIC_URL` is set to the CloudFront URL.
+- Snooze / Done buttons work out of the box: `PUBLIC_URL` is set to the app URL.
+  Web Push turns on when `.env` has the VAPID keys (`scripts/init-env.sh`).
 - SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
 - Next step on the roadmap: a DynamoDB storage backend, which removes the
   database's idle cost entirely.
@@ -375,7 +387,7 @@ creates a small private RDS Postgres; the Lambdas then join the default VPC and
 only their security group can reach the database. VPC Lambdas have no internet
 access by themselves, so for ntfy pushes, webhooks and SSO set `nat_mode` to
 `"instance"` (a t3.micro NAT instance, ~$8/month) or `"gateway"` (managed NAT
-gateway, ~$32+/month). Each push is logged (`reminder push habit=… status=…`) in
+gateway, ~$32+/month). Each push is logged (`reminder push|webpush habit=… status=…`) in
 the reminder Lambda's CloudWatch logs. Database migrations always run from inside AWS
 (the `migrate` Lambda, on every apply that changes `db/init.sql`), so no `psql`
 is needed. For accounts that deny CloudFront, inline IAM policies, log
@@ -388,12 +400,12 @@ retention or tagging, see the sandbox block in `terraform.tfvars.example`
 ```
 ├── frontend/                 # React 18 + Vite + Tailwind SPA
 ├── services/
-│   ├── auth-service/         # register/login, JWT, profile (ntfy, timezone)
+│   ├── auth-service/         # register/login, JWT, profile (ntfy, timezone, push devices)
 │   ├── habit-service/        # habits CRUD (schedules, reminders, webhooks)
 │   ├── tracking-service/     # entries (+ skips, notes) + wellness
 │   ├── analytics-service/    # stats, streaks, insights, group dashboards
 │   ├── social-service/       # groups, invites, sharing, reactions, group habits
-│   └── reminder-service/     # minute tick -> ntfy reminders, quiet hours, snooze links
+│   └── reminder-service/     # minute tick -> ntfy + Web Push reminders, quiet hours, action links
 ├── db/
 │   ├── init.sql              # schema + per-service roles (idempotent migration)
 │   └── seed.js               # demo data via the public API
@@ -415,6 +427,9 @@ POST   /api/auth/login                 {email, password} -> {token, user}
 GET    /api/auth/me                    current user
 PUT    /api/auth/me                    {name?, ntfyUrl?, timezone?, quietStart?, quietEnd?} and/or {currentPassword, newPassword}
 DELETE /api/auth/me                    {password} — deletes account + all data
+GET    /api/auth/push/key              {publicKey} for Web Push ("" = off)
+POST   /api/auth/push/subscriptions    a browser PushSubscription (JSON) — reminders to that device
+DELETE /api/auth/push/subscriptions    {endpoint}
 
 All routes below require:  Authorization: Bearer <token>
 
@@ -435,6 +450,7 @@ PUT    /api/wellness                   upsert {date, mood?, sleepHours?}
 GET    /api/analytics/overview?year&month
 GET    /api/analytics/habits/:id
 POST   /api/reminders/snooze/:token     signed link from a notification (no auth header)
+POST   /api/entries/done/:token         signed "Done" link from a notification (no auth header)
 ```
 
 Conventions: dates are `YYYY-MM-DD`; weekdays are `0=Sunday … 6=Saturday`;

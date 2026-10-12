@@ -28,6 +28,15 @@ const host = process.env.PGHOST || 'localhost';
 const port = process.env.PGPORT || '5432';
 const db = process.env.PGDATABASE || 'openhabit';
 const JWT_SECRET = crypto.randomBytes(48).toString('base64');
+// Web Push: a fresh VAPID pair; push endpoints may be the local fake push service
+const vapidKey = crypto.createECDH('prime256v1');
+vapidKey.generateKeys();
+const PUSH_ENV = {
+  VAPID_PUBLIC_KEY: vapidKey.getPublicKey('base64url'),
+  VAPID_PRIVATE_KEY: vapidKey.getPrivateKey('base64url'),
+  VAPID_SUBJECT: 'mailto:smoke@openhabit.test',
+  PUSH_ENDPOINT_HOSTS: 'localhost',
+};
 
 const SERVICES = {
   auth: 3911, habit: 3912, tracking: 3913, analytics: 3914, social: 3915, reminder: 3916,
@@ -57,7 +66,7 @@ function start(name) {
     cwd: path.join(root, 'services', `${serviceDir(name)}-service`),
     env: {
       ...process.env, PORT: String(SERVICES[name]), DATABASE_URL: dbUrl(name), JWT_SECRET, TICK_MS: '300',
-      PUBLIC_URL: 'https://habits.smoke.test',
+      PUBLIC_URL: 'https://habits.smoke.test', ...PUSH_ENV,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -73,7 +82,7 @@ async function loadHandlers() {
   console.error = (...a) => { logs.lambda += `${a.join(' ')}\n`; origError(...a); };
   for (const name of Object.keys(SERVICES).filter((n) => n === serviceDir(n))) {
     Object.assign(process.env, {
-      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2',
+      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2', ...PUSH_ENV,
     });
     // SMOKE_LAMBDA_DIR=<dir> runs the unpacked deploy zips (<dir>/<svc>/src/lambda.js)
     const file = process.env.SMOKE_LAMBDA_DIR
@@ -177,6 +186,21 @@ async function main() {
   const pushesFor = (habit, title = 'OpenHabit') => pushes.filter((p) => p.body.includes(habit) && p.title === title);
   await new Promise((r) => ntfy.listen(0, r));
   const ntfyUrl = `http://localhost:${ntfy.address().port}/openhabit-smoke`;
+
+  // Fake push service (stands in for FCM / Mozilla / Apple): records encrypted
+  // pushes; endpoints under /gone/ answer 410 like an expired subscription.
+  const webpushes = [];
+  const pushService = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (d) => chunks.push(d));
+    req.on('end', () => {
+      webpushes.push({ path: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+      res.statusCode = req.url.startsWith('/gone/') ? 410 : 201;
+      res.end();
+    });
+  });
+  await new Promise((r) => pushService.listen(0, r));
+  const pushBase = `http://localhost:${pushService.address().port}`;
 
   let stopScheduler = () => {};
   if (REMOTE) {
@@ -317,6 +341,47 @@ async function main() {
     await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '', quietEnd: '' } });
     check(await waitFor(() => pushesFor('Hush').length === 1), 'reminder: sent after quiet hours were cleared');
 
+    // ---- Web Push: a "browser" subscribes, gets an encrypted reminder, taps Done
+    const wp = await import(pathToFileURL(path.join(root, 'services/reminder-service/src/webpush.js')).href);
+    const dora = await reg('dora'); // Web Push only, no ntfy topic
+    const D = dora.token;
+    await call('auth', 'PUT', '/auth/me', { token: D, body: { timezone: 'UTC' } });
+    const pushKey = await call('auth', 'GET', '/auth/push/key', { token: D });
+    check(pushKey.publicKey === PUSH_ENV.VAPID_PUBLIC_KEY, 'webpush: server publishes its VAPID public key');
+    const ua = crypto.createECDH('prime256v1');
+    ua.generateKeys();
+    const keys = { p256dh: ua.getPublicKey('base64url'), auth: crypto.randomBytes(16).toString('base64url') };
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: 'https://evil.example.com/x', keys }, expect: [400] });
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: `${pushBase}/push/dora`, keys: { p256dh: 'abc', auth: 'def' } }, expect: [400] });
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: `${pushBase}/push/dora`, keys } });
+    await call('auth', 'POST', '/auth/push/subscriptions', { token: D, body: { endpoint: `${pushBase}/gone/dora`, keys } });
+    await call('habit', 'POST', '/habits', { token: D, body: { name: 'Floss', reminderTime: hhmm() } });
+    check(await waitFor(() => webpushes.some((p) => p.path === '/push/dora')), 'webpush: reminder delivered to the subscribed browser');
+    await sleep(1000);
+    const delivered = webpushes.filter((p) => p.path === '/push/dora');
+    check(delivered.length === 1, `webpush: exactly one push across 2 replicas (got ${delivered.length})`);
+    const wpush = delivered[0] ?? { headers: {}, body: Buffer.alloc(0) };
+    const [, jwt, k] = (wpush.headers.authorization || '').match(/^vapid t=([^,]+), k=(.+)$/) || [];
+    const [jh, jc, js] = (jwt || '..').split('.');
+    const vapidPub = crypto.createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256',
+      x: vapidKey.getPublicKey().subarray(1, 33).toString('base64url'), y: vapidKey.getPublicKey().subarray(33).toString('base64url') } });
+    check(k === PUSH_ENV.VAPID_PUBLIC_KEY && wpush.headers['content-encoding'] === 'aes128gcm' && Number(wpush.headers.ttl) > 0
+      && crypto.verify('sha256', Buffer.from(`${jh}.${jc}`), { key: vapidPub, dsaEncoding: 'ieee-p1363' }, Buffer.from(js || '', 'base64url'))
+      && JSON.parse(Buffer.from(jc || 'e30', 'base64url')).aud === pushBase,
+      'webpush: aes128gcm body with a valid VAPID signature for the push service origin');
+    let payload = {};
+    try { payload = JSON.parse(wp.decrypt(wpush.body, { privateKey: ua.getPrivateKey('base64url'), auth: keys.auth })); } catch { /* checked below */ }
+    check(/Floss/.test(payload.body || '') && (payload.actions || []).map((a) => a.title).join(', ') === 'Done, Snooze 30 min',
+      `webpush: the browser decrypts it: "${payload.body}" [${(payload.actions || []).map((a) => a.title).join(', ')}]`);
+    const tap = (payload.actions || []).find((a) => a.action === 'done');
+    if (tap) await call('tracking', 'POST', tap.url.replace(/^\/api/, '')); // what the service worker does
+    const doraEntries = await call('tracking', 'GET', `/entries?from=${today}&to=${today}`, { token: D });
+    check((Array.isArray(doraEntries) ? doraEntries : []).some((e) => e.value === 1), 'webpush: Done from the notification checked the habit in');
+    const goneLeft = () => Number(execFileSync('psql', ['-X', '-Atc',
+      `SELECT count(*) FROM push_subscriptions WHERE endpoint = '${pushBase}/gone/dora'`]).toString().trim());
+    check(await waitFor(() => goneLeft() === 0), 'webpush: a subscription the push service reports gone (410) is removed');
+    await call('auth', 'DELETE', '/auth/me', { token: D, body: { password: 'smoke-password-1' } });
+
     const metrics = (await request('reminder', 'GET', '/metrics')).text;
     const metric = (n) => Number((metrics.match(new RegExp(`^${n}(?:\\{[^}]*\\})? (\\S+)`, 'm')) || [])[1] ?? NaN);
     const ticks = metric('openhabit_reminder_ticks_total');
@@ -337,6 +402,7 @@ async function main() {
 
   stopScheduler();
   ntfy.close();
+  pushService.close();
 }
 
 /** Live deployment: reminder Lambda, snooze route, quiet-hours API, frontend, no /metrics. */
@@ -363,6 +429,9 @@ async function remoteChecks(A) {
   }
   await call('reminder', 'POST', '/reminders/snooze/not-a-valid-token', { expect: [403] });
   await call('tracking', 'POST', '/entries/done/not-a-valid-token', { expect: [403] });
+  await call('auth', 'POST', '/auth/push/subscriptions', {
+    token: A, body: { endpoint: 'https://evil.example.com/x', keys: { p256dh: 'x', auth: 'y' } }, expect: [400, 404],
+  }); // 404 when Web Push isn't configured on the deployment
   await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '07:00' } });
   await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '' }, expect: [400] });
 

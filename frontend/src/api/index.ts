@@ -109,6 +109,11 @@ export const authApi = {
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify(patch) }),
   deleteAccount: (password: string) =>
     req<void>('/auth/me', { method: 'DELETE', body: JSON.stringify({ password }) }),
+  pushKey: () => req<{ publicKey: string | null }>('/auth/push/key'),
+  pushSubscribe: (sub: PushSubscriptionJSON) =>
+    req<{ ok: true }>('/auth/push/subscriptions', { method: 'POST', body: JSON.stringify(sub) }),
+  pushUnsubscribe: (endpoint: string) =>
+    req<void>('/auth/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
 };
 
 // ---- offline write queue: failed writes are stored and replayed ----------
