@@ -304,3 +304,19 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ============================================================
+-- Several reminders per habit (reminder_time holds up to 3 comma-separated
+-- HH:MM times; reminders_sent keeps one row per time slot) and a "when/where"
+-- cue shown with the habit and in its reminder.
+-- ============================================================
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS cue TEXT NOT NULL DEFAULT '';
+ALTER TABLE reminders_sent ADD COLUMN IF NOT EXISTS slot INTEGER NOT NULL DEFAULT 0;
+DO $$
+BEGIN
+  IF (SELECT array_length(conkey, 1) FROM pg_constraint WHERE conname = 'reminders_sent_pkey') = 2 THEN
+    ALTER TABLE reminders_sent DROP CONSTRAINT reminders_sent_pkey;
+    ALTER TABLE reminders_sent ADD PRIMARY KEY (habit_id, local_date, slot);
+  END IF;
+END
+$$;

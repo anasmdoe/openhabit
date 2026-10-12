@@ -4,11 +4,12 @@ import { HabitIcon } from '../lib/icons';
 import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, weekKey } from '../lib/stats';
 import { quickCurrentStreak } from '../lib/periods';
 import type { Habit } from '../lib/types';
+import { haptic, playDone } from '../lib/feedback';
 
 // What's due today: a progress ring plus one big tap target per habit
 // (full-width rows on phones, wrapping chips on wider screens).
 export function TodayFocus() {
-  const { habits, entries, toggleEntry, setNumericEntry, categoryFilter } = useApp();
+  const { habits, entries, toggleEntry, setNumericEntry, categoryFilter, feedback, setFeedback } = useApp();
   const t = today();
   const yesterday = addDays(t, -1);
 
@@ -35,15 +36,38 @@ export function TodayFocus() {
     <section className="panel">
       <div className="flex items-center gap-3 px-4 pt-3 pb-2">
         <ProgressRing done={doneCount} total={due.length} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-panel-head-text">Today</div>
           <div className="text-[13px] font-semibold text-ink">
             {allDone ? 'All clear — see you tomorrow.' : `${due.length - doneCount} to go`}
           </div>
         </div>
+        <button
+          onClick={() => setFeedback({ hideDone: !feedback.hideDone })}
+          aria-pressed={feedback.hideDone}
+          className={`w-8 h-8 grid place-items-center rounded-lg hover:bg-forest-850 ${feedback.hideDone ? 'text-mint' : 'text-ink-soft hover:text-ink'}`}
+          aria-label="Hide completed habits" data-tip={feedback.hideDone ? 'Showing only open habits' : 'Hide completed habits'}
+        >
+          <svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            {feedback.hideDone
+              ? <><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" /><circle cx="12" cy="12" r="2.6" /></>
+              : <><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" /><circle cx="12" cy="12" r="2.6" /><path d="M4 20L20 4" /></>}
+          </svg>
+        </button>
+        <button
+          onClick={() => { const sound = !feedback.sound; setFeedback({ sound }); if (sound) playDone(); }}
+          aria-pressed={feedback.sound}
+          className={`w-8 h-8 grid place-items-center rounded-lg hover:bg-forest-850 ${feedback.sound ? 'text-mint' : 'text-ink-soft hover:text-ink'}`}
+          aria-label="Completion sound" data-tip={feedback.sound ? 'Chime on completion: on' : 'Chime on completion: off'}
+        >
+          <svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z" />
+            {feedback.sound ? <path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /> : <path d="M16 9.5l4 5M20 9.5l-4 5" />}
+          </svg>
+        </button>
       </div>
       <div className="px-3 pb-3 grid grid-cols-1 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
-        {due.map((h) => {
+        {due.filter((h) => !(feedback.hideDone && settled(h))).map((h) => {
           const missedYesterday = !isQuit(h) && isFixedDay(h) && h.activeDays.includes(dow(yesterday))
             && yesterday >= h.createdAt.slice(0, 10)
             && !isCompleted(h, valueOf(h, yesterday)) && !isSkip(valueOf(h, yesterday));
@@ -100,6 +124,7 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
   const quit = isQuit(habit);
   const skipped = isSkip(value);
   const done = isCompleted(habit, value);
+  const nudge = missedYesterday && !done && !skipped;
   const slipped = quit && value != null && !skipped && value >= 1;
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -107,8 +132,12 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
   // bump on every fresh completion so the burst replays
   const [burst, setBurst] = useState(0);
   const wasDone = useRef(done);
+  const soundOn = useApp((s) => s.feedback.sound);
   useEffect(() => {
-    if (done && !wasDone.current && !quit) setBurst((b) => b + 1);
+    if (done && !wasDone.current && !quit) {
+      setBurst((b) => b + 1);
+      if (soundOn) playDone();
+    }
     wasDone.current = done;
   }, [done, quit]);
 
@@ -126,7 +155,7 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
     if (!Number.isNaN(v) && v >= 0) onSetValue(v);
   };
 
-  const shell = `relative shrink-0 flex items-center gap-2.5 rounded-xl border px-3 h-12 sm:h-11 text-[13px] font-medium transition-colors ${
+  const shell = `relative shrink-0 flex items-center gap-2.5 rounded-xl border px-3 min-h-12 sm:min-h-11 py-1 text-[13px] font-medium transition-colors ${
     slipped ? 'border-[rgb(var(--slip)/0.5)] bg-[rgb(var(--slip)/0.08)]'
     : done ? 'border-mint/50 bg-mint/10'
     : 'border-line hover:bg-forest-850'
@@ -134,11 +163,6 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
 
   const meta = (
     <span className="ml-auto sm:ml-0 flex items-center gap-1.5 shrink-0">
-      {missedYesterday && !done && !skipped && (
-        <span className="text-[10px] font-semibold text-amber-400 whitespace-nowrap" data-tip="Missing once is fine; missing twice starts a new pattern">
-          don't miss twice
-        </span>
-      )}
       {!isFixedDay(habit) && (
         <span className="num text-[10px] text-ink-soft">{Math.min(weekCount, habit.frequency)}/{habit.frequency} wk</span>
       )}
@@ -148,14 +172,23 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
 
   const name = (
     <>
-      {habit.icon && <HabitIcon name={habit.icon} color={habit.color} size={15} />}
-      <span className="min-w-0 truncate sm:max-w-[150px]">{habit.name}</span>
+      {habit.icon && <HabitIcon name={habit.icon} color={habit.color} size={15} className="shrink-0" />}
+      <span className="min-w-0 flex flex-col leading-tight">
+        <span className="truncate sm:max-w-[170px]">{habit.name}</span>
+        {nudge ? (
+          <span className="truncate text-[10.5px] font-semibold text-amber-400" title="Missing once is fine; missing twice starts a new pattern">
+            Don't miss twice
+          </span>
+        ) : habit.cue && (
+          <span className="truncate sm:max-w-[170px] text-[10.5px] font-normal text-ink-soft" title={habit.cue}>{habit.cue}</span>
+        )}
+      </span>
     </>
   );
 
   if (quit) {
     return (
-      <button onClick={() => { navigator.vibrate?.(slipped ? 8 : [10, 30, 10]); onToggle(); }}
+      <button onClick={() => { haptic(slipped ? 8 : [10, 30, 10]); onToggle(); }}
         className={shell} aria-pressed={slipped}
         aria-label={`${habit.name}: ${slipped ? 'slipped today, tap to undo' : 'clean today, tap if you slipped'}`}>
         <span className={`w-6 h-6 rounded-full grid place-items-center shrink-0 ${slipped ? 'bg-[rgb(var(--slip))]' : 'border border-mint/60'}`}>
@@ -174,7 +207,7 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
 
   if (habit.type === 'boolean') {
     return (
-      <button onClick={() => { navigator.vibrate?.(8); onToggle(); }} className={shell} aria-pressed={done}>
+      <button onClick={() => { haptic(8); onToggle(); }} className={shell} aria-pressed={done}>
         <Check done={done} skipped={skipped} burst={burst} color={habit.color} />
         {name}
         {meta}
@@ -224,7 +257,7 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
       {meta}
       {countable && (
         <button
-          onClick={() => { navigator.vibrate?.(6); onSetValue(Math.round((current + 1) * 100) / 100); }}
+          onClick={() => { haptic(6); onSetValue(Math.round((current + 1) * 100) / 100); }}
           className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-forest-800 hover:bg-forest-700 grid place-items-center text-[12px] font-bold shrink-0 cell-btn"
           aria-label={`Add 1 ${habit.unit || ''} to ${habit.name}`}
         >

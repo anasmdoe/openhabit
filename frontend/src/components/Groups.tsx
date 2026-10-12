@@ -4,6 +4,7 @@ import { socialApi } from '../api';
 import { HabitIcon, ICON_NAMES } from '../lib/icons';
 import type { GroupMember, SharedDayState, SharedHabit, StripState } from '../lib/types';
 import { todayISO } from '../lib/stats';
+import { haptic } from '../lib/feedback';
 
 // ---- invite bell (toolbar) ----------------------------------------------
 export function InviteBell() {
@@ -526,7 +527,7 @@ function GroupHabitsSection({ groupId, habits, ownerId, meId, reload }: {
   const cycleMine = async (h: SharedHabit) => {
     // done -> skip -> clear -> done
     const next = h.myToday === 'done' ? -1 : h.myToday === 'skip' ? null : 1;
-    navigator.vibrate?.(8);
+    haptic(8);
     await socialApi.setMyGroupEntry(groupId, h.id, t, next as 1 | -1 | null).catch(() => {});
     reload();
   };

@@ -35,7 +35,10 @@ export function HabitEditor() {
   const [scheduleType, setScheduleType] = useState<'weekdays' | 'per_week'>(existing?.scheduleType ?? 'weekdays');
   const [frequency, setFrequency] = useState(existing?.frequency ?? 3);
   const [webhookUrl, setWebhookUrl] = useState(existing?.webhookUrl ?? '');
-  const [reminderTime, setReminderTime] = useState(existing?.reminderTime ?? '');
+  // up to 3 reminder times a day ('' = off); stored comma-separated
+  const [times, setTimes] = useState<string[]>(existing?.reminderTime ? existing.reminderTime.split(',') : []);
+  const [cue, setCue] = useState(existing?.cue ?? '');
+  const reminderTime = [...new Set(times.filter(Boolean))].sort().join(',');
   const [kind, setKind] = useState<HabitKind>(existing?.kind ?? 'build');
   const [category, setCategory] = useState(existing?.category ?? '');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -74,6 +77,7 @@ export function HabitEditor() {
         frequency,
         webhookUrl: quit ? '' : webhookUrl.trim(),
         reminderTime: quit ? '' : reminderTime,
+        cue: cue.trim(),
         category: category.trim(),
         kind,
       },
@@ -140,6 +144,16 @@ export function HabitEditor() {
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               placeholder={quit ? 'Why I am quitting' : type === 'boolean' ? 'Did you wake up at 05:00?' : 'How many Km did you run today?'}
+              className="input"
+            />
+          </Field>
+
+          <Field label="When & where" hint="optional — a cue shown with the habit and in its reminder">
+            <input
+              value={cue}
+              onChange={(e) => setCue(e.target.value)}
+              maxLength={120}
+              placeholder={quit ? 'When the urge hits: take a walk instead' : 'After my morning coffee, at my desk'}
               className="input"
             />
           </Field>
@@ -262,17 +276,28 @@ export function HabitEditor() {
             </div>
           </Field>
 
-          {!quit && <Field label="Reminder" hint="optional — ntfy or this device, set in your profile">
-            <div className="flex items-center gap-2">
-              <input
-                className="input num w-32"
-                type="time"
-                value={reminderTime}
-                onChange={(ev) => setReminderTime(ev.target.value)}
-              />
-              {reminderTime && (
-                <button onClick={() => setReminderTime('')}
-                  className="text-[11px] text-ink-soft hover:text-ink">clear</button>
+          {!quit && <Field label="Reminders" hint="optional — up to 3 a day, each skipped once the habit is done">
+            <div className="flex flex-col gap-1.5">
+              {times.map((t, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    className="input num w-32"
+                    type="time"
+                    value={t}
+                    onChange={(ev) => setTimes(times.map((x, j) => (j === i ? ev.target.value : x)))}
+                    aria-label={`Reminder ${i + 1}`}
+                  />
+                  <button onClick={() => setTimes(times.filter((_, j) => j !== i))}
+                    className="text-[11px] text-ink-soft hover:text-ink" aria-label={`Remove reminder ${i + 1}`}>remove</button>
+                </div>
+              ))}
+              {times.length < 3 && (
+                <button
+                  onClick={() => setTimes([...times, times.length ? '20:00' : '08:00'])}
+                  className="self-start text-[11px] font-medium rounded-full px-3 h-7 border border-line text-ink-soft hover:text-ink hover:bg-forest-850"
+                >
+                  + {times.length ? 'Another reminder' : 'Add a reminder'}
+                </button>
               )}
             </div>
             {reminderTime && user && !user.ntfyUrl && (

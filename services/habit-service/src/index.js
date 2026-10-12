@@ -76,7 +76,7 @@ async function auth(req, res, next) {
 const HABIT_COLS = `id, name, question, type, unit, target::float AS target,
   target_type AS "targetType", color, icon, schedule_type AS "scheduleType",
   frequency, webhook_url AS "webhookUrl", reminder_time AS "reminderTime", active_days AS "activeDays",
-  position, archived, category, kind, created_at AS "createdAt"`;
+  position, archived, category, kind, cue, created_at AS "createdAt"`;
 
 const asyncH = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
@@ -95,7 +95,13 @@ function validateHabit(body, partial = false) {
     scheduleType: (v) => ['weekdays', 'per_week'].includes(v),
     frequency: (v) => Number.isInteger(v) && v >= 1 && v <= 7,
     webhookUrl: (v) => typeof v === 'string' && v.length <= 500 && (v === '' || /^https?:\/\//.test(v)),
-    reminderTime: (v) => typeof v === 'string' && (v === '' || /^([01]\d|2[0-3]):[0-5]\d$/.test(v)),
+    // up to 3 distinct HH:MM times, comma-separated
+    reminderTime: (v) => typeof v === 'string' && (v === '' || (() => {
+      const times = v.split(',');
+      return times.length <= 3 && new Set(times).size === times.length
+        && times.every((t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
+    })()),
+    cue: (v) => typeof v === 'string' && v.trim().length <= 120,
     activeDays: (v) => Array.isArray(v) && v.length > 0 && v.every((d) => Number.isInteger(d) && d >= 0 && d <= 6),
     position: (v) => Number.isInteger(v),
     archived: (v) => typeof v === 'boolean',
@@ -108,7 +114,7 @@ function validateHabit(body, partial = false) {
       continue;
     }
     if (!check(body[key])) errors.push(`invalid ${key}`);
-    else out[key] = typeof body[key] === 'string' && key === 'category' ? body[key].trim() : body[key];
+    else out[key] = typeof body[key] === 'string' && (key === 'category' || key === 'cue') ? body[key].trim() : body[key];
   }
   // a quit habit is yes/no and daily: logging it records a slip
   if (out.kind === 'quit' && (out.type === 'numeric' || out.scheduleType === 'per_week')) {
@@ -147,9 +153,9 @@ app.post('/habits', asyncH(async (req, res) => {
   if (errors.length) return res.status(400).json({ errors });
   const { rows } = await pool.query(
     `INSERT INTO habits (user_id, name, question, type, unit, target, target_type, color, icon,
-       schedule_type, frequency, webhook_url, reminder_time, active_days, position, category, kind)
+       schedule_type, frequency, webhook_url, reminder_time, active_days, position, category, kind, cue)
      VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $11, $12, $13, $14, $15, $8,
-       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)), $16, $17)
+       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)), $16, $17, $18)
      RETURNING ${HABIT_COLS}`,
     [
       out.name.trim(),
@@ -169,6 +175,7 @@ app.post('/habits', asyncH(async (req, res) => {
       out.reminderTime ?? '',
       out.category ?? '',
       out.kind ?? 'build',
+      out.cue ?? '',
     ]
   );
   res.status(201).json(rows[0]);
@@ -202,7 +209,7 @@ app.put('/habits/:id', asyncH(async (req, res) => {
     targetType: 'target_type', color: 'color', icon: 'icon', activeDays: 'active_days',
     scheduleType: 'schedule_type', frequency: 'frequency', webhookUrl: 'webhook_url',
     reminderTime: 'reminder_time',
-    position: 'position', archived: 'archived', category: 'category', kind: 'kind',
+    position: 'position', archived: 'archived', category: 'category', kind: 'kind', cue: 'cue',
   };
   const sets = [];
   const vals = [];

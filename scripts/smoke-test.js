@@ -272,6 +272,9 @@ async function main() {
   });
   check(quitH.kind === 'quit' && quitH.category === 'Health', 'habits: quit habit with a trimmed category');
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', kind: 'quit', type: 'numeric' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', reminderTime: '08:00,09:00,10:00,11:00' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', reminderTime: '08:00,08:00' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', cue: 'x'.repeat(121) }, expect: [400] });
   await call('habit', 'PUT', `/habits/${quitH.id}`, { token: A, body: { type: 'numeric' }, expect: [400] });
   await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: quitH.id, date: daysAgo(2), value: 1 } });
   const qd = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
@@ -322,6 +325,15 @@ async function main() {
     check(pushesFor('Stretch').length === 1,
       `reminder: exactly one push across ${LAMBDA ? 'duplicate scheduler deliveries' : '2 replicas'} (got ${pushesFor('Stretch').length})`);
     check(pushesFor('Smoking').length === 0, 'reminder: quit habits are never nagged');
+
+    // several reminder times: one push per time slot (not per replica), with the cue in the text
+    await call('habit', 'POST', '/habits', {
+      token: A, body: { name: 'Hydrate', cue: 'After coffee, at my desk', reminderTime: `${hhmm(-2)},${hhmm()}` },
+    });
+    check(await waitFor(() => pushesFor('Hydrate').length >= 2), 'reminder: a habit with two times is pushed twice');
+    await sleep(1500);
+    check(pushesFor('Hydrate').length === 2 && pushesFor('Hydrate').every((p) => p.body.includes('After coffee, at my desk')),
+      `reminder: exactly one push per time slot, each with the cue (got ${pushesFor('Hydrate').length})`);
 
     // Buttons: signed links (Done, Snooze 30 min) plus Open; the ntfy app POSTs them.
     const push = pushesFor('Stretch')[0] ?? { actions: '' };

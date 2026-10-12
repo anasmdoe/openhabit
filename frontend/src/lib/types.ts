@@ -21,6 +21,7 @@ export interface Habit {
   position: number;
   archived: boolean;
   category: string; // '' = none
+  cue: string; // when/where: "After my morning coffee, at my desk"
   kind: HabitKind;
   createdAt: string;
 }

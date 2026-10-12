@@ -7,6 +7,7 @@ import { HabitIcon } from '../lib/icons';
 import { dow, isCompleted, isFixedDay, isQuit, isSkip, monthRange } from '../lib/stats';
 import { DAY_LETTERS, MONTH_NAMES } from '../lib/types';
 import type { Entry, Habit } from '../lib/types';
+import { haptic } from '../lib/feedback';
 
 // ------------------------------------------------------------- toolbar
 const ACCENTS = ['#78C8A5', '#7DD3FC', '#C4B5FD', '#F0ABFC', '#FDA4AF', '#FDBA74', '#5EEAD4'];
@@ -495,7 +496,7 @@ function DayCell({
       if (e.pointerType !== 'touch') return;
       const { clientX, clientY } = e;
       pressTimer.current = window.setTimeout(() => {
-        navigator.vibrate?.(12);
+        haptic(12);
         onMenu(clientX, clientY);
         pressTimer.current = null;
       }, 480);
@@ -523,7 +524,7 @@ function DayCell({
     const clean = !isFuture && !skipped && !slipped && started;
     return (
       <button
-        onClick={() => { navigator.vibrate?.(slipped ? 8 : [10, 30, 10]); onToggle(); }}
+        onClick={() => { haptic(slipped ? 8 : [10, 30, 10]); onToggle(); }}
         {...pressHandlers}
         disabled={isFuture}
         style={{ width: CELL }}
@@ -555,7 +556,7 @@ function DayCell({
     const done = value != null && !skipped && value >= 1;
     return (
       <button
-        onClick={() => { navigator.vibrate?.(8); onToggle(); }}
+        onClick={() => { haptic(8); onToggle(); }}
         {...pressHandlers}
         disabled={isFuture}
         style={{ width: CELL }}

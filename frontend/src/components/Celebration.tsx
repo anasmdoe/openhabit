@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { useApp } from '../store';
 import { shareCard } from '../lib/share';
+import { haptic } from '../lib/feedback';
 
 const PIECES = 28;
 
@@ -10,7 +11,7 @@ export function Celebration() {
 
   useEffect(() => {
     if (!celebration) return;
-    navigator.vibrate?.([20, 40, 20]);
+    haptic([20, 40, 20]);
     const t = setTimeout(dismissCelebration, 4200);
     return () => clearTimeout(t);
   }, [celebration, dismissCelebration]);

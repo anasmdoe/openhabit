@@ -178,7 +178,7 @@ async function pendingMessage(h, now) {
 export async function tick() {
   const { rows } = await pool.query(
     `SELECT h.id, h.user_id, h.name, h.type, h.unit, h.target::float AS target, h.target_type,
-            h.schedule_type, h.frequency, h.active_days, h.reminder_time,
+            h.schedule_type, h.frequency, h.active_days, h.reminder_time, h.cue,
             u.ntfy_url, u.timezone, u.quiet_start, u.quiet_end
      FROM habits h
      JOIN users u ON u.id = h.user_id
@@ -189,16 +189,18 @@ export async function tick() {
 
   // today's (and yesterday's, for far-east/west zones) bookkeeping rows
   const { rows: sentRows } = await pool.query(
-    `SELECT habit_id, local_date::text AS date, snoozed_until <= now() AS snooze_due
+    `SELECT habit_id, slot, local_date::text AS date, snoozed_until <= now() AS snooze_due
      FROM reminders_sent WHERE local_date >= current_date - 1`
   );
-  const sent = new Map(sentRows.map((r) => [`${r.habit_id}|${r.date}`, r]));
+  const sent = new Map(sentRows.map((r) => [`${r.habit_id}|${r.date}|${r.slot}`, r]));
 
-  for (const h of rows) {
+  // a habit has up to 3 reminder times; each is its own slot, claimed once a day
+  const slots = rows.flatMap((h) => h.reminder_time.split(',').map((time, slot) => ({ h, time, slot })));
+  for (const { h, time, slot } of slots) {
     const now = localNow(h.timezone);
-    const row = sent.get(`${h.id}|${now.date}`);
+    const row = sent.get(`${h.id}|${now.date}|${slot}`);
     const snoozed = Boolean(row?.snooze_due);
-    if (row ? !snoozed : !isDue(h.reminder_time, now.hm)) continue;
+    if (row ? !snoozed : !isDue(time, now.hm)) continue;
     // Quiet hours hold reminders back; a snoozed one goes out once they end.
     if (inQuietHours(now.hm, h.quiet_start, h.quiet_end)) continue;
 
@@ -206,7 +208,8 @@ export async function tick() {
     if (!msg) {
       // logged in the meantime: drop the snooze so we stop re-checking it
       if (snoozed) await pool.query(
-        'UPDATE reminders_sent SET snoozed_until = NULL WHERE habit_id = $1 AND local_date = $2', [h.id, now.date]);
+        'UPDATE reminders_sent SET snoozed_until = NULL WHERE habit_id = $1 AND local_date = $2 AND slot = $3',
+        [h.id, now.date, slot]);
       continue;
     }
 
@@ -214,13 +217,13 @@ export async function tick() {
     const claim = snoozed
       ? await pool.query(
         `UPDATE reminders_sent SET snoozed_until = NULL, sent_at = now()
-         WHERE habit_id = $1 AND local_date = $2 AND snoozed_until <= now() RETURNING 1`, [h.id, now.date])
+         WHERE habit_id = $1 AND local_date = $2 AND slot = $3 AND snoozed_until <= now() RETURNING 1`, [h.id, now.date, slot])
       : await pool.query(
-        `INSERT INTO reminders_sent (habit_id, local_date) VALUES ($1, $2)
-         ON CONFLICT DO NOTHING RETURNING 1`, [h.id, now.date]);
+        `INSERT INTO reminders_sent (habit_id, local_date, slot) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING RETURNING 1`, [h.id, now.date, slot]);
     if (!claim.rowCount) continue;
 
-    await deliver(h, now.date, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', msg);
+    await deliver(h, now.date, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', h.cue ? `${msg}\n${h.cue}` : msg);
   }
 }
 
@@ -247,8 +250,11 @@ app.post('/reminders/snooze/:token', async (req, res) => {
   if (!s) return res.status(403).type('text').send('This snooze link is invalid or has expired.');
   try {
     const { rowCount } = await pool.query(
+      // the notification being answered is the habit's most recent send that day
       `UPDATE reminders_sent SET snoozed_until = now() + make_interval(mins => $3)
-       WHERE habit_id = $1 AND local_date = $2`,
+       WHERE habit_id = $1 AND local_date = $2
+         AND slot = (SELECT slot FROM reminders_sent WHERE habit_id = $1 AND local_date = $2
+                     ORDER BY sent_at DESC LIMIT 1)`,
       [s.habitId, s.date, s.minutes]
     );
     if (!rowCount) return res.status(404).type('text').send('Nothing to snooze.');

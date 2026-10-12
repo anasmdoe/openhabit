@@ -5,6 +5,8 @@ import type { Entry, Group, GroupDashboard, GroupInvite, Habit, HabitDetail, Ins
 import { SKIP, addDays, computeOverview, isCompleted, isSkip, monthRange, todayISO } from './lib/stats';
 import { quickCurrentStreak } from './lib/periods';
 import { flushQueue, socialApi } from './api';
+import { loadPrefs, savePrefs } from './lib/feedback';
+import type { FeedbackPrefs } from './lib/feedback';
 
 export type Theme = 'forest-dark' | 'pitch-black' | 'forest-light';
 export const THEME_CYCLE: Theme[] = ['forest-dark', 'pitch-black', 'forest-light'];
@@ -59,6 +61,8 @@ interface AppState {
   gridYear: number;
   gridMonth: number; // 1-12, the month shown in the habit grid
   categoryFilter: string; // '' = all categories (Today + grid)
+  feedback: FeedbackPrefs;
+  setFeedback(p: Partial<FeedbackPrefs>): void;
   setCategoryFilter(c: string): void;
 
   shiftGridMonth(delta: number): Promise<void>;
@@ -247,6 +251,12 @@ export const useApp = create<AppState>((set, get) => ({
   },
   gridYear: new Date().getFullYear(),
   gridMonth: new Date().getMonth() + 1,
+  feedback: loadPrefs(),
+  setFeedback(p) {
+    const next = { ...get().feedback, ...p };
+    savePrefs(next);
+    set({ feedback: next });
+  },
   categoryFilter: (() => { try { return localStorage.getItem(CATEGORY_KEY) ?? ''; } catch { return ''; } })(),
   setCategoryFilter(c) {
     try { localStorage.setItem(CATEGORY_KEY, c); } catch { /* private mode */ }

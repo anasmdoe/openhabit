@@ -62,11 +62,11 @@ export function HabitDetail() {
                   {detail.habit.icon && <HabitIcon name={detail.habit.icon} color={color} size={18} className="shrink-0" />}
                   {detail.habit.name}
                 </h2>
-                {(detail.habit.question || quit) && (
+                {(detail.habit.question || detail.habit.cue || quit) && (
                   <p className="text-[12px] text-ink-soft truncate">
                     {quit && (lastSlip ? `Last slip ${lastSlip}` : 'No slips logged')}
-                    {quit && detail.habit.question && ' · '}
-                    {detail.habit.question}
+                    {quit && (detail.habit.cue || detail.habit.question) && ' · '}
+                    {detail.habit.cue || detail.habit.question}
                   </p>
                 )}
               </div>

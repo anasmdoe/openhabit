@@ -22,6 +22,7 @@ export interface HabitInput {
   activeDays?: number[];
   category?: string;
   kind?: HabitKind;
+  cue?: string;
 }
 
 export interface DataAdapter {
@@ -276,7 +277,7 @@ function seedDemo(): LocalDB {
   ): Habit => ({
     id: uuid(), name, question, type, unit, target, targetType: 'at_least',
     color, icon, scheduleType, frequency, webhookUrl: '', reminderTime: '', activeDays, position, archived: false,
-    category: '', kind: 'build',
+    category: '', kind: 'build', cue: '',
     createdAt: `${addDays(today, -120)}T00:00:00Z`,
   });
 
@@ -293,6 +294,9 @@ function seedDemo(): LocalDB {
   const categories = ['Morning', 'Fitness', 'Fitness', 'Mind', 'Morning', 'Health', 'Mind', 'Mind'];
   habits.forEach((h, i) => { h.category = categories[i]; });
   habits[7].kind = 'quit'; // a habit to break: entries are slips
+  habits[3].cue = 'After dinner, on the sofa';
+  habits[6].cue = 'Right after waking up, before the phone';
+  habits[7].cue = 'When the urge hits: take a walk instead';
 
   // deterministic pseudo-random completion patterns
   let s = 42;
@@ -360,6 +364,7 @@ const localAdapter: DataAdapter = {
       archived: false,
       category: (input.category ?? '').trim(),
       kind: input.kind ?? 'build',
+      cue: (input.cue ?? '').trim(),
       createdAt: new Date().toISOString(),
     };
     db.habits.push(habit);

@@ -134,6 +134,7 @@ export async function importJSON(adapter: DataAdapter, file: File): Promise<Impo
       reminderTime: h.reminderTime ?? '',
       activeDays: h.activeDays,
       category: h.category ?? '',
+      cue: h.cue ?? '',
       kind: h.kind === 'quit' ? 'quit' : 'build',
     });
     idMap.set(h.id, fresh.id);

@@ -63,6 +63,13 @@ it standalone.
   (full-width rows on phones): tap to check in, **+1** to count up measurable
   habits (water, pages, sets), a streak flame per habit, and a gentle
   *don't miss twice* nudge on habits missed yesterday
+- **When & where cues, several reminders** — give a habit a cue ("After my
+  morning coffee, at my desk"): it shows under the habit on Today and in its
+  reminder. Set up to **3 reminder times a day**; each one is skipped if the
+  habit is already logged, and Snooze answers the reminder you just got
+- **Feedback you control** — Today can hide completed habits, play a soft
+  chime on completion (off by default), and vibrates on check-in unless your
+  device asks for reduced motion
 - **Categories** — group habits (Health, Work, …); chips filter Today and the
   grid, and *By category* shows each group's month completion
 - **Break a habit** — quit habits (smoking, doom-scrolling) where you log only
@@ -448,7 +455,7 @@ DELETE /api/auth/push/subscriptions    {endpoint}
 All routes below require:  Authorization: Bearer <token>
 
 GET    /api/habits                     list
-POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?, category?, kind?: build|quit}
+POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?, category?, kind?: build|quit, cue?, reminderTime?: "HH:MM[,HH:MM[,HH:MM]]"}
 PUT    /api/habits/:id                 partial update (incl. archived)
 DELETE /api/habits/:id
 PUT    /api/habits/reorder             {ids: [...]}
