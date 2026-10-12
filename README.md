@@ -25,7 +25,7 @@ microservices for Kubernetes homelabs.
 |---|---|---|---|
 | **auth-service** | 3004 (+ OIDC/SSO) | `users` table | `/auth/register`, `/auth/login`, `/auth/me` |
 | **social-service** | 3005 | groups, invites, shares, reactions | `/groups`, `/invites`, `/join`, `/reactions` |
-| **reminder-service** | 3006 | — (read-only) | internal: minute tick → ntfy pushes |
+| **reminder-service** | 3006 | `reminders_sent` | minute tick → ntfy pushes; `/reminders/snooze/:token` |
 | **habit-service** | 3001 | `habits` table | CRUD `/habits`, `/habits/reorder` |
 | **tracking-service** | 3002 | `entries`, `wellness` | `/entries` (+ `/bulk`), `/wellness` |
 | **analytics-service** | 3003 | read-only | `/analytics/overview`, `/analytics/habits/:id` |
@@ -76,8 +76,16 @@ it standalone.
   time per habit; the reminder-service checks every minute (in *your* timezone,
   auto-detected by the app) and nudges only when the habit is due and not yet
   logged. Completed, skipped, and quota-met habits stay silent; one reminder
-  per habit per day. Subscribe to the same topic in the ntfy mobile app for
-  push notifications. Self-hosted ntfy works too — any http(s) topic URL.
+  per habit per day, recorded in the database so restarts never double-send
+  (and a reminder missed during a restart still goes out within 15 minutes).
+  Subscribe to the same topic in the ntfy mobile app for push notifications.
+  Self-hosted ntfy works too — any http(s) topic URL.
+  - **Quiet hours** (profile) silence reminders in a window such as 22:00–07:00.
+  - **Snooze** — set `PUBLIC_URL` (the address your phone uses to reach the
+    app) and notifications get *Snooze 30 min* / *Snooze 1 h* buttons. The
+    buttons call signed, 24-hour links, so no login is needed on the phone; a
+    snoozed reminder is re-sent only if the habit still isn't logged, and
+    waits out quiet hours.
 - **Milestones & templates** — confetti + share card at 7/30/100/365-day
   streaks; first-run template packs (Morning routine, Fitness base, Digital detox)
 - **Export & import** — download your entire dataset as JSON (habits, entries
@@ -322,7 +330,7 @@ Notes for the cluster:
 │   ├── tracking-service/     # entries (+ skips, notes) + wellness
 │   ├── analytics-service/    # stats, streaks, insights, group dashboards
 │   ├── social-service/       # groups, invites, sharing, reactions, group habits
-│   └── reminder-service/     # minute tick -> ntfy reminders (read-only)
+│   └── reminder-service/     # minute tick -> ntfy reminders, quiet hours, snooze links
 ├── db/
 │   ├── init.sql              # schema + per-service roles (idempotent migration)
 │   └── seed.js               # demo data via the public API
@@ -341,7 +349,7 @@ Notes for the cluster:
 POST   /api/auth/register              {email, password, name?} -> {token, user}
 POST   /api/auth/login                 {email, password} -> {token, user}
 GET    /api/auth/me                    current user
-PUT    /api/auth/me                    {name?} and/or {currentPassword, newPassword}
+PUT    /api/auth/me                    {name?, ntfyUrl?, timezone?, quietStart?, quietEnd?} and/or {currentPassword, newPassword}
 DELETE /api/auth/me                    {password} — deletes account + all data
 
 All routes below require:  Authorization: Bearer <token>
@@ -362,6 +370,7 @@ PUT    /api/wellness                   upsert {date, mood?, sleepHours?}
 
 GET    /api/analytics/overview?year&month
 GET    /api/analytics/habits/:id
+POST   /api/reminders/snooze/:token     signed link from a notification (no auth header)
 ```
 
 Conventions: dates are `YYYY-MM-DD`; weekdays are `0=Sunday … 6=Saturday`;

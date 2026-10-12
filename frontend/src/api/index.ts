@@ -57,6 +57,8 @@ export interface User {
   name: string;
   ntfyUrl: string;
   timezone: string;
+  quietStart: string; // 'HH:MM' local, '' = no quiet hours
+  quietEnd: string;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -103,7 +105,7 @@ export const authApi = {
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
   updateName: (name: string) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ name }) }),
-  updateProfile: (patch: { name?: string; ntfyUrl?: string; timezone?: string }) =>
+  updateProfile: (patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string }) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify(patch) }),
   deleteAccount: (password: string) =>
     req<void>('/auth/me', { method: 'DELETE', body: JSON.stringify({ password }) }),

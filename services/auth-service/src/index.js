@@ -130,8 +130,10 @@ setInterval(() => {
   for (const [k, v] of attempts) if (v.resetAt < now) attempts.delete(k);
 }, 60_000).unref();
 
-const PUBLIC_USER = `id, email, name, ntfy_url AS "ntfyUrl", timezone, created_at AS "createdAt"`;
+const PUBLIC_USER = `id, email, name, ntfy_url AS "ntfyUrl", timezone,
+  quiet_start AS "quietStart", quiet_end AS "quietEnd", created_at AS "createdAt"`;
 const VALID_TZ = new Set([...Intl.supportedValuesOf('timeZone'), 'UTC']);
+const validHm = (v) => typeof v === 'string' && (v === '' || /^([01]\d|2[0-3]):[0-5]\d$/.test(v));
 const validNtfy = (v) => typeof v === 'string' && v.length <= 300 && (v === '' || /^https?:\/\//.test(v));
 const validEmail = (e) => typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 254;
 const validPassword = (p) => typeof p === 'string' && p.length >= 8 && p.length <= 128;
@@ -318,6 +320,12 @@ app.put('/auth/me', auth, requireSession, asyncH(async (req, res) => {
     if (typeof timezone !== 'string' || !VALID_TZ.has(timezone))
       return res.status(400).json({ error: 'unknown timezone' });
     await pool.query('UPDATE users SET timezone = $1 WHERE id = $2', [timezone, req.userId]);
+  }
+  const { quietStart, quietEnd } = req.body;
+  if (quietStart !== undefined || quietEnd !== undefined) {
+    if (!validHm(quietStart) || !validHm(quietEnd) || (quietStart === '') !== (quietEnd === ''))
+      return res.status(400).json({ error: 'quiet hours need both a start and an end (HH:MM), or neither' });
+    await pool.query('UPDATE users SET quiet_start = $1, quiet_end = $2 WHERE id = $3', [quietStart, quietEnd, req.userId]);
   }
   const { rows } = await pool.query(`SELECT ${PUBLIC_USER} FROM users WHERE id = $1`, [req.userId]);
   res.json(rows[0]);

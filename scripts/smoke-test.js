@@ -3,10 +3,11 @@
 // logged in as its own least-privilege role, and drives the main user flows.
 // Fails on any unexpected status, 5xx, or "permission denied" in service logs.
 //
-// Prerequisites: db/init.sql applied, role passwords set (scripts/set-db-passwords.sh),
-// `npm ci` done in each service. Connection via PGHOST/PGPORT/PGDATABASE and the
-// <SERVICE>_DB_PASSWORD variables (same names as .env).
-const { spawn } = require('child_process');
+// Prerequisites: db/init.sql applied, role passwords set (db/set-db-passwords.sh),
+// `npm ci` done in each service, `psql` on PATH. Connection via the PG* variables
+// (an admin login, used only to fast-forward a snooze) and the <SERVICE>_DB_PASSWORD
+// variables (same names as .env).
+const { spawn, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const http = require('http');
 const path = require('path');
@@ -19,13 +20,16 @@ const JWT_SECRET = crypto.randomBytes(48).toString('base64');
 
 const SERVICES = {
   auth: 3911, habit: 3912, tracking: 3913, analytics: 3914, social: 3915, reminder: 3916,
+  reminder2: 3917, // a second reminder-service replica: sends must still happen once
 };
+const serviceDir = (name) => name.replace(/\d+$/, '');
 
 const procs = [];
 const logs = {};
 const failures = [];
 
 function dbUrl(name) {
+  name = serviceDir(name);
   const pw = process.env[`${name.toUpperCase()}_DB_PASSWORD`];
   if (!pw) throw new Error(`${name.toUpperCase()}_DB_PASSWORD is not set`);
   return `postgres://${name}_svc:${encodeURIComponent(pw)}@${host}:${port}/${db}`;
@@ -34,8 +38,11 @@ function dbUrl(name) {
 function start(name) {
   logs[name] = '';
   const p = spawn(process.execPath, ['src/index.js'], {
-    cwd: path.join(root, 'services', `${name}-service`),
-    env: { ...process.env, PORT: String(SERVICES[name]), DATABASE_URL: dbUrl(name), JWT_SECRET, TICK_MS: '300' },
+    cwd: path.join(root, 'services', `${serviceDir(name)}-service`),
+    env: {
+      ...process.env, PORT: String(SERVICES[name]), DATABASE_URL: dbUrl(name), JWT_SECRET, TICK_MS: '300',
+      PUBLIC_URL: 'https://habits.smoke.test',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   p.stdout.on('data', (d) => { logs[name] += d; });
@@ -73,13 +80,32 @@ async function call(svc, method, url, { token, body, expect = [200, 201, 204] } 
   return json ?? {};
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(pred, ms = 6000) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(100)) if (pred()) return true;
+  return pred();
+}
+function check(ok, label) {
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}`);
+  if (!ok) failures.push(label);
+}
+/** UTC 'HH:MM' shifted by `min` minutes (the test user's timezone is UTC). */
+const hhmm = (min = 0) => new Date(Date.now() + min * 60_000).toISOString().slice(11, 16);
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
 
 async function main() {
   // Catches reminder pushes so the ntfy path is exercised without the internet.
-  let ntfyHits = 0;
-  const ntfy = http.createServer((req, res) => { ntfyHits++; req.resume(); res.end('ok'); });
+  const pushes = [];
+  const ntfy = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      pushes.push({ title: req.headers.title, actions: req.headers.actions ?? '', body });
+      res.end('ok');
+    });
+  });
+  const pushesFor = (habit, title = 'OpenHabit') => pushes.filter((p) => p.body.includes(habit) && p.title === title);
   await new Promise((r) => ntfy.listen(0, r));
   const ntfyUrl = `http://localhost:${ntfy.address().port}/openhabit-smoke`;
 
@@ -167,21 +193,44 @@ async function main() {
   await call('social', 'POST', `/groups/${g.id}/leave`, { token: B });
   await call('social', 'DELETE', `/groups/${g.id}/habits/${gh.id}`, { token: A });
 
-  // ---- reminders: the tick runs every 300 ms and fires on an exact HH:MM ----
-  // An unchecked habit due "now" must produce one ntfy push; re-aim it if the
-  // minute rolls over while we wait.
-  const due = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stretch' } });
-  for (let i = 0; i < 10 && !ntfyHits; i++) {
-    await call('habit', 'PUT', `/habits/${due.id}`, { token: A, body: { reminderTime: new Date().toISOString().slice(11, 16) } });
-    await new Promise((r) => setTimeout(r, 700));
-  }
+  // ---- reminders (two replicas tick every 300 ms) --------------------------
+  // A habit due now and not logged gets exactly one push, even with two
+  // replicas racing for it; reminders_sent makes the claim atomic.
+  const due = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stretch', reminderTime: hhmm() } });
+  check(await waitFor(() => pushesFor('Stretch').length > 0), 'reminder: due habit pushed');
+  await sleep(1500);
+  check(pushesFor('Stretch').length === 1, `reminder: exactly one push across 2 replicas (got ${pushesFor('Stretch').length})`);
+
+  // Snooze: the notification carries signed links; the button POSTs one.
+  const push = pushesFor('Stretch')[0] ?? { actions: '' };
+  const links = [...push.actions.matchAll(/https:\/\/habits\.smoke\.test\/api\/reminders\/snooze\/([^,\s]+)/g)].map((m) => m[1]);
+  check(links.length === 2, `reminder: notification has 2 snooze buttons (got ${links.length})`);
+  const [snooze30] = links;
+  await call('reminder', 'POST', `/reminders/snooze/${snooze30}x`, { expect: [403] });
+  await call('reminder', 'POST', `/reminders/snooze/${snooze30}`);
+  // fast-forward the 30 minutes, then exactly one "snoozed" re-send must follow
+  execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c',
+    `UPDATE reminders_sent SET snoozed_until = now() - interval '1 second' WHERE habit_id = '${due.id}'`]);
+  check(await waitFor(() => pushesFor('Stretch', 'OpenHabit (snoozed)').length > 0), 'reminder: snoozed reminder re-sent');
+  await sleep(1000);
+  check(pushesFor('Stretch', 'OpenHabit (snoozed)').length === 1, 'reminder: snoozed reminder re-sent exactly once');
+
+  // Quiet hours hold reminders back; one still in its catch-up window goes out
+  // once they are cleared.
+  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: hhmm(-1), quietEnd: hhmm(60) } });
+  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Hush', reminderTime: hhmm() } });
+  await sleep(1500);
+  check(pushesFor('Hush').length === 0, 'reminder: nothing sent during quiet hours');
+  await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '', quietEnd: '' } });
+  check(await waitFor(() => pushesFor('Hush').length === 1), 'reminder: sent after quiet hours were cleared');
+
   const metrics = await (await fetch(`http://localhost:${SERVICES.reminder}/metrics`)).text();
   const metric = (n) => Number((metrics.match(new RegExp(`^${n}(?:\\{[^}]*\\})? (\\S+)`, 'm')) || [])[1] ?? NaN);
   const ticks = metric('openhabit_reminder_ticks_total');
   const tickErrors = metric('openhabit_reminder_tick_errors_total');
-  const remindersOk = ticks > 0 && tickErrors === 0 && ntfyHits > 0;
-  console.log(`${remindersOk ? 'ok  ' : 'FAIL'} reminder ticks=${ticks} errors=${tickErrors} ntfy pushes=${ntfyHits}`);
-  if (!remindersOk) failures.push(`reminder: ticks=${ticks} errors=${tickErrors} ntfy pushes=${ntfyHits}`);
+  check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
+  check(metric('openhabit_reminder_snoozes_total') === 1, 'reminder: snooze counted in metrics');
 
   // ---- teardown flows: token revoke, group & account deletion ---------------
   await call('auth', 'DELETE', `/auth/tokens/${tok.id}`, { token: A });
