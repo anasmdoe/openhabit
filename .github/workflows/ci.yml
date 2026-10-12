@@ -71,10 +71,24 @@ jobs:
       PGDATABASE: openhabit
     steps:
       - uses: actions/checkout@v4
-      - name: k8s ConfigMap matches db/init.sql
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: k8s ConfigMap matches db/
         run: node scripts/sync-configmap.js --check
       - name: init.sql is idempotent
         run: scripts/test-init-sql.sh
+      - name: Generate service role passwords
+        run: |
+          for svc in AUTH HABIT TRACKING ANALYTICS SOCIAL REMINDER; do
+            echo "${svc}_DB_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          done
+      - name: Set service role passwords
+        run: db/set-db-passwords.sh
+      - name: Install service dependencies
+        run: for d in services/*-service; do (cd "$d" && npm ci --omit=dev); done
+      - name: End-to-end smoke test (each service as its own role)
+        run: node scripts/smoke-test.js
 
   docker:
     runs-on: ubuntu-24.04

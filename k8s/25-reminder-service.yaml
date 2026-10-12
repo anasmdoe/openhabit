@@ -24,18 +24,13 @@ spec:
         env:
         - name: PORT
           value: '3006'
-        - name: POSTGRES_USER
+        - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: postgres-credentials
-              key: POSTGRES_USER
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-credentials
-              key: POSTGRES_PASSWORD
+              name: db-role-passwords
+              key: REMINDER_DB_PASSWORD
         - name: DATABASE_URL
-          value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/openhabit
+          value: postgres://reminder_svc:$(DB_PASSWORD)@postgres:5432/openhabit
         readinessProbe:
           httpGet:
             path: /healthz

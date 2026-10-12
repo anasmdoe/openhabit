@@ -158,10 +158,9 @@ Prerequisites: Docker Desktop, or Docker Engine ≥ 24 with the compose plugin
 (`docker compose version` should work).
 
 ```bash
-# 0. Create .env with a JWT secret (all services share it; they refuse to
-#    start if it is missing, under 32 chars, or a "change-me" placeholder)
-cp .env.example .env
-sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48)|" .env
+# 0. Create .env with random secrets: the JWT secret shared by all services
+#    and one database password per service (re-running never overwrites)
+scripts/init-env.sh
 
 # 1. Build all five images and start the stack
 docker compose up --build -d
@@ -178,9 +177,10 @@ docker compose run --rm seed     # creates demo@home.lab / demo-password-123
 ```
 
 > **Upgrading an existing install?** Schema changes are applied without data
-> loss: `docker compose up --build -d && docker compose run --rm migrate`
+> loss: `scripts/init-env.sh && docker compose run --rm migrate && docker compose up --build -d`
 > (the init script is idempotent — it creates missing tables/columns and
-> leaves your data alone). On k8s: re-apply manifests, then run
+> leaves your data alone; `migrate` also (re)applies the service role
+> passwords from `.env`). On k8s: re-apply manifests, then run
 > `kubectl apply -f k8s/90-migrate-job.yaml`.
 > Only pre-auth (single-user) versions require a reset (`down -v`), because
 > per-user scoping changed row ownership.
@@ -188,6 +188,12 @@ docker compose run --rm seed     # creates demo@home.lab / demo-password-123
 > Installs that never set `JWT_SECRET` were signing logins with a public
 > placeholder; services now refuse to start until it is set (see step 0).
 > Setting it signs everyone out once.
+>
+> Services used to connect as the `openhabit` superuser; each now logs in as its
+> own least-privilege role (`auth_svc`, `habit_svc`, …) with a password from
+> `.env`. `scripts/init-env.sh` adds the six `*_DB_PASSWORD` values to an
+> existing `.env`, and `migrate` applies them to the database — run both before
+> `up`, as above.
 
 Day-to-day commands:
 
@@ -256,6 +262,9 @@ kubectl -n openhabit exec deploy/auth-service -- ls -1 /backups 2>/dev/null || \
 # Restore a dump into the running database:
 kubectl -n openhabit exec -i statefulset/postgres -- \
   sh -c 'gzip -dc | psql -U openhabit -d openhabit' < path/to/openhabit-YYYYMMDD-HHMMSS.sql.gz
+# then re-apply the per-service grants (dumps carry none) with the migrate Job:
+kubectl -n openhabit delete job db-migrate --ignore-not-found
+kubectl apply -f k8s/90-migrate-job.yaml
 ```
 
 Notes: dumps are written atomically (`.partial` then renamed) and integrity-checked
@@ -277,8 +286,9 @@ docker build -t <registry>/openhabit/frontend:latest frontend
 docker push <registry>/openhabit/frontend:latest
 # then update the image: fields in k8s/*.yaml
 
-# 2. Review the two marked values:
-#    - k8s/10-postgres.yaml   -> POSTGRES_PASSWORD
+# 2. Review the marked values (services refuse "change-me" placeholders):
+#    - k8s/10-postgres.yaml   -> POSTGRES_PASSWORD, and the six db-role-passwords
+#                                (one per service, e.g. `openssl rand -hex 24`)
 #    - k8s/15-app-secrets.yaml -> JWT_SECRET
 #    - k8s/40-ingress.yaml    -> host (default habits.home.lab)
 
@@ -423,9 +433,14 @@ at them to get notified — an ntfy receiver works nicely here too.
 ```bash
 cd frontend && npm test                 # unit tests for streak/score/schedule math
 scripts/test-init-sql.sh                # applies db/init.sql twice, proves it is idempotent
-node scripts/sync-configmap.js          # copy db/init.sql into k8s/10-postgres.yaml
+node scripts/smoke-test.js              # all services, each as its own DB role, end to end
+node scripts/sync-configmap.js          # copy db/ files into k8s/10-postgres.yaml
 node scripts/sync-configmap.js --check  # fail if they have drifted
 ```
+
+The database scripts take the usual `PG*` variables (point them at a throwaway
+database); the smoke test also needs the `*_DB_PASSWORD` variables applied with
+`db/set-db-passwords.sh` and `npm ci` in each service.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs all of the above on every push
 and pull request, plus `npm ci` for every service (catches lockfile drift) and a

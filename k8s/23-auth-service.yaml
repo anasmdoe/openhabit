@@ -29,18 +29,13 @@ spec:
             secretKeyRef:
               name: app-secrets
               key: JWT_SECRET
-        - name: POSTGRES_USER
+        - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: postgres-credentials
-              key: POSTGRES_USER
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-credentials
-              key: POSTGRES_PASSWORD
+              name: db-role-passwords
+              key: AUTH_DB_PASSWORD
         - name: DATABASE_URL
-          value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/openhabit
+          value: postgres://auth_svc:$(DB_PASSWORD)@postgres:5432/openhabit
         - name: ALLOW_REGISTRATION
           valueFrom:
             configMapKeyRef:

@@ -44,6 +44,11 @@ $DC stop auth-service habit-service tracking-service analytics-service \
 
 gzip -dc "$FILE" | $DC exec -T "$PG_SERVICE" psql -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB"
 
+# Dumps carry no privileges (--no-privileges), so re-apply the per-service
+# grants and role passwords before the services come back.
+echo "[$(date -u +%FT%TZ)] re-applying grants and role passwords (migrate)"
+$DC run --rm migrate
+
 echo "[$(date -u +%FT%TZ)] restarting services"
 $DC start auth-service habit-service tracking-service analytics-service \
   social-service reminder-service >/dev/null 2>&1 || true
