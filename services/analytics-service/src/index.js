@@ -418,6 +418,7 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
       const value = entryMap.get(d);
       if (isSkip(value)) continue; // excused: streak and score untouched
       const done = isCompleted(habit, value);
+      if (!done && d === today) continue; // today is still open: not a miss yet
       wd[dow(d)].scheduled += 1;
       if (done) {
         wd[dow(d)].completed += 1;

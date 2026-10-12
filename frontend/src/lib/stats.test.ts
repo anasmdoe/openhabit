@@ -85,6 +85,13 @@ describe('computeHabitDetail — daily habits (streaks in days)', () => {
     expect(d.bestStreaks[0]).toMatchObject({ length: 4, start: addDays(TODAY, -6), end: addDays(TODAY, -3) });
   });
 
+  it('today not ticked yet keeps yesterday\'s streak (it is not a miss until the day ends)', () => {
+    const h = habit();
+    const d = computeHabitDetail(h, daysAgo(h, [1, 2, 3]));
+    expect(d.currentStreak).toBe(3);
+    expect(d.currentStreak).toBe(quickCurrentStreak(h, new Map(daysAgo(h, [1, 2, 3]).map((e) => [`h1|${e.date}`, e.value]))));
+  });
+
   it('a skipped day is excused and keeps the streak alive', () => {
     const h = habit();
     const entries = [...daysAgo(h, [0, 1, 3, 4]), ...daysAgo(h, [2], SKIP)];

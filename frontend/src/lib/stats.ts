@@ -186,6 +186,7 @@ export function computeHabitDetail(habit: Habit, entries: Entry[]): HabitDetail 
       const value = entryMap.get(d)?.value;
       if (isSkip(value)) continue;
       const done = isCompleted(habit, value);
+      if (!done && d === today) continue; // today is still open: not a miss yet
       wd[dow(d)].scheduled += 1;
       if (done) {
         wd[dow(d)].completed += 1;
