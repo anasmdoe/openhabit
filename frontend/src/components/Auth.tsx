@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
 import { exportCSV, exportJSON, importJSON, importLoopCSV } from '../lib/exportImport';
+import { authApi } from '../api';
 
 // Full-screen gate shown in API mode until a valid session exists.
 export function AuthGate() {
@@ -103,7 +104,7 @@ export function AuthGate() {
 export function AccountMenu() {
   const { user, logout, changePassword, deleteAccount, updateName, openArchived } = useApp();
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete'>('menu');
+  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens'>('menu');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
@@ -171,12 +172,21 @@ export function AccountMenu() {
                   </div>
                 </div>
                 <MenuBtn icon={<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0" strokeLinecap="round" />}
-                  onClick={() => { setNameDraft(user.name); setNtfyDraft(user.ntfyUrl ?? ''); setView('profile'); }}>
+                  onClick={() => { setNameDraft(user.name); setNtfyDraft(user.ntfyUrl ?? ''); setView('profile'); }}
+                  data-menu-profile>
                   Edit profile
                 </MenuBtn>
                 <MenuBtn icon={<path d="M6 10V8a6 6 0 1 1 12 0v2m-13 0h14v10H5V10zm7 4v3" strokeLinecap="round" strokeLinejoin="round" />}
                   onClick={() => setView('password')}>
                   Change password
+                </MenuBtn>
+                <MenuBtn icon={<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15zM9 7h7M9 11h5" strokeLinecap="round" strokeLinejoin="round" />}
+                  onClick={() => { close(); useApp.getState().openJournal(); }}>
+                  Journal
+                </MenuBtn>
+                <MenuBtn icon={<path d="M15 7a2 2 0 0 1 2 2m4 0a6 6 0 0 1-7.7 5.7L11 17H9v2H7v2H4a1 1 0 0 1-1-1v-2.6a1 1 0 0 1 .3-.7l5.4-5.4A6 6 0 1 1 21 9z" strokeLinecap="round" strokeLinejoin="round" />}
+                  onClick={() => setView('tokens')}>
+                  API tokens
                 </MenuBtn>
                 <MenuBtn icon={<path d="M4 8h16M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" />}
                   onClick={() => { close(); openArchived(); }}>
@@ -215,6 +225,8 @@ export function AccountMenu() {
                 </MenuBtn>
               </>
             )}
+
+            {view === 'tokens' && <TokensView onBack={() => setView('menu')} />}
 
             {view === 'profile' && (
               <>
@@ -320,5 +332,100 @@ function MenuBtn({ children, onClick, danger, icon }: {
       )}
       {children}
     </button>
+  );
+}
+
+
+// ---- API token management (session-only; the server enforces it too) ------
+function TokensView({ onBack }: { onBack: () => void }) {
+  const [tokens, setTokens] = useState<{ id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }[]>([]);
+  const [name, setName] = useState('');
+  const [fresh, setFresh] = useState<{ name: string; token: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = () => authApi.listTokens().then(setTokens).catch(() => {});
+  React.useEffect(() => { load(); }, []);
+
+  const create = async () => {
+    setBusy(true); setErr('');
+    try {
+      const r = await authApi.createToken(name.trim());
+      setFresh({ name: r.name, token: r.token });
+      setName('');
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed');
+    } finally { setBusy(false); }
+  };
+
+  const ago = (iso: string | null) => {
+    if (!iso) return 'never used';
+    const d = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (d < 1) return 'just now';
+    if (d < 60) return `${d}m ago`;
+    if (d < 1440) return `${Math.floor(d / 60)}h ago`;
+    return `${Math.floor(d / 1440)}d ago`;
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[12px] font-semibold flex items-center gap-2">
+        <button onClick={onBack} className="text-ink-soft hover:text-ink" aria-label="Back">‹</button>
+        API tokens
+      </div>
+      <p className="text-[11px] text-ink-soft leading-snug">
+        Long-lived tokens for Shortcuts, scripts, and Home Assistant. They can log
+        entries and read data but can never change your password or manage tokens.
+      </p>
+
+      {fresh && (
+        <div className="rounded-lg border border-mint/50 bg-mint/8 p-2.5 flex flex-col gap-1.5">
+          <div className="text-[11px] font-semibold">"{fresh.name}" created — copy it now</div>
+          <code className="num text-[10.5px] break-all select-all bg-forest-900 rounded-md p-2">{fresh.token}</code>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { navigator.clipboard?.writeText(fresh.token); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="text-[11px] font-semibold bg-mint text-forest-950 rounded-lg px-2.5 py-1">
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+            <button onClick={() => setFresh(null)} className="text-[11px] text-ink-soft hover:text-ink">
+              Done — it won't be shown again
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <input className="input flex-1" placeholder='e.g. "Shortcuts on my phone"' maxLength={60}
+          value={name} onChange={(e) => setName(e.target.value)} />
+        <button disabled={!name.trim() || busy} onClick={create}
+          className="text-[11px] font-semibold bg-mint text-forest-950 rounded-lg px-3 disabled:opacity-40">
+          {busy ? '…' : 'Create'}
+        </button>
+      </div>
+      {err && <p className="text-[11px] text-red-400">{err}</p>}
+
+      <div className="flex flex-col gap-1">
+        {tokens.map((t) => (
+          <div key={t.id} className="flex items-center gap-2 py-1.5 border-b border-line last:border-0">
+            <div className="min-w-0 flex-1">
+              <div className="text-[12px] font-medium truncate">{t.name}</div>
+              <div className="num text-[10px] text-ink-soft">{t.prefix} · {ago(t.lastUsedAt)}</div>
+            </div>
+            <button
+              onClick={async () => {
+                if (confirm(`Revoke "${t.name}"? Anything using it will stop working.`)) {
+                  await authApi.revokeToken(t.id).catch(() => {});
+                  load();
+                }
+              }}
+              className="text-[11px] text-ink-soft hover:text-red-400">Revoke</button>
+          </div>
+        ))}
+        {!tokens.length && <p className="text-[11px] text-ink-soft py-2 text-center">No tokens yet.</p>}
+      </div>
+    </div>
   );
 }

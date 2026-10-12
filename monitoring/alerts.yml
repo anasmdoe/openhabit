@@ -1,0 +1,80 @@
+# Alerting rules for OpenHabit. Loaded by both the compose and k8s Prometheus.
+# Thresholds are tuned for a small self-hosted instance — adjust to taste.
+groups:
+  - name: openhabit-availability
+    rules:
+      - alert: OpenHabitServiceDown
+        expr: up{job=~"openhabit.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} is not being scraped"
+          description: "Prometheus has not been able to scrape {{ $labels.instance }} for 2 minutes. The service is likely down or unreachable."
+
+      - alert: OpenHabitDatabaseDown
+        expr: openhabit_pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} cannot reach Postgres"
+          description: "The SELECT 1 probe from {{ $labels.service }} has failed for 2 minutes. Check the postgres container/pod and its volume."
+
+  - name: openhabit-reminders
+    rules:
+      - alert: OpenHabitReminderLoopStalled
+        expr: (time() - openhabit_reminder_last_tick_timestamp) > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reminder loop has not completed a tick in 5+ minutes"
+          description: "reminder-service normally ticks every minute. A stall means no ntfy reminders are being sent. Check its logs and DB connectivity."
+
+      - alert: OpenHabitReminderTickErrors
+        expr: rate(openhabit_reminder_tick_errors_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reminder ticks are throwing errors"
+          description: "The reminder loop is running but failing. Reminders may be partially or fully broken."
+
+  - name: openhabit-http
+    rules:
+      - alert: OpenHabitHighErrorRate
+        expr: |
+          sum by (service) (rate(openhabit_http_requests_total{status=~"5.."}[5m]))
+            /
+          sum by (service) (rate(openhabit_http_requests_total[5m]))
+            > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} 5xx rate above 5%"
+          description: "More than 5% of requests to {{ $labels.service }} have returned 5xx for 5 minutes. Check its logs."
+
+      - alert: OpenHabitSlowRequests
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(openhabit_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} p95 latency above 1s"
+          description: "95th-percentile latency on {{ $labels.service }} has exceeded 1 second for 10 minutes — likely a slow query or resource pressure."
+
+  - name: openhabit-database
+    rules:
+      - alert: OpenHabitPoolSaturated
+        expr: openhabit_pg_pool_waiting > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} has clients waiting for DB connections"
+          description: "The pg pool on {{ $labels.service }} has had waiting clients for 5 minutes. Queries are queueing — check for slow queries or raise the pool size."

@@ -12,6 +12,7 @@ import { TodayFocus } from './components/TodayFocus';
 import { InsightsPanel } from './components/InsightsPanel';
 import { Celebration } from './components/Celebration';
 import { GroupsModal } from './components/Groups';
+import { JournalModal } from './components/Journal';
 
 export default function App() {
   const { init, ready, editorHabit, authRequired, detailOpen, archivedOpen, paletteOpen } = useApp();
@@ -56,6 +57,7 @@ export default function App() {
       <CommandPalette />
       <Celebration />
       <GroupsModal />
+      <JournalModal />
     </div>
   );
 }

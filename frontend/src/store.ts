@@ -23,6 +23,9 @@ interface AppState {
   editorHabit: Habit | 'new' | null;
   archived: Habit[];
   archivedOpen: boolean;
+  journalOpen: boolean;
+  openJournal(): void;
+  closeJournal(): void;
   paletteOpen: boolean;
   setPaletteOpen(open: boolean): void;
   accent: string | null;
@@ -147,6 +150,9 @@ export const useApp = create<AppState>((set, get) => ({
   editorHabit: null,
   archived: [],
   archivedOpen: false,
+  journalOpen: false,
+  openJournal: () => set({ journalOpen: true }),
+  closeJournal: () => set({ journalOpen: false }),
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   accent: localStorage.getItem(ACCENT_KEY),

@@ -1,42 +1,61 @@
-# OPTIONAL observability stack for OpenHabit.
-#   kubectl apply -f k8s/50-monitoring.yaml
-# A lightweight in-cluster Prometheus that scrapes services via the
-# prometheus.io/scrape annotations already set on each Service, plus Grafana
-# with the datasource + dashboard pre-provisioned.
-#
-# This is intentionally minimal (single replica, emptyDir). For a serious
-# setup, use kube-prometheus-stack and point it at the same annotations.
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
   namespace: openhabit
 data:
-  prometheus.yml: |
-    global:
-      scrape_interval: 15s
-    scrape_configs:
-      - job_name: openhabit-endpoints
-        kubernetes_sd_configs:
-          - role: endpoints
-            namespaces:
-              names: [openhabit]
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
-            action: keep
-            regex: "true"
-          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
-            action: replace
-            target_label: __metrics_path__
-            regex: (.+)
-          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
-            action: replace
-            regex: ([^:]+)(?::\d+)?;(\d+)
-            replacement: $1:$2
-            target_label: __address__
-          - source_labels: [__meta_kubernetes_service_name]
-            target_label: instance
+  prometheus.yml: "global:\n  scrape_interval: 15s\nrule_files:\n  - /etc/prometheus/alerts.yml\n\
+    scrape_configs:\n  - job_name: openhabit-endpoints\n    kubernetes_sd_configs:\n\
+    \      - role: endpoints\n        namespaces:\n          names: [openhabit]\n\
+    \    relabel_configs:\n      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]\n\
+    \        action: keep\n        regex: \"true\"\n      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]\n\
+    \        action: replace\n        target_label: __metrics_path__\n        regex:\
+    \ (.+)\n      - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]\n\
+    \        action: replace\n        regex: ([^:]+)(?::\\d+)?;(\\d+)\n        replacement:\
+    \ $1:$2\n        target_label: __address__\n      - source_labels: [__meta_kubernetes_service_name]\n\
+    \        target_label: instance\n"
+  alerts.yml: "# Alerting rules for OpenHabit. Loaded by both the compose and k8s\
+    \ Prometheus.\n# Thresholds are tuned for a small self-hosted instance \u2014\
+    \ adjust to taste.\ngroups:\n  - name: openhabit-availability\n    rules:\n  \
+    \    - alert: OpenHabitServiceDown\n        expr: up{job=~\"openhabit.*\"} ==\
+    \ 0\n        for: 2m\n        labels:\n          severity: critical\n        annotations:\n\
+    \          summary: \"{{ $labels.instance }} is not being scraped\"\n        \
+    \  description: \"Prometheus has not been able to scrape {{ $labels.instance }}\
+    \ for 2 minutes. The service is likely down or unreachable.\"\n\n      - alert:\
+    \ OpenHabitDatabaseDown\n        expr: openhabit_pg_up == 0\n        for: 2m\n\
+    \        labels:\n          severity: critical\n        annotations:\n       \
+    \   summary: \"{{ $labels.service }} cannot reach Postgres\"\n          description:\
+    \ \"The SELECT 1 probe from {{ $labels.service }} has failed for 2 minutes. Check\
+    \ the postgres container/pod and its volume.\"\n\n  - name: openhabit-reminders\n\
+    \    rules:\n      - alert: OpenHabitReminderLoopStalled\n        expr: (time()\
+    \ - openhabit_reminder_last_tick_timestamp) > 300\n        for: 1m\n        labels:\n\
+    \          severity: warning\n        annotations:\n          summary: \"Reminder\
+    \ loop has not completed a tick in 5+ minutes\"\n          description: \"reminder-service\
+    \ normally ticks every minute. A stall means no ntfy reminders are being sent.\
+    \ Check its logs and DB connectivity.\"\n\n      - alert: OpenHabitReminderTickErrors\n\
+    \        expr: rate(openhabit_reminder_tick_errors_total[15m]) > 0\n        for:\
+    \ 5m\n        labels:\n          severity: warning\n        annotations:\n   \
+    \       summary: \"Reminder ticks are throwing errors\"\n          description:\
+    \ \"The reminder loop is running but failing. Reminders may be partially or fully\
+    \ broken.\"\n\n  - name: openhabit-http\n    rules:\n      - alert: OpenHabitHighErrorRate\n\
+    \        expr: |\n          sum by (service) (rate(openhabit_http_requests_total{status=~\"\
+    5..\"}[5m]))\n            /\n          sum by (service) (rate(openhabit_http_requests_total[5m]))\n\
+    \            > 0.05\n        for: 5m\n        labels:\n          severity: warning\n\
+    \        annotations:\n          summary: \"{{ $labels.service }} 5xx rate above\
+    \ 5%\"\n          description: \"More than 5% of requests to {{ $labels.service\
+    \ }} have returned 5xx for 5 minutes. Check its logs.\"\n\n      - alert: OpenHabitSlowRequests\n\
+    \        expr: |\n          histogram_quantile(0.95,\n            sum by (service,\
+    \ le) (rate(openhabit_http_request_duration_seconds_bucket[5m]))\n          )\
+    \ > 1\n        for: 10m\n        labels:\n          severity: warning\n      \
+    \  annotations:\n          summary: \"{{ $labels.service }} p95 latency above\
+    \ 1s\"\n          description: \"95th-percentile latency on {{ $labels.service\
+    \ }} has exceeded 1 second for 10 minutes \u2014 likely a slow query or resource\
+    \ pressure.\"\n\n  - name: openhabit-database\n    rules:\n      - alert: OpenHabitPoolSaturated\n\
+    \        expr: openhabit_pg_pool_waiting > 0\n        for: 5m\n        labels:\n\
+    \          severity: warning\n        annotations:\n          summary: \"{{ $labels.service\
+    \ }} has clients waiting for DB connections\"\n          description: \"The pg\
+    \ pool on {{ $labels.service }} has had waiting clients for 5 minutes. Queries\
+    \ are queueing \u2014 check for slow queries or raise the pool size.\"\n"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -44,9 +63,16 @@ metadata:
   name: prometheus
   namespace: openhabit
 rules:
-  - apiGroups: [""]
-    resources: ["services", "endpoints", "pods"]
-    verbs: ["get", "list", "watch"]
+- apiGroups:
+  - ''
+  resources:
+  - services
+  - endpoints
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -64,9 +90,9 @@ roleRef:
   kind: Role
   name: prometheus
 subjects:
-  - kind: ServiceAccount
-    name: prometheus
-    namespace: openhabit
+- kind: ServiceAccount
+  name: prometheus
+  namespace: openhabit
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -76,24 +102,28 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: prometheus }
+    matchLabels:
+      app: prometheus
   template:
     metadata:
-      labels: { app: prometheus }
+      labels:
+        app: prometheus
     spec:
       serviceAccountName: prometheus
       containers:
-        - name: prometheus
-          image: prom/prometheus:latest
-          args: ["--config.file=/etc/prometheus/prometheus.yml"]
-          ports:
-            - containerPort: 9090
-          volumeMounts:
-            - name: config
-              mountPath: /etc/prometheus
-      volumes:
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        ports:
+        - containerPort: 9090
+        volumeMounts:
         - name: config
-          configMap: { name: prometheus-config }
+          mountPath: /etc/prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
 ---
 apiVersion: v1
 kind: Service
@@ -101,10 +131,11 @@ metadata:
   name: prometheus
   namespace: openhabit
 spec:
-  selector: { app: prometheus }
+  selector:
+    app: prometheus
   ports:
-    - port: 9090
-      targetPort: 9090
+  - port: 9090
+    targetPort: 9090
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -112,15 +143,9 @@ metadata:
   name: grafana-provisioning
   namespace: openhabit
 data:
-  datasource.yml: |
-    apiVersion: 1
-    datasources:
-      - name: Prometheus
-        type: prometheus
-        uid: prometheus
-        access: proxy
-        url: http://prometheus:9090
-        isDefault: true
+  datasource.yml: "apiVersion: 1\ndatasources:\n  - name: Prometheus\n    type: prometheus\n\
+    \    uid: prometheus\n    access: proxy\n    url: http://prometheus:9090\n   \
+    \ isDefault: true\n"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -130,28 +155,34 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: grafana }
+    matchLabels:
+      app: grafana
   template:
     metadata:
-      labels: { app: grafana }
+      labels:
+        app: grafana
     spec:
       containers:
-        - name: grafana
-          image: grafana/grafana:latest
-          ports:
-            - containerPort: 3000
-          env:
-            - name: GF_SECURITY_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef: { name: grafana-admin, key: password, optional: true }
-            - name: GF_USERS_ALLOW_SIGN_UP
-              value: "false"
-          volumeMounts:
-            - name: provisioning
-              mountPath: /etc/grafana/provisioning/datasources
-      volumes:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-admin
+              key: password
+              optional: true
+        - name: GF_USERS_ALLOW_SIGN_UP
+          value: 'false'
+        volumeMounts:
         - name: provisioning
-          configMap: { name: grafana-provisioning }
+          mountPath: /etc/grafana/provisioning/datasources
+      volumes:
+      - name: provisioning
+        configMap:
+          name: grafana-provisioning
 ---
 apiVersion: v1
 kind: Service
@@ -159,7 +190,8 @@ metadata:
   name: grafana
   namespace: openhabit
 spec:
-  selector: { app: grafana }
+  selector:
+    app: grafana
   ports:
-    - port: 3000
-      targetPort: 3000
+  - port: 3000
+    targetPort: 3000
