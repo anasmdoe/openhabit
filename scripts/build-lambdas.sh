@@ -22,8 +22,11 @@ zipdir() { # <dir> <name>: reproducible deploy/aws/build/<name>.zip
 
 for svc in auth habit tracking analytics social reminder; do
   src="services/${svc}-service"
-  cmp -s services/_shared/lambda.js "$src/src/lambda.js" ||
-    { echo "FATAL: $src/src/lambda.js differs from services/_shared/lambda.js" >&2; exit 1; }
+  for shared in lambda.js actions.js; do
+    [ "$shared" = actions.js ] && [ ! -f "$src/src/actions.js" ] && continue
+    cmp -s "services/_shared/$shared" "$src/src/$shared" ||
+      { echo "FATAL: $src/src/$shared differs from services/_shared/$shared" >&2; exit 1; }
+  done
 
   dir="$work/$svc"
   mkdir -p "$dir"

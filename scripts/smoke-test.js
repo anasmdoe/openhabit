@@ -282,12 +282,16 @@ async function main() {
     check(pushesFor('Stretch').length === 1,
       `reminder: exactly one push across ${LAMBDA ? 'duplicate scheduler deliveries' : '2 replicas'} (got ${pushesFor('Stretch').length})`);
 
-    // Snooze: the notification carries signed links; the button POSTs one.
+    // Buttons: signed links (Done, Snooze 30 min) plus Open; the ntfy app POSTs them.
     const push = pushesFor('Stretch')[0] ?? { actions: '' };
-    const links = [...push.actions.matchAll(/https:\/\/habits\.smoke\.test\/api\/reminders\/snooze\/([^,\s]+)/g)].map((m) => m[1]);
-    check(links.length === 2, `reminder: notification has 2 snooze buttons (got ${links.length})`);
-    const [snooze30] = links;
+    const linkFor = (p, kind) => (p.actions.match(new RegExp(`https://habits\\.smoke\\.test/api/${kind}/([^,\\s]+)`)) || [])[1];
+    const snooze30 = linkFor(push, 'reminders/snooze');
+    const done = linkFor(push, 'entries/done');
+    check(Boolean(snooze30 && done) && /view, Open, https:\/\/habits\.smoke\.test\//.test(push.actions),
+      `reminder: notification has Done, Snooze and Open buttons (${push.actions.split('; ').map((a) => a.split(', ')[1]).join(', ')})`);
     await call('reminder', 'POST', `/reminders/snooze/${snooze30}x`, { expect: [403] });
+    await call('reminder', 'POST', `/reminders/snooze/${done}`, { expect: [403] }); // links are bound to their action
+    await call('tracking', 'POST', `/entries/done/${snooze30}`, { expect: [403] });
     await call('reminder', 'POST', `/reminders/snooze/${snooze30}`);
     // fast-forward the 30 minutes, then exactly one "snoozed" re-send must follow
     execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c',
@@ -295,6 +299,13 @@ async function main() {
     check(await waitFor(() => pushesFor('Stretch', 'OpenHabit (snoozed)').length > 0), 'reminder: snoozed reminder re-sent');
     await sleep(1000);
     check(pushesFor('Stretch', 'OpenHabit (snoozed)').length === 1, 'reminder: snoozed reminder re-sent exactly once');
+
+    // Done from the notification marks today complete, no login needed.
+    const doneAgain = linkFor(pushesFor('Stretch', 'OpenHabit (snoozed)')[0] ?? { actions: '' }, 'entries/done');
+    await call('tracking', 'POST', `/entries/done/${doneAgain}`);
+    const entries = await call('tracking', 'GET', `/entries?from=${today}&to=${today}`, { token: A });
+    check((Array.isArray(entries) ? entries : []).some((e) => e.habitId === due.id && e.value === 1),
+      'reminder: Done button marked the habit complete for today');
 
     // Quiet hours hold reminders back; one still in its catch-up window goes out
     // once they are cleared.
@@ -351,6 +362,7 @@ async function remoteChecks(A) {
     console.log('skip reminder Lambda invocation (set SMOKE_REMINDER_FUNCTION)');
   }
   await call('reminder', 'POST', '/reminders/snooze/not-a-valid-token', { expect: [403] });
+  await call('tracking', 'POST', '/entries/done/not-a-valid-token', { expect: [403] });
   await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '07:00' } });
   await call('auth', 'PUT', '/auth/me', { token: A, body: { quietStart: '22:00', quietEnd: '' }, expect: [400] });
 

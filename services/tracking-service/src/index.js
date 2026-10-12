@@ -1,6 +1,7 @@
 import express from 'express';
 import pg from 'pg';
 import { metricsMiddleware, metricsHandler } from './metrics.js';
+import { verifyAction } from './actions.js';
 import crypto from 'node:crypto';
 
 const PORT = process.env.PORT || 3002;
@@ -85,6 +86,26 @@ app.get('/healthz', asyncH(async (_req, res) => {
   res.json({ status: 'ok', service: 'tracking-service' });
 }));
 
+// "Done" button on a reminder notification (POST from the ntfy app, no session):
+// the signed token is the authorisation. Answers in plain text because ntfy may
+// show it. Only yes/no habits get the button (numeric ones need a value).
+app.post('/entries/done/:token', asyncH(async (req, res) => {
+  const a = verifyAction(JWT_SECRET, req.params.token, 'done');
+  if (!a) return res.status(403).type('text').send('This link is invalid or has expired.');
+  const { rows } = await pool.query(
+    `SELECT user_id AS "userId", name FROM habits WHERE id = $1 AND type = 'boolean' AND NOT archived`,
+    [a.habitId]
+  );
+  if (!rows.length) return res.status(404).type('text').send('Habit not found.');
+  await pool.query(
+    `INSERT INTO entries (habit_id, date, value) VALUES ($1, $2, 1)
+     ON CONFLICT (habit_id, date) DO UPDATE SET value = 1`,
+    [a.habitId, a.date]
+  );
+  await completionWebhook(a.habitId, rows[0].userId, a.date, 1);
+  res.type('text').send(`Done: ${rows[0].name} (${a.date}).`);
+}));
+
 app.use(auth);
 
 // ---- entries ----------------------------------------------------------
@@ -125,6 +146,27 @@ function fireWebhook(habitId, url, payload) {
 // frozen once the response is sent, so the webhook must finish first.
 const AWAIT_WEBHOOKS = process.env.OPENHABIT_RUNTIME === 'lambda';
 
+/** Sends the habit's webhook if `value` completes it (skips never do). */
+async function completionWebhook(habitId, userId, date, value) {
+  if (value === -1) return;
+  const { rows } = await pool.query(
+    `SELECT name, type, target::float AS target, target_type AS "targetType", webhook_url AS url
+     FROM habits WHERE id = $1 AND user_id = $2 AND webhook_url <> ''`,
+    [habitId, userId]
+  );
+  if (!rows.length) return;
+  const h = rows[0];
+  const completed = h.type === 'boolean'
+    ? value >= 1
+    : h.targetType === 'at_most' ? value <= h.target : value >= h.target;
+  if (!completed) return;
+  const sent = fireWebhook(habitId, h.url, {
+    event: 'habit.completed', habit: h.name, date, value,
+    message: `${h.name} completed (${date})`,
+  });
+  if (AWAIT_WEBHOOKS) await sent;
+}
+
 // PUT /entries  body: { habitId, date, value, notes? }  (upsert)
 app.put('/entries', asyncH(async (req, res) => {
   const { habitId, date, value, notes } = req.body;
@@ -139,25 +181,7 @@ app.put('/entries', asyncH(async (req, res) => {
     [habitId, date, value, typeof notes === 'string' ? notes : '', req.userId]
   );
   if (!rows.length) return res.status(404).json({ error: 'habit not found' });
-  // webhook on completion
-  const { rows: hooks } = await pool.query(
-    `SELECT name, type, target::float AS target, target_type AS "targetType", webhook_url AS url
-     FROM habits WHERE id = $1 AND user_id = $2 AND webhook_url <> ''`,
-    [habitId, req.userId]
-  );
-  if (hooks.length && value !== -1) {
-    const h = hooks[0];
-    const completed = h.type === 'boolean'
-      ? value >= 1
-      : h.targetType === 'at_most' ? value <= h.target : value >= h.target;
-    if (completed) {
-      const sent = fireWebhook(habitId, h.url, {
-        event: 'habit.completed', habit: h.name, date, value,
-        message: `${h.name} completed (${date})`,
-      });
-      if (AWAIT_WEBHOOKS) await sent;
-    }
-  }
+  await completionWebhook(habitId, req.userId, date, value);
   res.json(rows[0]);
 }));
 

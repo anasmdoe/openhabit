@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isDue, inQuietHours, signSnooze, verifySnooze, snoozeActions } from './reminders.js';
+import { isDue, inQuietHours, signSnooze, verifySnooze, signDone, notificationActions } from './reminders.js';
+import { verifyAction } from './actions.js';
 
 test('isDue: from the reminder minute through the 15-minute catch-up window', () => {
   assert.equal(isDue('08:00', '07:59'), false);
@@ -44,9 +45,29 @@ test('snooze tokens reject tampering, other secrets, expiry and odd durations', 
   assert.equal(verifySnooze(SECRET, odd), null);
 });
 
-test('snoozeActions builds one ntfy HTTP button per choice', () => {
-  const header = snoozeActions('https://habits.example.com/', { 30: 'aaa.bbb', 60: 'ccc.ddd' });
-  assert.equal(header,
+test('done tokens are bound to their action', () => {
+  const expiresAt = Date.now() + 60_000;
+  const done = signDone(SECRET, { habitId: snooze.habitId, date: snooze.date, expiresAt });
+  assert.deepEqual(verifyAction(SECRET, done, 'done'), { habitId: snooze.habitId, date: snooze.date, minutes: undefined });
+  assert.equal(verifySnooze(SECRET, done), null); // a Done link can't snooze
+  const sn = signSnooze(SECRET, { ...snooze, expiresAt });
+  assert.equal(verifyAction(SECRET, sn, 'done'), null); // and a snooze link can't mark done
+  assert.doesNotMatch(done, /[=,;\s]/);
+});
+
+test('notificationActions: Done + Snooze + Open for yes/no habits, two snoozes + Open otherwise', () => {
+  const snoozeTokens = { 30: 'aaa.bbb', 60: 'ccc.ddd' };
+  assert.equal(notificationActions('https://habits.example.com/', { doneToken: 'eee.fff', snoozeTokens }),
+    'http, Done, https://habits.example.com/api/entries/done/eee.fff, method=POST, clear=true; '
+    + 'http, Snooze 30 min, https://habits.example.com/api/reminders/snooze/aaa.bbb, method=POST, clear=true; '
+    + 'view, Open, https://habits.example.com/');
+  const numeric = notificationActions('https://habits.example.com', { doneToken: null, snoozeTokens });
+  assert.equal(numeric,
     'http, Snooze 30 min, https://habits.example.com/api/reminders/snooze/aaa.bbb, method=POST, clear=true; '
-    + 'http, Snooze 1 h, https://habits.example.com/api/reminders/snooze/ccc.ddd, method=POST, clear=true');
+    + 'http, Snooze 1 h, https://habits.example.com/api/reminders/snooze/ccc.ddd, method=POST, clear=true; '
+    + 'view, Open, https://habits.example.com/');
+  for (const header of [numeric]) {
+    assert.ok(header.split('; ').length <= 3, 'ntfy allows at most 3 actions');
+    assert.match(header, /^[\x20-\x7e]+$/, 'header values must be ASCII');
+  }
 });

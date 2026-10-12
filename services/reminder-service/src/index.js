@@ -7,7 +7,7 @@
 import express from 'express';
 import pg from 'pg';
 import { metricsHandler, registerCustom } from './metrics.js';
-import { isDue, inQuietHours, signSnooze, verifySnooze, snoozeActions, SNOOZE_CHOICES } from './reminders.js';
+import { isDue, inQuietHours, signSnooze, verifySnooze, signDone, notificationActions, SNOOZE_CHOICES } from './reminders.js';
 
 const PORT = process.env.PORT || 3006;
 const TICK_MS = parseInt(process.env.TICK_MS, 10) || 60_000;
@@ -88,12 +88,15 @@ function notify(habitId, url, title, message, actions) {
     .finally(() => clearTimeout(t));
 }
 
-function actionsFor(habitId, date) {
+function actionsFor(h, date) {
   if (!PUBLIC_URL) return undefined;
+  const habitId = h.id;
   const expiresAt = Date.now() + 24 * 3_600_000;
-  const tokens = Object.fromEntries(SNOOZE_CHOICES.map((minutes) =>
+  const snoozeTokens = Object.fromEntries(SNOOZE_CHOICES.map((minutes) =>
     [minutes, signSnooze(JWT_SECRET, { habitId, date, minutes, expiresAt })]));
-  return snoozeActions(PUBLIC_URL, tokens);
+  // one tap can only mean "done" for yes/no habits; numeric ones need a value
+  const doneToken = h.type === 'boolean' ? signDone(JWT_SECRET, { habitId, date, expiresAt }) : null;
+  return notificationActions(PUBLIC_URL, { doneToken, snoozeTokens });
 }
 
 /** Message for a habit that still needs doing today, or null if it's done/skipped/quota met. */
@@ -170,7 +173,7 @@ export async function tick() {
          ON CONFLICT DO NOTHING RETURNING 1`, [h.id, now.date]);
     if (!claim.rowCount) continue;
 
-    await notify(h.id, h.ntfy_url, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', msg, actionsFor(h.id, now.date));
+    await notify(h.id, h.ntfy_url, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', msg, actionsFor(h, now.date));
   }
 }
 
