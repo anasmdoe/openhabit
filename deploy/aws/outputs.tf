@@ -14,6 +14,6 @@ output "web_bucket" {
 }
 
 output "distribution_id" {
-  description = "CloudFront distribution to invalidate after a frontend upload."
-  value       = aws_cloudfront_distribution.app.id
+  description = "CloudFront distribution to invalidate after a frontend upload (empty when a Lambda serves the frontend)."
+  value       = var.enable_cdn ? aws_cloudfront_distribution.app[0].id : ""
 }

@@ -16,9 +16,18 @@ provider "aws" {
   region = var.region
 
   default_tags {
-    tags = {
-      app = var.name
-    }
+    tags = var.tags
+  }
+}
+
+# The EventBridge rule can be created untagged for accounts that deny
+# events:TagResource (see var.tag_event_rule).
+provider "aws" {
+  alias  = "events"
+  region = var.region
+
+  default_tags {
+    tags = var.tag_event_rule ? var.tags : {}
   }
 }
 

@@ -10,13 +10,52 @@ variable "name" {
   default     = "openhabit"
 }
 
+variable "tags" {
+  description = "Tags on every resource."
+  type        = map(string)
+  default     = { app = "openhabit" }
+}
+
+variable "tag_event_rule" {
+  description = "Tag the reminder EventBridge rule too; false for accounts that deny events:TagResource (e.g. sandboxes)."
+  type        = bool
+  default     = true
+}
+
 # ---- database: any Postgres reachable over the internet with TLS -------------
-# (Neon, Supabase, Aiven, Crunchy Bridge, or a public RDS). Keeping it outside
-# a VPC means the Lambdas need no NAT gateway, so idle cost stays near zero.
+# (Neon, Supabase, Aiven, Crunchy Bridge, …), or a small public RDS instance
+# created here (create_database). Keeping the Lambdas outside a VPC means no
+# NAT gateway, so idle cost stays near zero.
+
+variable "create_database" {
+  description = "Create a small private RDS Postgres (Lambdas join the default VPC; no internet egress, so no ntfy pushes) instead of using db_host. For sandboxes and testing."
+  type        = bool
+  default     = false
+}
+
+variable "db_instance_class" {
+  type    = string
+  default = "db.t4g.micro"
+}
+
+variable "db_admin_password" {
+  description = "Master password for the RDS instance (create_database only)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
 
 variable "db_host" {
-  description = "Postgres host. With Neon, use the pooled host (\"-pooler\" in the name)."
+  description = "External Postgres host (when create_database is false). With Neon, use the pooled host (\"-pooler\" in the name)."
   type        = string
+  default     = ""
+}
+
+variable "db_admin_url" {
+  description = "Owner/admin connection URL of the external Postgres, used by the migrate Lambda. Empty = skip migrations (run them yourself)."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "db_port" {
@@ -30,9 +69,9 @@ variable "db_name" {
 }
 
 variable "db_sslmode" {
-  description = "libpq sslmode for the service connections."
+  description = "sslmode for the service connections (node-postgres verifies the certificate for require/verify-full; Lambda trusts the RDS CAs)."
   type        = string
-  default     = "require"
+  default     = "verify-full"
 }
 
 variable "db_passwords" {
@@ -92,7 +131,7 @@ variable "oidc" {
 }
 
 variable "reminder_interval_minutes" {
-  description = "How often EventBridge Scheduler runs the reminder check (1-15). Each run queries Postgres, so a short interval keeps a scale-to-zero database awake."
+  description = "How often the EventBridge rule runs the reminder check (1-15). Each run queries Postgres, so a short interval keeps a scale-to-zero database awake."
   type        = number
   default     = 5
 
@@ -102,16 +141,46 @@ variable "reminder_interval_minutes" {
   }
 }
 
-# ---- cost guards ----------------------------------------------------------------
+# ---- runtime and cost guards ----------------------------------------------------
+
+variable "enable_cdn" {
+  description = "Serve the frontend from S3 + CloudFront. When false (e.g. accounts without CloudFront), a Lambda serves it behind the same HTTP API."
+  type        = bool
+  default     = true
+}
+
+variable "use_managed_iam_policies" {
+  description = "Attach AWS's managed Lambda policies instead of the tighter inline ones, for accounts that deny iam:PutRolePolicy (e.g. sandboxes)."
+  type        = bool
+  default     = false
+}
+
+variable "lambda_role_name" {
+  description = "Name of the functions' IAM role; empty = \"<name>-lambda\". Sandboxes may only allow iam:PassRole on fixed names (KodeKloud: lambda_execution_role)."
+  type        = string
+  default     = ""
+}
+
+variable "lambda_architecture" {
+  type    = string
+  default = "arm64"
+}
 
 variable "lambda_memory_mb" {
   type    = number
   default = 256
 }
 
+variable "lambda_timeout" {
+  description = "Seconds per invocation for every function (requests and reminder runs finish in well under a second)."
+  type        = number
+  default     = 10
+}
+
 variable "log_retention_days" {
-  type    = number
-  default = 14
+  description = "Days to keep Lambda logs; 0 = never expire (for sandboxes that deny logs:PutRetentionPolicy)."
+  type        = number
+  default     = 14
 }
 
 variable "api_throttle_rate" {

@@ -328,24 +328,24 @@ deploys as AWS Lambdas, so with no traffic you pay close to nothing:
 ```
 CloudFront ─┬─ /        → S3 (built frontend, private)
             └─ /api/*   → API Gateway (HTTP API) → one Lambda per service
-EventBridge Scheduler (every 5 min) → reminder Lambda
+EventBridge rule (every 5 min) → reminder Lambda
 Postgres over TLS (Neon, Supabase, Aiven, … or RDS) — no VPC, so no NAT gateway
 ```
 
 Every service keeps its Express app; `src/lambda.js` (a copy of
 `services/_shared/lambda.js`) replays API Gateway events against it, and
-EventBridge Scheduler replaces the reminder timer. Docker and Kubernetes keep
+an EventBridge rule replaces the reminder timer. Docker and Kubernetes keep
 working unchanged. CI runs the full smoke test through the Lambda handlers and
 through the packaged zips.
 
-**Deploy** (needs AWS credentials, the `aws` CLI, OpenTofu or Terraform, Node, `psql`):
+**Deploy** (needs AWS credentials, the `aws` CLI, OpenTofu or Terraform, and Node):
 
 ```bash
 scripts/init-env.sh                                        # secrets in .env (same as docker)
 # create a Postgres database (e.g. a free Neon project), then in .env:
 #   AWS_DB_ADMIN_URL=postgresql://owner:…@ep-….neon.tech/openhabit?sslmode=require
 cp deploy/aws/terraform.tfvars.example deploy/aws/terraform.tfvars   # set db_host (pooled host)
-scripts/deploy-aws.sh                                      # build → migrate → apply → upload
+scripts/deploy-aws.sh                                      # build → apply (runs migrations) → upload
 ```
 
 Re-run `scripts/deploy-aws.sh` for every update; it only redeploys Lambdas
@@ -354,7 +354,7 @@ removes everything except your database.
 
 **Costs and trade-offs**
 
-- Lambda, API Gateway, EventBridge Scheduler, S3 and CloudFront all bill per
+- Lambda, API Gateway, EventBridge, S3 and CloudFront all bill per
   request; a personal or family instance usually stays within AWS's free tiers
   (check current pricing for your region). API throttling (20 req/s, burst 50)
   caps the bill if someone hammers the API.
@@ -369,6 +369,17 @@ removes everything except your database.
 - SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
 - Next step on the roadmap: a DynamoDB storage backend, which removes the
   database's idle cost entirely.
+
+**Without a separate Postgres, or in a restricted sandbox.** `create_database = true`
+creates a small private RDS Postgres; the Lambdas then join the default VPC and
+only their security group can reach the database. VPC Lambdas have no internet
+access without a NAT gateway, so ntfy pushes, webhooks and SSO don't work in
+that mode — use it for testing. Database migrations always run from inside AWS
+(the `migrate` Lambda, on every apply that changes `db/init.sql`), so no `psql`
+is needed. For accounts that deny CloudFront, inline IAM policies, log
+retention or tagging, see the sandbox block in `terraform.tfvars.example`
+(verified end to end on the KodeKloud AWS playground; `node scripts/smoke-test.js
+--url <app_url>` tests a live deployment).
 
 ## Repository layout
 
@@ -390,7 +401,7 @@ removes everything except your database.
 ├── gateway/nginx.conf        # compose entrypoint (Ingress mirror)
 ├── k8s/                      # numbered manifests, apply in order
 │                             #   90-migrate-job, 95-backup-cronjob included
-├── deploy/aws/               # Terraform/OpenTofu: Lambda, API Gateway, CloudFront, S3, Scheduler
+├── deploy/aws/               # Terraform/OpenTofu: Lambda, API Gateway, CloudFront, S3, EventBridge
 └── docker-compose.yml        # + tools profile: seed, migrate, backup
 ```
 
