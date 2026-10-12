@@ -18,7 +18,7 @@ const COLORS = [
 ];
 
 export function HabitEditor() {
-  const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit } = useApp();
+  const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit, user } = useApp();
   const isNew = editorHabit === 'new';
   const existing = isNew || !editorHabit ? null : editorHabit;
 
@@ -235,9 +235,14 @@ export function HabitEditor() {
                   className="text-[11px] text-ink-soft hover:text-ink">clear</button>
               )}
             </div>
+            {reminderTime && user && !user.ntfyUrl && (
+              <p className="text-[11px] text-amber-400 mt-1">
+                No reminder will be sent yet: add your ntfy topic under Account → Edit profile.
+              </p>
+            )}
           </Field>
 
-          <Field label="Webhook" hint="optional — POST on completion (great with ntfy)">
+          <Field label="Webhook" hint="optional — POST when you complete it (not a reminder)">
             <input
               className="input"
               type="url"

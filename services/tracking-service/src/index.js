@@ -105,19 +105,25 @@ app.get('/entries', asyncH(async (req, res) => {
   res.json(rows);
 }));
 
-// fire-and-forget completion webhook (3s cap). Point it at anything that
-// accepts a POST — an ntfy topic URL gives instant push notifications.
-function fireWebhook(url, payload) {
-  if (!url) return;
+// Completion webhook (3s cap). Point it at anything that accepts a POST — an
+// ntfy topic URL gives instant push notifications. Logs the outcome (habit id
+// and status; never the URL). Returns a promise that never rejects.
+function fireWebhook(habitId, url, payload) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 3000);
-  fetch(url, {
+  return fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
     signal: ctrl.signal,
-  }).catch(() => {}).finally(() => clearTimeout(t));
+  })
+    .then((r) => console.log(`webhook habit=${habitId} status=${r.status}`))
+    .catch((e) => console.warn(`webhook habit=${habitId} failed: ${e.name === 'AbortError' ? 'timeout' : e.message}`))
+    .finally(() => clearTimeout(t));
 }
+// Fire-and-forget in a long-running process; on AWS Lambda the function is
+// frozen once the response is sent, so the webhook must finish first.
+const AWAIT_WEBHOOKS = process.env.OPENHABIT_RUNTIME === 'lambda';
 
 // PUT /entries  body: { habitId, date, value, notes? }  (upsert)
 app.put('/entries', asyncH(async (req, res) => {
@@ -145,10 +151,11 @@ app.put('/entries', asyncH(async (req, res) => {
       ? value >= 1
       : h.targetType === 'at_most' ? value <= h.target : value >= h.target;
     if (completed) {
-      fireWebhook(h.url, {
+      const sent = fireWebhook(habitId, h.url, {
         event: 'habit.completed', habit: h.name, date, value,
         message: `${h.name} completed (${date})`,
       });
+      if (AWAIT_WEBHOOKS) await sent;
     }
   }
   res.json(rows[0]);
