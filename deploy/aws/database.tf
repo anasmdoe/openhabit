@@ -26,6 +26,33 @@ data "aws_subnets" "default" {
   }
 }
 
+# Not every AZ offers every instance type (t3.micro is missing from us-east-1e),
+# so the NAT instance goes into a default subnet whose AZ does.
+data "aws_ec2_instance_type_offerings" "nat" {
+  count         = var.create_database && var.nat_mode != "none" ? 1 : 0
+  location_type = "availability-zone"
+  filter {
+    name   = "instance-type"
+    values = ["t3.micro"]
+  }
+}
+
+data "aws_subnets" "nat" {
+  count = var.create_database && var.nat_mode != "none" ? 1 : 0
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default[0].id]
+  }
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
+  filter {
+    name   = "availability-zone"
+    values = data.aws_ec2_instance_type_offerings.nat[0].locations
+  }
+}
+
 resource "aws_security_group" "lambda" {
   count       = var.create_database ? 1 : 0
   name        = "${var.name}-lambda"
@@ -165,7 +192,7 @@ resource "aws_instance" "nat" {
   count                       = local.nat && var.nat_mode == "instance" ? 1 : 0
   ami                         = data.aws_ssm_parameter.al2023[0].value
   instance_type               = "t3.micro"
-  subnet_id                   = data.aws_subnets.default[0].ids[0]
+  subnet_id                   = concat(data.aws_subnets.nat[0].ids, data.aws_subnets.default[0].ids)[0]
   vpc_security_group_ids      = [aws_security_group.nat[0].id]
   associate_public_ip_address = true
   source_dest_check           = false
