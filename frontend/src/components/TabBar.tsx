@@ -12,14 +12,12 @@ const ICONS: Record<AppView | 'groups', React.ReactNode> = {
 // Phone-only bottom navigation. Today, Habits and Stats switch what the page
 // shows; Groups opens the groups sheet (API mode only).
 export function TabBar({ dimmed = false }: { dimmed?: boolean }) {
-  const { view, setView, adapter, openGroups, groupsOpen } = useApp();
-  const tabs: { id: AppView | 'groups'; label: string; active: boolean; go: () => void }[] = [
-    { id: 'today', label: 'Today', active: view === 'today' && !groupsOpen, go: () => setView('today') },
-    { id: 'habits', label: 'Habits', active: view === 'habits' && !groupsOpen, go: () => setView('habits') },
-    { id: 'stats', label: 'Stats', active: view === 'stats' && !groupsOpen, go: () => setView('stats') },
-    ...(adapter?.mode === 'api'
-      ? [{ id: 'groups' as const, label: 'Groups', active: groupsOpen, go: () => { void openGroups(); } }]
-      : []),
+  const { view, goView, adapter } = useApp();
+  const tabs: { id: AppView; label: string }[] = [
+    { id: 'today', label: 'Today' },
+    { id: 'habits', label: 'Habits' },
+    { id: 'stats', label: 'Stats' },
+    ...(adapter?.mode === 'api' ? [{ id: 'groups' as const, label: 'Groups' }] : []),
   ];
   return (
     <nav
@@ -30,14 +28,14 @@ export function TabBar({ dimmed = false }: { dimmed?: boolean }) {
       {tabs.map((t) => (
         <button
           key={t.id}
-          onClick={t.go}
-          aria-current={t.active ? 'page' : undefined}
+          onClick={() => goView(t.id)}
+          aria-current={view === t.id ? 'page' : undefined}
           className={`flex-1 flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[10.5px] font-medium transition-colors ${
-            t.active ? 'text-mint' : 'text-ink-soft'
+            view === t.id ? 'text-mint' : 'text-ink-soft'
           }`}
         >
           <svg viewBox="0 0 24 24" className="w-[22px] h-[22px]" fill="none" stroke="currentColor"
-            strokeWidth={t.active ? 2 : 1.7}>
+            strokeWidth={view === t.id ? 2 : 1.7}>
             {ICONS[t.id]}
           </svg>
           {t.label}

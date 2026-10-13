@@ -65,7 +65,11 @@ interface AppState {
   setFeedback(p: Partial<FeedbackPrefs>): void;
   /** Phone navigation: which part of the app the bottom tab bar shows. Wider screens show everything. */
   view: AppView;
+  /** +1 when the last tab change moved right (towards Groups), -1 when it moved left: drives the slide-in. */
+  viewDir: 1 | -1;
   setView(v: AppView): void;
+  /** Switch tab; Groups also loads its data. */
+  goView(v: AppView): void;
   setCategoryFilter(c: string): void;
 
   shiftGridMonth(delta: number): Promise<void>;
@@ -135,7 +139,9 @@ function syncTimezone(user: User | null) {
 const MILESTONES = new Set([7, 30, 100, 365]);
 const CATEGORY_KEY = 'openhabit.category';
 const VIEW_KEY = 'openhabit.view';
-export type AppView = 'today' | 'habits' | 'stats';
+export const VIEW_ORDER: AppView[] = ['today', 'habits', 'stats', 'groups'];
+export type AppView = 'today' | 'habits' | 'stats' | 'groups';
+export const isPhone = () => typeof matchMedia === 'function' && matchMedia('(max-width: 639px)').matches;
 
 /** Habits in the selected category (all of them when the filter is empty or stale). */
 export function visibleHabits(habits: Habit[], filter: string): Habit[] {
@@ -191,7 +197,8 @@ export const useApp = create<AppState>((set, get) => ({
   groupDashboard: null,
 
   async openGroups() {
-    set({ groupsOpen: true });
+    // phones show Groups as a tab; wider screens keep it a popup
+    if (isPhone()) get().setView('groups'); else set({ groupsOpen: true });
     await get().loadSocial();
     const now = new Date().toISOString();
     localStorage.setItem('openhabit.cheersSeen', now);
@@ -259,10 +266,18 @@ export const useApp = create<AppState>((set, get) => ({
   view: (() => {
     try { const v = localStorage.getItem(VIEW_KEY); return v === 'habits' || v === 'stats' ? v : 'today'; } catch { return 'today'; }
   })() as AppView,
+  viewDir: 1,
   setView(v) {
-    try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ }
-    set({ view: v });
+    const { view } = get();
+    if (v === view) return;
+    // Groups is a live page, so it is not remembered as the tab to reopen on
+    try { if (v !== 'groups') localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ }
+    set({ view: v, viewDir: VIEW_ORDER.indexOf(v) >= VIEW_ORDER.indexOf(view) ? 1 : -1 });
     window.scrollTo({ top: 0 });
+  },
+  goView(v) {
+    if (v === 'groups') { void get().openGroups(); return; }
+    get().setView(v);
   },
   feedback: loadPrefs(),
   setFeedback(p) {

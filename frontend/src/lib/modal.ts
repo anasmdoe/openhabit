@@ -21,3 +21,6 @@ const subscribe = (fn: () => void) => { subscribers.add(fn); return () => { subs
 
 /** True while at least one popup is open. */
 export const useAnyModalOpen = () => useSyncExternalStore(subscribe, () => open.size > 0);
+
+/** For event handlers that must not act while a popup is showing (e.g. tab swiping). */
+export const isAnyModalOpen = () => open.size > 0;

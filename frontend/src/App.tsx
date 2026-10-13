@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react';
-import { useApp } from './store';
+import React, { useEffect, useMemo } from 'react';
+import { useApp, isPhone, VIEW_ORDER } from './store';
 import type { AppView } from './store';
 import { TabBar } from './components/TabBar';
+import { useTabSwipe } from './lib/useTabSwipe';
 import { useAnyModalOpen } from './lib/modal';
 import { TopBar, HabitList, ArchivedModal, CategoryBar } from './components/HabitList';
 import {
@@ -20,13 +21,17 @@ import { PauseModal } from './components/Pause';
 import { Welcome } from './components/Welcome';
 
 export default function App() {
-  const { init, ready, editorHabit, authRequired, view } = useApp();
+  const { init, ready, editorHabit, authRequired, view, viewDir, goView, adapter } = useApp();
   const modalOpen = useAnyModalOpen();
   const editorKey = editorHabit === 'new' ? 'new' : editorHabit ? editorHabit.id : 'closed';
 
   useEffect(() => {
     init();
   }, []);
+
+  // swipe sideways between the bottom-bar tabs (Groups only exists for signed-in accounts)
+  const order = useMemo(() => VIEW_ORDER.filter((v) => v !== 'groups' || adapter?.mode === 'api'), [adapter]);
+  useTabSwipe(ready && !authRequired, order, view, goView);
 
   // home-screen shortcuts (manifest "shortcuts"): /?action=new | pause
   useEffect(() => {
@@ -49,14 +54,14 @@ export default function App() {
   if (authRequired) return <AuthGate />;
 
   // On phones the bottom tab bar picks one part of the page; wider screens show all of it.
-  const show = (v: AppView) => (view === v ? '' : 'max-sm:hidden');
+  const show = (v: AppView) => (view === v ? (viewDir > 0 ? 'tab-in-r' : 'tab-in-l') : 'max-sm:hidden');
   const group = 'flex flex-col gap-3';
 
   return (
     <div className="min-h-full w-full max-w-[1800px] mx-auto">
       <div className={`app-content px-3 sm:px-4 py-2 flex flex-col gap-3 max-sm:pb-24 ${modalOpen ? 'app-blur' : ''}`}>
         <TopBar />
-        <div className={view === 'stats' ? 'max-sm:hidden' : ''}><CategoryBar /></div>
+        <div className={view === 'stats' || view === 'groups' ? 'max-sm:hidden' : ''}><CategoryBar /></div>
         <div className={`${group} ${show('today')}`}>
           <TodayFocus />
           <div className="grid gap-3 grid-cols-2 xl:grid-cols-6">
@@ -75,6 +80,9 @@ export default function App() {
           </div>
           <CategoryPanel />
           <InsightsPanel />
+        </div>
+        <div className={`${group} ${view === 'groups' ? show('groups') : 'hidden'}`}>
+          <GroupsModal inline />
         </div>
       </div>
       <TabBar dimmed={modalOpen} />

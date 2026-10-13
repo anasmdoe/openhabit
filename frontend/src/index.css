@@ -245,3 +245,12 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   pointer-events: none;
   animation: burst 520ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
+
+/* Groups shown as a page (phone tab): no popup, so no close button */
+[data-inline] [aria-label='Close'] { display: none; }
+
+/* Tab change: the new page slides in from the side the swipe came from */
+@keyframes tab-in-r { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes tab-in-l { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
+.tab-in-r { animation: tab-in-r 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+.tab-in-l { animation: tab-in-l 220ms cubic-bezier(0.22, 1, 0.36, 1); }

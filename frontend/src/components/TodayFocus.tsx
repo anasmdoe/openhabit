@@ -185,7 +185,7 @@ function SwipeRow({ children, enabled, rightLabel, leftLabel, onRight, onLeft }:
   const armed = Math.abs(dx) >= SWIPE_COMMIT;
 
   return (
-    <div className="relative rounded-xl overflow-hidden touch-pan-y sm:overflow-visible">
+    <div data-no-swipe className="relative rounded-xl overflow-hidden touch-pan-y sm:overflow-visible">
       {dx !== 0 && (
         <div
           className={`absolute inset-0 rounded-xl flex items-center px-4 text-[12px] font-bold ${

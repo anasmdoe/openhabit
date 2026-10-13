@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useApp } from '../store';
+import { useApp, isPhone } from '../store';
 import { socialApi } from '../api';
 import { HabitIcon, ICON_NAMES } from '../lib/icons';
 import type { GroupMember, SharedDayState, SharedHabit, StripState } from '../lib/types';
@@ -42,9 +42,25 @@ export function InviteBell() {
 }
 
 // ---- groups modal --------------------------------------------------------
-export function GroupsModal() {
+/** The popup (wider screens) or, with `inline`, the page behind the Groups tab on phones. */
+function Sheet({ inline, onClose, label, wide, children }: {
+  inline: boolean; onClose: () => void; label: string; wide?: boolean; children: React.ReactNode;
+}) {
+  if (inline) {
+    return <div data-inline className="panel" role="region" aria-label={label}>{children}</div>;
+  }
+  return (
+    <div className="backdrop grid place-items-center p-4" onClick={onClose} role="dialog" aria-modal="true" aria-label={label}>
+      <div className={`panel w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} modal-scroll thin-scroll`} onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export function GroupsModal({ inline = false }: { inline?: boolean }) {
   const {
-    groupsOpen, closeGroups, groups, invites, reactions,
+    groupsOpen, closeGroups, groups, invites, reactions, view: appView,
     activeGroupId, createGroup, openGroupDashboard, joinByCode, respondInvite,
   } = useApp();
   const [view, setView] = useState<'list' | 'create' | 'join'>('list');
@@ -56,14 +72,14 @@ export function GroupsModal() {
 
   useEffect(() => { if (!groupsOpen) { setView('list'); setName(''); setCode(''); setErr(''); } }, [groupsOpen]);
 
-  useModalOpen(groupsOpen);
-  if (!groupsOpen) return null;
-  if (activeGroupId) return <GroupDashboardView />;
+  const showing = inline ? appView === 'groups' && isPhone() : groupsOpen;
+  useModalOpen(showing && !inline);
+  if (!showing) return null;
+  if (activeGroupId) return <GroupDashboardView inline={inline} />;
 
   return (
-    <div className="backdrop grid place-items-center p-4" onClick={closeGroups}
-      role="dialog" aria-modal="true" aria-label="Groups">
-      <div className="panel w-full max-w-lg modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
+    <Sheet inline={inline} onClose={closeGroups} label="Groups">
+      <>
         <div className="panel-head">
           Groups
           <button onClick={closeGroups} className="normal-case font-semibold hover:text-ink" aria-label="Close">✕</button>
@@ -185,13 +201,13 @@ export function GroupsModal() {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </>
+    </Sheet>
   );
 }
 
 // ---- group dashboard -----------------------------------------------------
-function GroupDashboardView() {
+function GroupDashboardView({ inline }: { inline: boolean }) {
   const {
     closeGroups, groups, activeGroupId, groupDashboard, openGroupDashboard, reactTo, loadSocial,
   } = useApp();
@@ -200,9 +216,8 @@ function GroupDashboardView() {
   const back = () => { openGroupDashboard(''); useApp.setState({ activeGroupId: null, groupDashboard: null }); };
 
   return (
-    <div className="backdrop grid place-items-center p-4" onClick={closeGroups}
-      role="dialog" aria-modal="true" aria-label="Group dashboard">
-      <div className="panel w-full max-w-2xl modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
+    <Sheet inline={inline} onClose={closeGroups} label="Group dashboard" wide>
+      <>
         <div className="panel-head sticky top-0 bg-panel z-10">
           <span className="flex items-center gap-2">
             <button onClick={back} className="hover:text-ink" aria-label="Back to groups">‹</button>
@@ -328,8 +343,8 @@ function GroupDashboardView() {
           {tab === 'share' && <ShareTab groupId={activeGroupId!} onSaved={() => { loadSocial(); openGroupDashboard(activeGroupId!); }} />}
           {tab === 'manage' && <ManageTab groupId={activeGroupId!} />}
         </div>
-      </div>
-    </div>
+      </>
+    </Sheet>
   );
 }
 
