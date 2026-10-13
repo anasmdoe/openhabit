@@ -11,7 +11,7 @@ const ICONS: Record<AppView | 'groups', React.ReactNode> = {
 
 // Phone-only bottom navigation. Today, Habits and Stats switch what the page
 // shows; Groups opens the groups sheet (API mode only).
-export function TabBar() {
+export function TabBar({ dimmed = false }: { dimmed?: boolean }) {
   const { view, setView, adapter, openGroups, groupsOpen } = useApp();
   const tabs: { id: AppView | 'groups'; label: string; active: boolean; go: () => void }[] = [
     { id: 'today', label: 'Today', active: view === 'today' && !groupsOpen, go: () => setView('today') },
@@ -23,7 +23,7 @@ export function TabBar() {
   ];
   return (
     <nav
-      className="sm:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-panel/95 backdrop-blur-sm flex"
+      className={`sm:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-panel/95 backdrop-blur-sm flex ${dimmed ? 'app-blur' : ''}`}
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       aria-label="Main"
     >

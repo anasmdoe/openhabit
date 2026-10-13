@@ -8,6 +8,7 @@ import { addDays, dow, fromISO, isCompleted, isFixedDay, isQuit, isSkip, monthRa
 import { DAY_LETTERS, MONTH_NAMES } from '../lib/types';
 import type { Entry, Habit } from '../lib/types';
 import { haptic } from '../lib/feedback';
+import { useModalOpen } from '../lib/modal';
 
 // ------------------------------------------------------------- toolbar
 const ACCENTS = ['#78C8A5', '#7DD3FC', '#C4B5FD', '#F0ABFC', '#FDA4AF', '#FDBA74', '#5EEAD4'];
@@ -778,11 +779,12 @@ function NumericEditor({
 export function ArchivedModal() {
   const { archivedOpen, archived, closeArchived, restoreHabit, deleteHabit } = useApp();
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  useModalOpen(archivedOpen);
   if (!archivedOpen) return null;
   return (
     <div className="backdrop grid place-items-center p-4"
       onClick={closeArchived} role="dialog" aria-modal="true" aria-label="Archived habits">
-      <div className="panel w-full max-w-md max-h-[80vh] overflow-y-auto thin-scroll" onClick={(e) => e.stopPropagation()}>
+      <div className="panel w-full max-w-md modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           Archived habits
           <button onClick={closeArchived} className="normal-case font-semibold hover:text-ink" aria-label="Close">✕</button>

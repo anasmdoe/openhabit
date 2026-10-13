@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, THEME_CYCLE } from '../store';
 import { HabitIcon } from '../lib/icons';
 import { MiniRing } from '../charts';
+import { useModalOpen } from '../lib/modal';
 
 interface Item {
   id: string;
@@ -83,6 +84,7 @@ export function CommandPalette() {
 
   useEffect(() => setSel(0), [q]);
 
+  useModalOpen(open);
   if (!open) return null;
 
   const onKeyDown = (e: React.KeyboardEvent) => {

@@ -156,9 +156,19 @@ button { cursor: pointer; }
 /* modal backdrop: dim; blur comes from .app-blur on the page content,
    because backdrop-filter is GPU-blocklisted on some Linux browsers */
 .backdrop {
-  @apply fixed inset-0 z-40 bg-black/40;
+  @apply fixed inset-0 z-40 bg-black/40 overflow-y-auto overscroll-contain;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+}
+
+/* Popup panels are sized to the *visible* screen (dvh follows the browser's address bar and the
+   keyboard; plain vh does not, which pushed the bottom buttons off-screen on phones) and scroll
+   inside themselves. The fallback line is for browsers without dvh. */
+.modal-scroll {
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
 }
 
 /* applied to the dashboard wrapper while any modal is open */

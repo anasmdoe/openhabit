@@ -4,6 +4,7 @@ import { HabitIcon } from '../lib/icons';
 import { addDays, isSkip, todayISO } from '../lib/stats';
 import { MONTH_NAMES } from '../lib/types';
 import type { Entry } from '../lib/types';
+import { useModalOpen } from '../lib/modal';
 
 // The journal: every note you've written, newest first. Notes already exist on
 // entries — this is simply the reading surface for them.
@@ -35,6 +36,7 @@ export function JournalModal() {
     return out;
   }, [entries]);
 
+  useModalOpen(journalOpen);
   if (!journalOpen) return null;
 
   const fmt = (d: string) =>
@@ -43,7 +45,7 @@ export function JournalModal() {
   return (
     <div className="backdrop grid place-items-center p-4" onClick={closeJournal}
       role="dialog" aria-modal="true" aria-label="Journal">
-      <div className="panel w-full max-w-lg max-h-[85vh] overflow-y-auto thin-scroll"
+      <div className="panel w-full max-w-lg modal-scroll thin-scroll"
         onClick={(e) => e.stopPropagation()}>
         <div className="panel-head sticky top-0 bg-panel z-10">
           Journal

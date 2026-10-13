@@ -4,6 +4,7 @@ import { Bars, LineChart } from '../charts';
 import { DAY_LETTERS } from '../lib/types';
 import { HabitIcon } from '../lib/icons';
 import { useSheetDrag } from '../lib/useSheetDrag';
+import { useModalOpen } from '../lib/modal';
 import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, todayISO, weekKey } from '../lib/stats';
 import type { HabitDetail as HabitDetailData } from '../lib/types';
 import {
@@ -14,6 +15,7 @@ export function HabitDetail() {
   const { detailOpen, detail, closeDetail, openEditor, habits } = useApp();
   const [scorePeriod, setScorePeriod] = useState<Period>('week');
   const [histPeriod, setHistPeriod] = useState<Period>('month');
+  useModalOpen(detailOpen);
   const sheetRef = useRef<HTMLDivElement>(null);
   useSheetDrag(sheetRef, detailOpen, closeDetail); // pull down from the top (or the handle) to close
 
@@ -36,7 +38,7 @@ export function HabitDetail() {
     <div className="fixed inset-0 z-30 flex items-end sm:items-stretch sm:justify-end bg-black/40" style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }} onClick={closeDetail}>
       <div
         ref={sheetRef}
-        className="sheet-in w-full sm:max-w-xl h-[92vh] sm:h-full bg-forest-950 rounded-t-2xl sm:rounded-none border-t sm:border-t-0 sm:border-l border-line overflow-y-auto thin-scroll overscroll-y-contain"
+        className="sheet-in w-full sm:max-w-xl h-[92dvh] sm:h-full bg-forest-950 rounded-t-2xl sm:rounded-none border-t sm:border-t-0 sm:border-l border-line overflow-y-auto thin-scroll overscroll-y-contain"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

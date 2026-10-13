@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp, today } from '../store';
 import { HabitIcon } from '../lib/icons';
 import { addDays, fromISO } from '../lib/stats';
+import { useModalOpen } from '../lib/modal';
 
 const MAX_DAYS = 60;
 
@@ -17,6 +18,7 @@ export function PauseModal() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
 
+  useModalOpen(pauseOpen);
   if (!pauseOpen) return null;
 
   const close = () => { setPauseOpen(false); setDone(null); setPicked(null); };
@@ -44,7 +46,7 @@ export function PauseModal() {
 
   return (
     <div className="backdrop grid place-items-center p-4" onClick={close} role="dialog" aria-modal="true" aria-label="Take a break">
-      <div className="panel w-full max-w-md max-h-[90vh] overflow-y-auto thin-scroll sheet-in" onClick={(e) => e.stopPropagation()}>
+      <div className="panel w-full max-w-md modal-scroll thin-scroll sheet-in" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           Take a break
           <button onClick={close} className="normal-case font-semibold hover:text-mint" aria-label="Close">✕</button>

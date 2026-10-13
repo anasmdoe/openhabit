@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useApp } from './store';
 import type { AppView } from './store';
 import { TabBar } from './components/TabBar';
+import { useAnyModalOpen } from './lib/modal';
 import { TopBar, HabitList, ArchivedModal, CategoryBar } from './components/HabitList';
 import {
   StatCards, MonthTrendPanel, MonthlyCompletionPanel, StreaksPanel, WellnessPanel, CategoryPanel,
@@ -19,8 +20,8 @@ import { PauseModal } from './components/Pause';
 import { Welcome } from './components/Welcome';
 
 export default function App() {
-  const { init, ready, editorHabit, authRequired, detailOpen, archivedOpen, paletteOpen, pauseOpen, view } = useApp();
-  const modalOpen = editorHabit !== null || detailOpen || archivedOpen || paletteOpen || pauseOpen;
+  const { init, ready, editorHabit, authRequired, view } = useApp();
+  const modalOpen = useAnyModalOpen();
   const editorKey = editorHabit === 'new' ? 'new' : editorHabit ? editorHabit.id : 'closed';
 
   useEffect(() => {
@@ -76,7 +77,7 @@ export default function App() {
           <InsightsPanel />
         </div>
       </div>
-      <TabBar />
+      <TabBar dimmed={modalOpen} />
 
       <HabitEditor key={editorKey} />
       <HabitDetail />

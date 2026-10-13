@@ -5,6 +5,7 @@ import { HabitIcon, ICON_NAMES } from '../lib/icons';
 import type { GroupMember, SharedDayState, SharedHabit, StripState } from '../lib/types';
 import { todayISO } from '../lib/stats';
 import { haptic } from '../lib/feedback';
+import { useModalOpen } from '../lib/modal';
 
 // ---- invite bell (toolbar) ----------------------------------------------
 export function InviteBell() {
@@ -55,13 +56,14 @@ export function GroupsModal() {
 
   useEffect(() => { if (!groupsOpen) { setView('list'); setName(''); setCode(''); setErr(''); } }, [groupsOpen]);
 
+  useModalOpen(groupsOpen);
   if (!groupsOpen) return null;
   if (activeGroupId) return <GroupDashboardView />;
 
   return (
     <div className="backdrop grid place-items-center p-4" onClick={closeGroups}
       role="dialog" aria-modal="true" aria-label="Groups">
-      <div className="panel w-full max-w-lg max-h-[85vh] overflow-y-auto thin-scroll" onClick={(e) => e.stopPropagation()}>
+      <div className="panel w-full max-w-lg modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           Groups
           <button onClick={closeGroups} className="normal-case font-semibold hover:text-ink" aria-label="Close">✕</button>
@@ -200,7 +202,7 @@ function GroupDashboardView() {
   return (
     <div className="backdrop grid place-items-center p-4" onClick={closeGroups}
       role="dialog" aria-modal="true" aria-label="Group dashboard">
-      <div className="panel w-full max-w-2xl max-h-[88vh] overflow-y-auto thin-scroll" onClick={(e) => e.stopPropagation()}>
+      <div className="panel w-full max-w-2xl modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head sticky top-0 bg-panel z-10">
           <span className="flex items-center gap-2">
             <button onClick={back} className="hover:text-ink" aria-label="Back to groups">‹</button>

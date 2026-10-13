@@ -3,6 +3,7 @@ import { useApp } from '../store';
 import { DAY_LETTERS } from '../lib/types';
 import type { HabitKind } from '../lib/types';
 import { HabitIcon, ICON_NAMES } from '../lib/icons';
+import { useModalOpen } from '../lib/modal';
 
 const COLORS = [
   '#6EE7B7', // mint
@@ -20,6 +21,7 @@ const COLORS = [
 
 export function HabitEditor() {
   const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit, user, habits } = useApp();
+  useModalOpen(editorHabit !== null);
   const isNew = editorHabit === 'new';
   const existing = isNew || !editorHabit ? null : editorHabit;
 
@@ -93,7 +95,7 @@ export function HabitEditor() {
       aria-modal="true"
       aria-label={isNew ? 'Create habit' : 'Edit habit'}
     >
-      <div className="panel w-full max-w-md max-h-[90vh] overflow-y-auto thin-scroll" onClick={(e) => e.stopPropagation()}>
+      <div className="panel w-full max-w-md modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           {isNew ? 'New habit' : 'Edit habit'}
           <button onClick={closeEditor} className="normal-case font-semibold hover:text-mint" aria-label="Close">✕</button>
@@ -351,7 +353,7 @@ export function HabitEditor() {
             </div>
           </Field>
 
-          <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
+          <div className="sticky bottom-0 -mx-4 -mb-4 px-4 pt-3 pb-4 bg-panel border-t border-line flex items-center justify-between gap-2">
             {existing ? (
               <div className="flex gap-2">
                 <button onClick={() => archiveHabit(existing.id)}
