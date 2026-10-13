@@ -32,7 +32,7 @@ export function Welcome() {
     currentSubscription().then((s) => setPushOn(Boolean(s))).catch(() => {});
   }, [open]);
 
-  useModalOpen(open);
+  useModalOpen(open, () => { markSeen(); setOpen(false); });
   if (!open) return null;
   const close = () => { markSeen(); setOpen(false); };
 

@@ -36,7 +36,7 @@ export function JournalModal() {
     return out;
   }, [entries]);
 
-  useModalOpen(journalOpen);
+  useModalOpen(journalOpen, closeJournal);
   if (!journalOpen) return null;
 
   const fmt = (d: string) =>

@@ -18,7 +18,7 @@ export function PauseModal() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
 
-  useModalOpen(pauseOpen);
+  useModalOpen(pauseOpen, () => { setPauseOpen(false); setDone(null); setPicked(null); });
   if (!pauseOpen) return null;
 
   const close = () => { setPauseOpen(false); setDone(null); setPicked(null); };

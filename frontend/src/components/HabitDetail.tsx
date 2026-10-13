@@ -15,7 +15,7 @@ export function HabitDetail() {
   const { detailOpen, detail, closeDetail, openEditor, habits } = useApp();
   const [scorePeriod, setScorePeriod] = useState<Period>('week');
   const [histPeriod, setHistPeriod] = useState<Period>('month');
-  useModalOpen(detailOpen);
+  useModalOpen(detailOpen, closeDetail);
   const sheetRef = useRef<HTMLDivElement>(null);
   useSheetDrag(sheetRef, detailOpen, closeDetail); // pull down from the top (or the handle) to close
 

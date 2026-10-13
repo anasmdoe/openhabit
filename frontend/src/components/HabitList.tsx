@@ -16,6 +16,7 @@ const ACCENTS = ['#78C8A5', '#7DD3FC', '#C4B5FD', '#F0ABFC', '#FDA4AF', '#FDBA74
 function AccentPicker() {
   const { accent, setAccent } = useApp();
   const [open, setOpen] = useState(false);
+  useModalOpen(open, () => setOpen(false), { blur: false });
   return (
     <div className="relative">
       <button
@@ -694,6 +695,7 @@ function CellMenu({ habit, date, x, y, entry, onClose }: {
     if ((entry?.notes ?? '') !== note) setNote(habit, date, note.trim());
     onClose();
   };
+  useModalOpen(true, saveNote, { blur: false }); // Back saves the note and closes, like tapping outside
 
   return (
     <>
@@ -779,7 +781,7 @@ function NumericEditor({
 export function ArchivedModal() {
   const { archivedOpen, archived, closeArchived, restoreHabit, deleteHabit } = useApp();
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  useModalOpen(archivedOpen);
+  useModalOpen(archivedOpen, closeArchived);
   if (!archivedOpen) return null;
   return (
     <div className="backdrop grid place-items-center p-4"

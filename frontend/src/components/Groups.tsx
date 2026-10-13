@@ -73,7 +73,7 @@ export function GroupsModal({ inline = false }: { inline?: boolean }) {
   useEffect(() => { if (!groupsOpen) { setView('list'); setName(''); setCode(''); setErr(''); } }, [groupsOpen]);
 
   const showing = inline ? appView === 'groups' && isPhone() : groupsOpen;
-  useModalOpen(showing && !inline);
+  useModalOpen(showing && !inline, closeGroups);
   if (!showing) return null;
   if (activeGroupId) return <GroupDashboardView inline={inline} />;
 
@@ -352,6 +352,7 @@ const CHEER_EMOJIS = ['🔥', '👏', '💪', '🎉'];
 
 function CheerBtn({ onPick, total }: { onPick: (emoji: string) => void; total?: number }) {
   const [open, setOpen] = useState(false);
+  useModalOpen(open, () => setOpen(false), { blur: false });
   return (
     <span className="relative inline-flex">
       <button

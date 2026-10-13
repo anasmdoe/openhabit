@@ -3,6 +3,7 @@ import { useApp } from '../store';
 import { exportCSV, exportJSON, importJSON, importLoopCSV } from '../lib/exportImport';
 import { authApi } from '../api';
 import { pushSupported, needsHomeScreen, currentSubscription, enablePush, disablePush } from '../lib/push';
+import { useModalOpen } from '../lib/modal';
 
 // Full-screen gate shown in API mode until a valid session exists.
 export function AuthGate() {
@@ -143,6 +144,7 @@ export function AccountMenu() {
     }
   };
 
+  useModalOpen(open, () => { setOpen(false); setView('menu'); setMsg(''); setCurrent(''); setNext(''); setConfirmPw(''); }, { blur: false });
   if (!user) return null;
   const initial = (user.name || user.email)[0]?.toUpperCase() ?? '?';
 

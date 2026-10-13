@@ -84,7 +84,7 @@ export function CommandPalette() {
 
   useEffect(() => setSel(0), [q]);
 
-  useModalOpen(open);
+  useModalOpen(open, () => setOpen(false));
   if (!open) return null;
 
   const onKeyDown = (e: React.KeyboardEvent) => {

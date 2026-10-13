@@ -21,7 +21,7 @@ const COLORS = [
 
 export function HabitEditor() {
   const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit, user, habits } = useApp();
-  useModalOpen(editorHabit !== null);
+  useModalOpen(editorHabit !== null, closeEditor);
   const isNew = editorHabit === 'new';
   const existing = isNew || !editorHabit ? null : editorHabit;
 
