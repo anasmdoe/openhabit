@@ -20,6 +20,7 @@ import { JournalModal } from './components/Journal';
 import { PauseModal } from './components/Pause';
 import { Welcome } from './components/Welcome';
 import { Tooltips } from './components/Tooltips';
+import { Toast } from './components/Toast';
 import { StatsView } from './components/StatsView';
 
 export default function App() {
@@ -61,7 +62,8 @@ export default function App() {
 
   return (
     <div className="min-h-full w-full max-w-[1800px] mx-auto">
-      <div className={`app-content px-3 sm:px-4 py-2 flex flex-col gap-3 max-sm:pb-24 ${modalOpen ? 'app-blur' : ''}`}>
+      <main className={`app-content px-3 sm:px-4 py-2 flex flex-col gap-3 max-sm:pb-24 ${modalOpen ? 'app-blur' : ''}`}>
+        <h1 className="sr-only">OpenHabit</h1>
         <TopBar />
         <div className={view === 'stats' || view === 'groups' ? 'max-sm:hidden' : ''}><CategoryBar /></div>
         <div className={`${group} ${show('today')}`}>
@@ -80,7 +82,7 @@ export default function App() {
         <div className={`${group} ${view === 'groups' ? show('groups') : 'hidden'}`}>
           <GroupsModal inline />
         </div>
-      </div>
+      </main>
       <TabBar dimmed={modalOpen} />
 
       <HabitEditor key={editorKey} />
@@ -93,6 +95,7 @@ export default function App() {
       <PauseModal />
       <Welcome />
       <Tooltips />
+      <Toast />
     </div>
   );
 }

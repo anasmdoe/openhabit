@@ -48,7 +48,16 @@ it standalone.
   password change and full account deletion (cascades to all data). Set `ALLOW_REGISTRATION=false` on auth-service to
   close signups once your household has accounts. Demo mode (no backend) skips
   auth entirely.
-- **Three themes** — dark, pitch black (OLED), light; cycle from the toolbar
+- **Themes** — Auto (follows the phone's light/dark setting), dark, pitch black (OLED), light
+- **Habit window** — tap a habit for a summary (tracking since, 7/30/90-day and all-time rates,
+  next milestone), trend and best-weekday sentences, an editable 3-month calendar (tap a day to
+  tick, skip, clear, set a value or add a note), a notes timeline, average/best/total for
+  measurable habits, clean days and money or time saved for quit habits, plus share card,
+  per-habit CSV export, pause just this habit and edit reminders
+- **Undo and time of day** — every Today action offers a 5-second Undo; Today groups habits into
+  Morning / Afternoon / Evening / Anytime from their first reminder time
+- **Accessibility** — axe-core clean (WCAG 2 A/AA) in all three themes, landmarks and a page
+  heading, 40px touch targets on touch screens
 - **Month navigation** — the habit grid shows one calendar month with ‹ › arrows
   (auto-scrolls to today); drag habits to reorder (order syncs to every panel);
   drag the column divider to resize habit names (great on phones) and the strip

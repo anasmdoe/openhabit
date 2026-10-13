@@ -39,7 +39,7 @@
   --panel-head: 9 9 10;
   --panel-head-text: 125 128 133;
   --ink: 235 236 238;
-  --ink-soft: 125 128 133;
+  --ink-soft: 146 149 154;
   --line: 23 23 26;
   --cell: 17 17 19;
   --slip: 232 112 100;
@@ -52,13 +52,13 @@
   --forest-850: 241 243 244;
   --forest-800: 232 234 236;
   --forest-700: 209 213 216;
-  --mint: 34 130 96;
+  --mint: 28 116 85;
   --cream: 27 29 31;
   --panel: 255 255 255;
   --panel-head: 255 255 255;
   --panel-head-text: 107 112 117;
   --ink: 27 29 31;
-  --ink-soft: 107 112 117;
+  --ink-soft: 92 97 102;
   --line: 227 229 232;
   --cell: 241 243 244;
   --slip: 196 64 52;
@@ -258,3 +258,10 @@ nav[aria-label='Main'] { transform: translateZ(0); will-change: transform; }
 :root, :root[data-theme='forest-dark'] { --skip: 147 164 196; }
 :root[data-theme='pitch-black'] { --skip: 147 164 196; }
 :root[data-theme='forest-light'] { --skip: 84 104 148; }
+:root { --on-heat: var(--forest-950); }
+:root[data-theme='forest-light'] { --on-heat: 27 29 31; }
+
+/* Touch screens: icon buttons get at least a 40px hit area (WCAG 2.5.8 asks for 24px, Material for 48dp). */
+@media (pointer: coarse) {
+  button.w-7, button.w-8, button.w-9, a.w-8 { min-width: 40px; min-height: 40px; }
+}

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import React, { Fragment, useMemo, useRef, useState, useEffect } from 'react';
 import { useApp, today, visibleHabits } from '../store';
 import { HabitIcon } from '../lib/icons';
 import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, weekKey } from '../lib/stats';
@@ -59,6 +59,45 @@ export function TodayFocus() {
   const doneCount = due.filter(settled).length;
   const allDone = doneCount === due.length;
 
+  const renderRow = (h: Habit) => {
+          const missedYesterday = !isQuit(h) && isFixedDay(h) && h.activeDays.includes(dow(yesterday))
+            && yesterday >= h.createdAt.slice(0, 10)
+            && !isCompleted(h, valueOf(h, yesterday)) && !isSkip(valueOf(h, yesterday));
+          let weekCount = 0;
+          if (!isFixedDay(h)) {
+            for (let d = weekKey(t); d <= t; d = addDays(d, 1)) if (isCompleted(h, valueOf(h, d))) weekCount += 1;
+          }
+          const v = valueOf(h);
+          const doneNow = isCompleted(h, v);
+          const skippedNow = isSkip(v);
+          return (
+            <SwipeRow
+              key={h.id}
+              enabled={!isQuit(h)}
+              rightLabel={doneNow ? 'Undo' : 'Done'}
+              leftLabel={skippedNow ? 'Unskip' : 'Skip'}
+              onRight={() => setNumericEntry(h, t, doneNow ? null : h.type === 'boolean' ? 1 : h.target)}
+              onLeft={() => setSkip(h, t, !skippedNow)}
+            >
+              <TodayItem
+                habit={h}
+                value={v}
+                streak={quickCurrentStreak(h, lookup)}
+                missedYesterday={missedYesterday}
+                weekCount={weekCount}
+                onToggle={() => toggleEntry(h, t)}
+                onSetValue={(val) => setNumericEntry(h, t, val)}
+              />
+            </SwipeRow>
+          );
+  };
+
+  const shown = due.filter((h) => !(feedback.hideDone && settled(h)));
+  const sections = TIME_SECTIONS
+    .map((sec) => ({ ...sec, habits: shown.filter((h) => timeSection(h) === sec.key) }))
+    .filter((sec) => sec.habits.length > 0);
+  const showHeadings = sections.length > 1;
+
   return (
     <section className="panel">
       <div className="flex items-center gap-3 px-4 pt-3 pb-2">
@@ -94,41 +133,32 @@ export function TodayFocus() {
         </button>
       </div>
       <div className="px-3 pb-3 grid grid-cols-1 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
-        {due.filter((h) => !(feedback.hideDone && settled(h))).map((h) => {
-          const missedYesterday = !isQuit(h) && isFixedDay(h) && h.activeDays.includes(dow(yesterday))
-            && yesterday >= h.createdAt.slice(0, 10)
-            && !isCompleted(h, valueOf(h, yesterday)) && !isSkip(valueOf(h, yesterday));
-          let weekCount = 0;
-          if (!isFixedDay(h)) {
-            for (let d = weekKey(t); d <= t; d = addDays(d, 1)) if (isCompleted(h, valueOf(h, d))) weekCount += 1;
-          }
-          const v = valueOf(h);
-          const doneNow = isCompleted(h, v);
-          const skippedNow = isSkip(v);
-          return (
-            <SwipeRow
-              key={h.id}
-              enabled={!isQuit(h)}
-              rightLabel={doneNow ? 'Undo' : 'Done'}
-              leftLabel={skippedNow ? 'Unskip' : 'Skip'}
-              onRight={() => setNumericEntry(h, t, doneNow ? null : h.type === 'boolean' ? 1 : h.target)}
-              onLeft={() => setSkip(h, t, !skippedNow)}
-            >
-              <TodayItem
-                habit={h}
-                value={v}
-                streak={quickCurrentStreak(h, lookup)}
-                missedYesterday={missedYesterday}
-                weekCount={weekCount}
-                onToggle={() => toggleEntry(h, t)}
-                onSetValue={(val) => setNumericEntry(h, t, val)}
-              />
-            </SwipeRow>
-          );
-        })}
+        {sections.map((sec) => (
+          <Fragment key={sec.key}>
+            {showHeadings && (
+              <h2 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-soft pt-1.5 sm:basis-full">{sec.label}</h2>
+            )}
+            {sec.habits.map(renderRow)}
+          </Fragment>
+        ))}
       </div>
     </section>
   );
+}
+
+const TIME_SECTIONS = [
+  { key: 'morning', label: 'Morning' },
+  { key: 'afternoon', label: 'Afternoon' },
+  { key: 'evening', label: 'Evening' },
+  { key: 'anytime', label: 'Anytime' },
+] as const;
+
+/** Which part of the day a habit belongs to, from its earliest reminder time. */
+export function timeSection(h: Habit): (typeof TIME_SECTIONS)[number]['key'] {
+  const first = h.reminderTime.split(',').map((x) => x.trim()).filter(Boolean).sort()[0];
+  if (!first) return 'anytime';
+  const hour = Number(first.slice(0, 2));
+  return hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
 }
 
 const SWIPE_COMMIT = 72; // px

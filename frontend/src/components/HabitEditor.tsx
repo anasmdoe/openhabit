@@ -430,7 +430,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
     <label className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-[0.14em] text-ink-soft">
         {label}
-        {hint && <span className="normal-case tracking-normal ml-2 opacity-70">{hint}</span>}
+        {hint && <span className="normal-case tracking-normal ml-2">{hint}</span>}
       </span>
       {children}
     </label>

@@ -297,6 +297,7 @@ function seedDemo(): LocalDB {
   const categories = ['Morning', 'Fitness', 'Fitness', 'Mind', 'Morning', 'Health', 'Mind', 'Mind'];
   habits.forEach((h, i) => { h.category = categories[i]; });
   habits[7].kind = 'quit'; // a habit to break: entries are slips
+  ['05:00', '17:30', '07:00', '21:00', '08:30', '', '06:30', ''].forEach((t, i) => { habits[i].reminderTime = t; });
   habits[3].cue = 'After dinner, on the sofa';
   habits[6].cue = 'Right after waking up, before the phone';
   habits[7].cue = 'When the urge hits: take a walk instead';

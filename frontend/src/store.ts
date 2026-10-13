@@ -8,8 +8,10 @@ import { flushQueue, socialApi } from './api';
 import { loadPrefs, savePrefs } from './lib/feedback';
 import type { FeedbackPrefs } from './lib/feedback';
 
-export type Theme = 'forest-dark' | 'pitch-black' | 'forest-light';
-export const THEME_CYCLE: Theme[] = ['forest-dark', 'pitch-black', 'forest-light'];
+export type Theme = 'system' | 'forest-dark' | 'pitch-black' | 'forest-light';
+export const THEME_CYCLE: Theme[] = ['system', 'forest-dark', 'pitch-black', 'forest-light'];
+
+export interface Toast { id: number; message: string; undo?: () => void }
 
 const ENTRY_LOOKBACK = 120; // days of entries kept in memory for grid + streaks
 
@@ -17,6 +19,9 @@ interface AppState {
   adapter: DataAdapter | null;
   ready: boolean;
   theme: Theme;
+  toast: Toast | null;
+  showToast(message: string, undo?: () => void): void;
+  dismissToast(): void;
   habits: Habit[];
   entries: Entry[]; // rolling window, last ENTRY_LOOKBACK days
   overview: Overview | null; // current month (for the dashboard panels)
@@ -98,6 +103,7 @@ interface AppState {
   refreshOverview(): Promise<void>;
   toggleEntry(habit: Habit, date: string): Promise<void>;
   setNumericEntry(habit: Habit, date: string, value: number | null): Promise<void>;
+  restoreEntry(habit: Habit, date: string, prev: Entry | undefined): Promise<void>;
   saveHabit(input: HabitInput, id?: string): Promise<void>;
   deleteHabit(id: string): Promise<void>;
   archiveHabit(id: string): Promise<void>;
@@ -128,8 +134,16 @@ function applyAccent(hex: string | null) {
   localStorage.setItem(ACCENT_KEY, hex);
 }
 
+const darkQuery = () => (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null);
+
+/** The concrete palette for a preference ("system" follows the phone's light/dark setting). */
+export function resolveTheme(theme: Theme): Exclude<Theme, 'system'> {
+  if (theme !== 'system') return theme;
+  return darkQuery()?.matches === false ? 'forest-light' : 'forest-dark';
+}
+
 function applyTheme(theme: Theme) {
-  document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.theme = resolveTheme(theme);
   localStorage.setItem(THEME_KEY, theme);
 }
 
@@ -175,7 +189,12 @@ export const useApp = create<AppState>((set, get) => ({
   ready: false,
   theme: THEME_CYCLE.includes(localStorage.getItem(THEME_KEY) as Theme)
     ? (localStorage.getItem(THEME_KEY) as Theme)
-    : 'forest-dark',
+    : 'system',
+  toast: null,
+  showToast(message, undo) {
+    set({ toast: { id: Date.now(), message, undo } });
+  },
+  dismissToast: () => set({ toast: null }),
   habits: [],
   entries: [],
   overview: null,
@@ -394,6 +413,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   async init() {
     applyTheme(get().theme);
+    darkQuery()?.addEventListener?.('change', () => {
+      if (get().theme === 'system') applyTheme('system');
+    });
     applyAccent(get().accent);
     const adapter = await detectAdapter();
     set({ adapter });
@@ -493,6 +515,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!adapter) return;
     const existing = entries.find((e) => e.habitId === habit.id && e.date === date);
     const rest = entries.filter((e) => e !== existing);
+    const undoTo = () => get().restoreEntry(habit, date, existing);
     if (!existing) {
       // none -> done
       const entry: Entry = { habitId: habit.id, date, value: 1 };
@@ -500,13 +523,30 @@ export const useApp = create<AppState>((set, get) => ({
       set({ entries: next });
       await adapter.putEntry(entry).catch(() => {});
       maybeCelebrate(habit, next, set);
+      get().showToast(`${habit.name} marked done`, undoTo);
     } else if (!isSkip(existing.value) && isCompleted(habit, existing.value)) {
       // done -> skip
       const entry: Entry = { habitId: habit.id, date, value: SKIP, notes: existing.notes };
       set({ entries: [...rest, entry] });
       await adapter.putEntry(entry).catch(() => {});
+      get().showToast(`${habit.name} skipped`, undoTo);
     } else {
       // skip (or stale value) -> none
+      set({ entries: rest });
+      await adapter.deleteEntry(habit.id, date).catch(() => {});
+      get().showToast(`${habit.name} cleared`, undoTo);
+    }
+    await get().refreshOverview();
+  },
+
+  async restoreEntry(habit, date, prev) {
+    const { adapter, entries } = get();
+    if (!adapter) return;
+    const rest = entries.filter((e) => !(e.habitId === habit.id && e.date === date));
+    if (prev) {
+      set({ entries: [...rest, prev] });
+      await adapter.putEntry(prev).catch(() => {});
+    } else {
       set({ entries: rest });
       await adapter.deleteEntry(habit.id, date).catch(() => {});
     }
@@ -518,6 +558,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!adapter) return;
     const existing = entries.find((e) => e.habitId === habit.id && e.date === date);
     const rest = entries.filter((e) => e !== existing);
+    get().showToast(skip ? `${habit.name} skipped` : `${habit.name} unskipped`, () => get().restoreEntry(habit, date, existing));
     if (skip) {
       const entry: Entry = { habitId: habit.id, date, value: SKIP, notes: existing?.notes ?? '' };
       set({ entries: [...rest, entry] });
@@ -543,7 +584,9 @@ export const useApp = create<AppState>((set, get) => ({
   async setNumericEntry(habit, date, value) {
     const { adapter, entries } = get();
     if (!adapter) return;
-    const existingNotes = entries.find((e) => e.habitId === habit.id && e.date === date)?.notes ?? '';
+    const prevEntry = entries.find((e) => e.habitId === habit.id && e.date === date);
+    const existingNotes = prevEntry?.notes ?? '';
+    get().showToast(value == null ? `${habit.name} cleared` : `${habit.name} updated`, () => get().restoreEntry(habit, date, prevEntry));
     const rest = entries.filter((e) => !(e.habitId === habit.id && e.date === date));
     if (value == null) {
       set({ entries: rest });

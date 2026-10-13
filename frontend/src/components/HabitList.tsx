@@ -111,8 +111,13 @@ export function TopBar() {
         <path d="M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" />
       </IconBtn></span>
       <span className="max-sm:hidden"><AccentPicker /></span>
-      <span className="max-sm:hidden"><IconBtn onClick={nextTheme} label={`Theme: ${theme === 'forest-dark' ? 'dark' : theme === 'pitch-black' ? 'pitch black' : 'light'}`}>
-        {theme === 'forest-dark' ? (
+      <span className="max-sm:hidden"><IconBtn onClick={nextTheme} label={`Theme: ${theme === 'system' ? 'follow phone' : theme === 'forest-dark' ? 'dark' : theme === 'pitch-black' ? 'pitch black' : 'light'}`}>
+        {theme === 'system' ? (
+          <>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
+          </>
+        ) : theme === 'forest-dark' ? (
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" strokeLinejoin="round" />
         ) : theme === 'pitch-black' ? (
           <>
@@ -138,7 +143,7 @@ export function TopBar() {
 }
 
 // Phones: the secondary toolbar actions live behind one ⋯ button instead of filling the top row.
-const THEME_LABEL: Record<string, string> = { 'forest-dark': 'Dark', 'pitch-black': 'Black', 'forest-light': 'Light' };
+const THEME_LABEL: Record<string, string> = { system: 'Auto', 'forest-dark': 'Dark', 'pitch-black': 'Black', 'forest-light': 'Light' };
 
 function OverflowMenu() {
   const { theme, setTheme, accent, setAccent, adapter, habits, openArchived, setPauseOpen, resetDemo } = useApp();
@@ -156,7 +161,8 @@ function OverflowMenu() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-10 z-40 panel w-64 p-2 flex flex-col gap-0.5 shadow-xl" role="menu">
+          <div className="absolute right-0 top-10 z-40 panel w-64 p-2 flex flex-col gap-0.5 shadow-xl">
+            <div role="menu" className="flex flex-col gap-0.5">
             {habits.length > 0 && (
               <button role="menuitem" className={row} onClick={pick(() => setPauseOpen(true))}>
                 <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-soft" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 7v10M15 7v10" strokeLinecap="round" /><circle cx="12" cy="12" r="9" /></svg>
@@ -167,6 +173,7 @@ function OverflowMenu() {
               <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-soft" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               Archived habits
             </button>
+            </div>
             <div className="px-2.5 pt-2 pb-1 border-t border-line mt-1">
               <div className="text-[10px] uppercase tracking-[0.14em] text-ink-soft mb-1.5">Theme</div>
               <div className="seg w-full" role="group" aria-label="Theme">

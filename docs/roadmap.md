@@ -98,6 +98,16 @@ Everything from the dashboard review that fitted, plus tab swiping:
 
 Not built from the review: habit-to-habit correlations (needs a careful sample-size rule), native home-screen widgets (not possible in a PWA).
 
+## Added in round 5
+
+1. **Habit window**: summary rates and next milestone, trend and weekday sentences, editable calendar with notes, notes timeline, measurable-habit numbers, quit-habit clean days with optional savings (`savingsPerDay` / `savingsUnit`), quick actions (share card, CSV, pause this habit, reminders).
+2. **Undo snackbar** after Today and calendar changes.
+3. **Auto theme** that follows the phone, including live changes.
+4. **Time-of-day sections** on Today (shown only when habits fall in more than one).
+5. **Accessibility pass** with axe-core over every tab, the habit window and the main popups in all three themes; contrast tokens, landmarks, labelled scroll regions and touch targets fixed.
+
+Skipped for now: a per-habit mood link (needs the same sample-size rule as correlations).
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |

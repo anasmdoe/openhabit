@@ -316,7 +316,7 @@ export function WellnessPanel() {
         Wellness
         <span className="flex items-center gap-3 normal-case tracking-normal font-medium">
           <span className="flex items-center gap-1"><i className="w-3 h-0.5 bg-mint inline-block rounded" /> sleep h</span>
-          <span className="flex items-center gap-1 opacity-70"><i className="w-3 h-0.5 inline-block border-t border-dashed border-current" /> mood (1–5)</span>
+          <span className="flex items-center gap-1"><i className="w-3 h-0.5 inline-block border-t border-dashed border-current" /> mood (1–5)</span>
         </span>
       </div>
       <div className="px-4 pb-3">

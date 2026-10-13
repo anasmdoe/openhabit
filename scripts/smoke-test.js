@@ -273,6 +273,12 @@ async function main() {
   });
   check(quitH.kind === 'quit' && quitH.category === 'Health', 'habits: quit habit with a trimmed category');
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', kind: 'quit', type: 'numeric' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', savingsPerDay: -1 }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', savingsUnit: 'x'.repeat(13) }, expect: [400] });
+  const saved = await call('habit', 'PUT', `/habits/${quitH.id}`, { token: A, body: { savingsPerDay: 7.5, savingsUnit: ' $ ' } });
+  check(saved.savingsPerDay === 7.5 && saved.savingsUnit === '$', 'habits: clean-day savings are stored and trimmed');
+  const qa = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
+  check(qa.habit.savingsPerDay === 7.5 && qa.habit.kind === 'quit' && qa.habit.reminderTime !== undefined, 'analytics: habit detail carries kind, reminders and savings');
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', reminderTime: '08:00,09:00,10:00,11:00' }, expect: [400] });
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', reminderTime: '08:00,08:00' }, expect: [400] });
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', cue: 'x'.repeat(121) }, expect: [400] });

@@ -185,7 +185,7 @@ export function HabitDetail() {
             {/* best streaks */}
             <section className="panel">
               <div className="panel-head">Past year</div>
-              <div className="px-4 pb-3 overflow-x-auto thin-scroll">
+              <div className="px-4 pb-3 overflow-x-auto thin-scroll" tabIndex={0} role="group" aria-label="Past year">
                 <YearHeatmap detail={detail} color={color} />
               </div>
             </section>
