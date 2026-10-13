@@ -215,6 +215,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   @apply bg-forest-850 border border-line rounded-lg px-3 py-2 text-sm w-full;
 }
 
+.step-btn {
+  @apply shrink-0 text-[11px] font-bold uppercase tracking-wider rounded-lg px-3 h-8 bg-mint text-forest-950 disabled:opacity-60;
+}
+
 /* Today progress ring fills smoothly */
 .ring-fill { transition: stroke-dashoffset 420ms cubic-bezier(0.22, 1, 0.36, 1); }
 

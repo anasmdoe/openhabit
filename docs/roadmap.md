@@ -52,6 +52,15 @@ HabitNow. Vote counts are upvotes at the time of writing.
 3. **Feedback settings** (Loop: sound 12 votes; Simple Streak added a haptics setting): optional completion chime, and haptics skipped when the OS asks for reduced motion.
 4. **Hide completed** on Today (Loop #2070).
 
+## Added in round 3
+
+1. **Bottom tab bar on phones** (Today / Habits / Stats / Groups): the long single page is now three focused views; desktop is unchanged.
+2. **Week view** in the habit grid: seven days that fit a phone without sideways scrolling, alongside the month view.
+3. **Swipe on Today rows**: right to log (or undo), left to skip.
+4. **First-run checklist**: add habits, turn on reminders, install the app.
+5. **Empty and loading states** on Today (no habits yet, rest day, skeleton while loading).
+6. **OpenAPI 3.1 document** at `/openapi.yaml`, with a CI check that it matches the routes the services register.
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |

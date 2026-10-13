@@ -62,6 +62,7 @@ export interface User {
   timezone: string;
   quietStart: string; // 'HH:MM' local, '' = no quiet hours
   quietEnd: string;
+  createdAt?: string; // ISO time the account was created
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {

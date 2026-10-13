@@ -1,5 +1,7 @@
 import React, { useEffect } from 'react';
 import { useApp } from './store';
+import type { AppView } from './store';
+import { TabBar } from './components/TabBar';
 import { TopBar, HabitList, ArchivedModal, CategoryBar } from './components/HabitList';
 import {
   StatCards, MonthTrendPanel, MonthlyCompletionPanel, StreaksPanel, WellnessPanel, CategoryPanel,
@@ -14,9 +16,10 @@ import { Celebration } from './components/Celebration';
 import { GroupsModal } from './components/Groups';
 import { JournalModal } from './components/Journal';
 import { PauseModal } from './components/Pause';
+import { Welcome } from './components/Welcome';
 
 export default function App() {
-  const { init, ready, editorHabit, authRequired, detailOpen, archivedOpen, paletteOpen, pauseOpen } = useApp();
+  const { init, ready, editorHabit, authRequired, detailOpen, archivedOpen, paletteOpen, pauseOpen, view } = useApp();
   const modalOpen = editorHabit !== null || detailOpen || archivedOpen || paletteOpen || pauseOpen;
   const editorKey = editorHabit === 'new' ? 'new' : editorHabit ? editorHabit.id : 'closed';
 
@@ -44,25 +47,36 @@ export default function App() {
 
   if (authRequired) return <AuthGate />;
 
+  // On phones the bottom tab bar picks one part of the page; wider screens show all of it.
+  const show = (v: AppView) => (view === v ? '' : 'max-sm:hidden');
+  const group = 'flex flex-col gap-3';
+
   return (
     <div className="min-h-full w-full max-w-[1800px] mx-auto">
-      <div className={`app-content px-3 sm:px-4 py-2 flex flex-col gap-3 ${modalOpen ? 'app-blur' : ''}`}>
+      <div className={`app-content px-3 sm:px-4 py-2 flex flex-col gap-3 max-sm:pb-24 ${modalOpen ? 'app-blur' : ''}`}>
         <TopBar />
-        <CategoryBar />
-        <TodayFocus />
-        <div className="grid gap-3 grid-cols-2 xl:grid-cols-6">
-          <StatCards />
-          <div className="col-span-2 xl:col-span-2"><WellnessPanel /></div>
+        <div className={view === 'stats' ? 'max-sm:hidden' : ''}><CategoryBar /></div>
+        <div className={`${group} ${show('today')}`}>
+          <TodayFocus />
+          <div className="grid gap-3 grid-cols-2 xl:grid-cols-6">
+            <StatCards />
+            <div className="col-span-2 xl:col-span-2"><WellnessPanel /></div>
+          </div>
         </div>
-        <HabitList />
-        <MonthTrendPanel />
-        <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
-          <MonthlyCompletionPanel />
-          <StreaksPanel />
+        <div className={`${group} ${show('habits')}`}>
+          <HabitList />
         </div>
-        <CategoryPanel />
-        <InsightsPanel />
+        <div className={`${group} ${show('stats')}`}>
+          <MonthTrendPanel />
+          <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
+            <MonthlyCompletionPanel />
+            <StreaksPanel />
+          </div>
+          <CategoryPanel />
+          <InsightsPanel />
+        </div>
       </div>
+      <TabBar />
 
       <HabitEditor key={editorKey} />
       <HabitDetail />
@@ -72,6 +86,7 @@ export default function App() {
       <GroupsModal />
       <JournalModal />
       <PauseModal />
+      <Welcome />
     </div>
   );
 }

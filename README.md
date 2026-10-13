@@ -59,6 +59,15 @@ it standalone.
 - **PWA + offline** — installable app; the shell works offline and any entries,
   skips, notes, or wellness logged while offline are queued locally and synced
   automatically when the connection returns
+- **Phone-first navigation** — on phones a bottom tab bar switches between
+  *Today*, *Habits*, *Stats* (and *Groups* with an account); wider screens show
+  everything on one page. The habit grid has a **Week** view (seven days that
+  always fit the screen, with ‹ › to move through the weeks) next to the full
+  **Month** view
+- **Swipe on Today** — swipe a row right to log it (or undo), left to skip it;
+  scrolling and the buttons work as before
+- **First-run checklist** — a new account is walked through adding habits,
+  turning on reminders on this device, and installing the app (once)
 - **Today at a glance** — a progress ring and one big tap target per habit
   (full-width rows on phones): tap to check in, **+1** to count up measurable
   habits (water, pages, sets), a streak flame per habit, and a gentle

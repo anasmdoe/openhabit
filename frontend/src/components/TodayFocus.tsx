@@ -9,7 +9,7 @@ import { haptic, playDone } from '../lib/feedback';
 // What's due today: a progress ring plus one big tap target per habit
 // (full-width rows on phones, wrapping chips on wider screens).
 export function TodayFocus() {
-  const { habits, entries, toggleEntry, setNumericEntry, categoryFilter, feedback, setFeedback } = useApp();
+  const { habits, entries, toggleEntry, setNumericEntry, setSkip, categoryFilter, feedback, setFeedback, openEditor, ready } = useApp();
   const t = today();
   const yesterday = addDays(t, -1);
 
@@ -25,7 +25,34 @@ export function TodayFocus() {
     [habits, categoryFilter, t]
   );
 
-  if (!due.length) return null;
+  if (!habits.length) {
+    return ready ? (
+      <section className="panel px-4 py-5 flex flex-col items-center text-center gap-2">
+        <span className="w-10 h-10 rounded-full bg-mint/15 grid place-items-center text-mint">
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        </span>
+        <div className="text-[14px] font-semibold">Nothing to track yet</div>
+        <p className="text-[12px] text-ink-soft max-w-xs">Add your first habit, or start from a ready-made pack in the Habits tab.</p>
+        <button onClick={() => openEditor('new')}
+          className="mt-1 text-[11px] uppercase tracking-wider font-bold bg-mint text-forest-950 rounded-sm px-4 py-2">
+          Add a habit
+        </button>
+      </section>
+    ) : <TodaySkeleton />;
+  }
+  if (!due.length) {
+    return (
+      <section className="panel px-4 py-4 flex items-center gap-3">
+        <span className="w-10 h-10 rounded-full bg-forest-800 grid place-items-center shrink-0">
+          <svg viewBox="0 0 24 24" className="w-5 h-5 text-ink-soft" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" /></svg>
+        </span>
+        <div>
+          <div className="text-[13px] font-semibold">Rest day</div>
+          <div className="text-[12px] text-ink-soft">None of your habits are scheduled for today{categoryFilter ? ' in this category' : ''}.</div>
+        </div>
+      </section>
+    );
+  }
 
   const valueOf = (h: Habit, d = t) => lookup.get(`${h.id}|${d}`);
   const settled = (h: Habit) => isCompleted(h, valueOf(h)) || isSkip(valueOf(h));
@@ -75,20 +102,124 @@ export function TodayFocus() {
           if (!isFixedDay(h)) {
             for (let d = weekKey(t); d <= t; d = addDays(d, 1)) if (isCompleted(h, valueOf(h, d))) weekCount += 1;
           }
+          const v = valueOf(h);
+          const doneNow = isCompleted(h, v);
+          const skippedNow = isSkip(v);
           return (
-            <TodayItem
+            <SwipeRow
               key={h.id}
-              habit={h}
-              value={valueOf(h)}
-              streak={quickCurrentStreak(h, lookup)}
-              missedYesterday={missedYesterday}
-              weekCount={weekCount}
-              onToggle={() => toggleEntry(h, t)}
-              onSetValue={(v) => setNumericEntry(h, t, v)}
-            />
+              enabled={!isQuit(h)}
+              rightLabel={doneNow ? 'Undo' : 'Done'}
+              leftLabel={skippedNow ? 'Unskip' : 'Skip'}
+              onRight={() => setNumericEntry(h, t, doneNow ? null : h.type === 'boolean' ? 1 : h.target)}
+              onLeft={() => setSkip(h, t, !skippedNow)}
+            >
+              <TodayItem
+                habit={h}
+                value={v}
+                streak={quickCurrentStreak(h, lookup)}
+                missedYesterday={missedYesterday}
+                weekCount={weekCount}
+                onToggle={() => toggleEntry(h, t)}
+                onSetValue={(val) => setNumericEntry(h, t, val)}
+              />
+            </SwipeRow>
           );
         })}
       </div>
+    </section>
+  );
+}
+
+const SWIPE_COMMIT = 72; // px
+
+/**
+ * Touch gesture on a Today row: swipe right to log it, left to skip it.
+ * Vertical scrolling stays native (touch-action: pan-y); mouse users keep the buttons.
+ */
+function SwipeRow({ children, enabled, rightLabel, leftLabel, onRight, onLeft }: {
+  children: React.ReactNode;
+  enabled: boolean;
+  rightLabel: string;
+  leftLabel: string;
+  onRight: () => void;
+  onLeft: () => void;
+}) {
+  const content = useRef<HTMLDivElement>(null);
+  const [dx, setDx] = useState(0);
+  const drag = useRef<{ x: number; y: number; id: number; live: boolean } | null>(null);
+  const swallowClick = useRef(false);
+
+  if (!enabled) return <>{children}</>;
+
+  const reset = () => { drag.current = null; setDx(0); };
+  const down = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse' || e.button > 0) return;
+    drag.current = { x: e.clientX, y: e.clientY, id: e.pointerId, live: false };
+  };
+  const move = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d) return;
+    const mx = e.clientX - d.x;
+    const my = e.clientY - d.y;
+    if (!d.live) {
+      if (Math.abs(mx) < 10 || Math.abs(mx) < Math.abs(my) * 1.4) return; // not a horizontal swipe (yet)
+      d.live = true;
+      content.current?.setPointerCapture(d.id);
+    }
+    swallowClick.current = true;
+    setDx(Math.max(-140, Math.min(140, mx)));
+  };
+  const up = () => {
+    const d = drag.current;
+    if (!d) return;
+    const committed = d.live && Math.abs(dx) >= SWIPE_COMMIT;
+    const dir = dx > 0 ? 'right' : 'left';
+    reset();
+    if (d.live) window.setTimeout(() => { swallowClick.current = false; }, 0);
+    if (committed) {
+      haptic([10, 30, 10]);
+      (dir === 'right' ? onRight : onLeft)();
+    }
+  };
+  const armed = Math.abs(dx) >= SWIPE_COMMIT;
+
+  return (
+    <div className="relative rounded-xl overflow-hidden touch-pan-y sm:overflow-visible">
+      {dx !== 0 && (
+        <div
+          className={`absolute inset-0 rounded-xl flex items-center px-4 text-[12px] font-bold ${
+            dx > 0 ? 'justify-start bg-mint/25 text-mint' : 'justify-end bg-forest-800 text-ink-soft'
+          } ${armed ? 'opacity-100' : 'opacity-70'}`}
+          aria-hidden
+        >
+          {dx > 0 ? rightLabel : leftLabel}
+        </div>
+      )}
+      <div
+        ref={content}
+        onPointerDown={down}
+        onPointerMove={move}
+        onPointerUp={up}
+        onPointerCancel={reset}
+        onClickCapture={(e) => { if (swallowClick.current) { e.stopPropagation(); e.preventDefault(); } }}
+        style={{ transform: dx ? `translateX(${dx}px)` : undefined, transition: dx ? 'none' : 'transform 180ms ease' }}
+        className="relative bg-panel rounded-xl"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function TodaySkeleton() {
+  return (
+    <section className="panel px-4 py-3 flex flex-col gap-2" aria-busy="true" aria-label="Loading today's habits">
+      <div className="flex items-center gap-3">
+        <div className="shimmer w-11 h-11 rounded-full" />
+        <div className="flex flex-col gap-1.5"><div className="shimmer h-2.5 w-16" /><div className="shimmer h-3.5 w-24" /></div>
+      </div>
+      {[0, 1, 2].map((i) => <div key={i} className="shimmer h-12 w-full rounded-xl" />)}
     </section>
   );
 }

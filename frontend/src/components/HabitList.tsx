@@ -4,7 +4,7 @@ import { AccountMenu } from './Auth';
 import { InviteBell } from './Groups';
 import { MiniRing } from '../charts';
 import { HabitIcon } from '../lib/icons';
-import { dow, isCompleted, isFixedDay, isQuit, isSkip, monthRange } from '../lib/stats';
+import { addDays, dow, fromISO, isCompleted, isFixedDay, isQuit, isSkip, monthRange } from '../lib/stats';
 import { DAY_LETTERS, MONTH_NAMES } from '../lib/types';
 import type { Entry, Habit } from '../lib/types';
 import { haptic } from '../lib/feedback';
@@ -150,6 +150,10 @@ function IconBtn({ onClick, label, children }: {
 
 // ------------------------------------------------------ habit list grid
 const CELL = 46;
+const WEEK_CELL_MIN = 32; // narrowest day column in the week view
+const MODE_KEY = 'openhabit.gridMode';
+type GridMode = 'week' | 'month';
+const SMALL_SCREEN = '(max-width: 639px)';
 const ROW_H = 44;
 const NAME_W_KEY = 'openhabit.nameW';
 const LIST_H_KEY = 'openhabit.listH';
@@ -176,15 +180,53 @@ export function HabitList() {
   const [drag, setDrag] = useState<{ id: string; to: number } | null>(null);
   const [cellMenu, setCellMenu] = useState<{ habit: Habit; date: string; x: number; y: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const iconOnly = nameW < ICON_ONLY;
+
+  // Week view: seven days that always fit the screen (rolling window ending on `anchor`).
+  const [mode, setModeState] = useState<GridMode>(() => {
+    try {
+      const v = localStorage.getItem(MODE_KEY);
+      if (v === 'week' || v === 'month') return v;
+    } catch { /* private mode */ }
+    return matchMedia(SMALL_SCREEN).matches ? 'week' : 'month';
+  });
+  const setMode = (m: GridMode) => {
+    setModeState(m);
+    try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ }
+  };
+  const [anchor, setAnchor] = useState(() => today());
+  const [width, setWidth] = useState(390);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    setWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  const week = mode === 'week';
+  const nameEff = week ? Math.max(NAME_MIN, Math.min(nameW, width - 7 * WEEK_CELL_MIN)) : nameW;
+  const cell = week ? Math.max(WEEK_CELL_MIN, Math.floor((width - nameEff) / 7)) : CELL;
+  const iconOnly = nameEff < ICON_ONLY;
 
   const t = today();
   const { start, daysInMonth } = monthRange(gridYear, gridMonth);
   const days = useMemo(
-    () => Array.from({ length: daysInMonth }, (_, i) =>
-      `${start.slice(0, 8)}${String(i + 1).padStart(2, '0')}`),
-    [start, daysInMonth]
+    () => (week
+      ? Array.from({ length: 7 }, (_, i) => addDays(anchor, i - 6))
+      : Array.from({ length: daysInMonth }, (_, i) => `${start.slice(0, 8)}${String(i + 1).padStart(2, '0')}`)),
+    [week, anchor, start, daysInMonth]
   );
+  // entries are loaded for the last ~120 days (and the grid month): stay inside them
+  const oldestShown = addDays(t, -112);
+  const canGoBack = addDays(anchor, -13) >= oldestShown;
+  const canGoForward = anchor < t;
+  const weekLabel = (() => {
+    const a = fromISO(days[0]); const b = fromISO(days[6]);
+    const m = (d: Date) => d.toLocaleDateString('en', { month: 'short', timeZone: 'UTC' });
+    return a.getUTCMonth() === b.getUTCMonth()
+      ? `${a.getUTCDate()}–${b.getUTCDate()} ${m(b)}`
+      : `${a.getUTCDate()} ${m(a)} – ${b.getUTCDate()} ${m(b)}`;
+  })();
   const isCurrentMonth = t.slice(0, 7) === start.slice(0, 7);
   const hasData = habits.length > 0;
 
@@ -192,13 +234,13 @@ export function HabitList() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (isCurrentMonth) {
+    if (!week && isCurrentMonth) {
       const idx = parseInt(t.slice(8, 10), 10) - 1;
       el.scrollLeft = Math.max(0, idx * CELL - (el.clientWidth - nameW) / 2);
     } else {
       el.scrollLeft = 0;
     }
-  }, [start, hasData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [start, hasData, week]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const entryLookup = useMemo(() => {
     const m = new Map<string, Entry>();
@@ -291,34 +333,48 @@ export function HabitList() {
 
   return (
     <section className="panel">
+      <div className="panel-head">
+        Habits
+        <div className="seg" role="group" aria-label="Grid range">
+          {(['week', 'month'] as const).map((m) => (
+            <button key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className="capitalize">{m}</button>
+          ))}
+        </div>
+      </div>
       <div
         ref={scrollRef}
         className="overflow-auto thin-scroll overscroll-x-contain"
         style={{ maxHeight: listH || '60vh' }}
       >
-        <div style={{ minWidth: nameW + daysInMonth * CELL }}>
+        <div style={{ minWidth: nameEff + days.length * cell }}>
           {/* header: month switcher + day columns */}
           <div className="flex items-stretch border-b border-line sticky top-0 z-20 bg-panel">
             <div
               className="sticky left-0 z-10 bg-panel shrink-0 border-r border-line flex items-center justify-between gap-0.5 px-1"
-              style={{ width: nameW }}
+              style={{ width: nameEff }}
             >
-              <button onClick={() => shiftGridMonth(-1)} aria-label="Previous month"
-                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0">
+              <button
+                onClick={() => (week ? setAnchor(addDays(anchor, -7)) : shiftGridMonth(-1))}
+                disabled={week && !canGoBack}
+                aria-label={week ? 'Previous week' : 'Previous month'}
+                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0 disabled:opacity-30">
                 ‹
               </button>
               {!iconOnly && (
                 <span className="text-[11px] font-semibold text-center truncate">
-                  {MONTH_NAMES[gridMonth - 1].slice(0, 3)} <span className="num text-ink-soft">{gridYear}</span>
+                  {week ? weekLabel : <>{MONTH_NAMES[gridMonth - 1].slice(0, 3)} <span className="num text-ink-soft">{gridYear}</span></>}
                 </span>
               )}
-              <button onClick={() => shiftGridMonth(1)} aria-label="Next month"
-                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0">
+              <button
+                onClick={() => (week ? setAnchor(addDays(anchor, 7) > t ? t : addDays(anchor, 7)) : shiftGridMonth(1))}
+                disabled={week && !canGoForward}
+                aria-label={week ? 'Next week' : 'Next month'}
+                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0 disabled:opacity-30">
                 ›
               </button>
             </div>
             {days.map((d) => (
-              <div key={d} style={{ width: CELL }}
+              <div key={d} style={{ width: cell }}
                 className={`py-2 text-center shrink-0 ${d === t ? 'bg-forest-850/70 rounded-b-md' : ''}`}>
                 <div className={`text-[10px] leading-none ${d === t ? 'text-ink font-semibold' : 'text-ink-soft'}`}>
                   {DAY_LETTERS[dow(d)]}
@@ -340,9 +396,9 @@ export function HabitList() {
             >
               <div
                 className="sticky left-0 z-10 bg-panel shrink-0 border-r border-line flex items-center min-w-0 group relative"
-                style={{ width: nameW }}
+                style={{ width: nameEff }}
               >
-                {filtered ? <span className="w-2 shrink-0" /> : <span
+                {filtered || (week && width < 500) ? <span className="w-2 shrink-0" /> : <span
                   onPointerDown={(e) => startReorder(e, habit.id)}
                   className={`cursor-grab active:cursor-grabbing px-1 flex items-center text-ink-soft/50 hover:text-ink-soft ${
                     iconOnly ? 'absolute left-0 top-0 h-full z-10 opacity-40 hover:opacity-100' : 'self-stretch'
@@ -388,6 +444,7 @@ export function HabitList() {
                 <DayCell
                   key={d}
                   habit={habit}
+                  w={cell}
                   date={d}
                   isFuture={d > t}
                   isToday={d === t}
@@ -466,9 +523,10 @@ const SkipGlyph = ({ size = 15 }: { size?: number }) => (
 );
 
 function DayCell({
-  habit, date, entry, isFuture, isToday, onToggle, onSetValue, onMenu,
+  habit, w, date, entry, isFuture, isToday, onToggle, onSetValue, onMenu,
 }: {
   habit: Habit;
+  w: number;
   date: string;
   entry: Entry | undefined;
   isFuture: boolean;
@@ -511,7 +569,7 @@ function DayCell({
 
   if (!scheduled) {
     return (
-      <div style={{ width: CELL }} className={`grid place-items-center shrink-0 ${todayBg}`}>
+      <div style={{ width: w }} className={`grid place-items-center shrink-0 ${todayBg}`}>
         <span className="w-1 h-1 rounded-full bg-forest-700" />
       </div>
     );
@@ -527,7 +585,7 @@ function DayCell({
         onClick={() => { haptic(slipped ? 8 : [10, 30, 10]); onToggle(); }}
         {...pressHandlers}
         disabled={isFuture}
-        style={{ width: CELL }}
+        style={{ width: w }}
         className={`cell-btn relative grid place-items-center shrink-0 h-full ${todayBg} ${isFuture ? 'opacity-25 cursor-default' : 'hover:bg-forest-850/60'}`}
         aria-label={`${habit.name}, ${date}: ${skipped ? 'skipped' : slipped ? 'slipped' : clean ? 'clean' : 'not tracked'}`}
         data-tip={skipped ? 'Skipped — streak preserved' : slipped ? 'Slipped — tap to undo' : clean ? 'Clean — tap if you slipped' : undefined}
@@ -559,7 +617,7 @@ function DayCell({
         onClick={() => { haptic(8); onToggle(); }}
         {...pressHandlers}
         disabled={isFuture}
-        style={{ width: CELL }}
+        style={{ width: w }}
         className={`cell-btn relative grid place-items-center shrink-0 h-full ${todayBg} ${isFuture ? 'opacity-25 cursor-default' : 'hover:bg-forest-850/60'}`}
         aria-label={`${habit.name}, ${date}: ${skipped ? 'skipped' : done ? 'done' : 'not done'}`}
         data-tip={skipped ? 'Skipped — streak preserved' : undefined}
@@ -582,6 +640,7 @@ function DayCell({
   if (editing) {
     return (
       <NumericEditor
+        w={w}
         initial={skipped ? undefined : value}
         onCommit={(v) => { setEditing(false); onSetValue(v); }}
         onCancel={() => setEditing(false)}
@@ -595,7 +654,7 @@ function DayCell({
       onClick={() => !isFuture && setEditing(true)}
       {...pressHandlers}
       disabled={isFuture}
-      style={{ width: CELL }}
+      style={{ width: w }}
       className={`cell-btn relative shrink-0 h-full flex flex-col items-center justify-center leading-none ${todayBg} ${isFuture ? 'opacity-25 cursor-default' : 'hover:bg-forest-850/60'}`}
       aria-label={`${habit.name}, ${date}: ${skipped ? 'skipped' : value ?? 'no entry'}${habit.unit ? ` ${habit.unit}` : ''}`}
       data-tip={skipped ? 'Skipped — streak preserved' : undefined}
@@ -683,8 +742,9 @@ function CellMenu({ habit, date, x, y, entry, onClose }: {
 }
 
 function NumericEditor({
-  initial, onCommit, onCancel,
+  w, initial, onCommit, onCancel,
 }: {
+  w: number;
   initial: number | undefined;
   onCommit: (v: number | null) => void;
   onCancel: () => void;
@@ -699,7 +759,7 @@ function NumericEditor({
     onCommit(v);
   };
   return (
-    <div style={{ width: CELL }} className="shrink-0 h-full p-1">
+    <div style={{ width: w }} className="shrink-0 h-full p-1">
       <input
         ref={ref} autoFocus type="number" step="any" inputMode="decimal" value={draft}
         onChange={(e) => setDraft(e.target.value)}

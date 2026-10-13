@@ -63,6 +63,9 @@ interface AppState {
   categoryFilter: string; // '' = all categories (Today + grid)
   feedback: FeedbackPrefs;
   setFeedback(p: Partial<FeedbackPrefs>): void;
+  /** Phone navigation: which part of the app the bottom tab bar shows. Wider screens show everything. */
+  view: AppView;
+  setView(v: AppView): void;
   setCategoryFilter(c: string): void;
 
   shiftGridMonth(delta: number): Promise<void>;
@@ -131,6 +134,8 @@ function syncTimezone(user: User | null) {
 
 const MILESTONES = new Set([7, 30, 100, 365]);
 const CATEGORY_KEY = 'openhabit.category';
+const VIEW_KEY = 'openhabit.view';
+export type AppView = 'today' | 'habits' | 'stats';
 
 /** Habits in the selected category (all of them when the filter is empty or stale). */
 export function visibleHabits(habits: Habit[], filter: string): Habit[] {
@@ -251,6 +256,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
   gridYear: new Date().getFullYear(),
   gridMonth: new Date().getMonth() + 1,
+  view: (() => {
+    try { const v = localStorage.getItem(VIEW_KEY); return v === 'habits' || v === 'stats' ? v : 'today'; } catch { return 'today'; }
+  })() as AppView,
+  setView(v) {
+    try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ }
+    set({ view: v });
+    window.scrollTo({ top: 0 });
+  },
   feedback: loadPrefs(),
   setFeedback(p) {
     const next = { ...get().feedback, ...p };
