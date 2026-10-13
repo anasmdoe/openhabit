@@ -442,6 +442,14 @@ retention or tagging, see the sandbox block in `terraform.tfvars.example`
 
 ## API quick reference
 
+The complete, machine-readable description is the **OpenAPI 3.1** document at
+[`frontend/public/openapi.yaml`](frontend/public/openapi.yaml), also served by a
+running instance at `/openapi.yaml`. Paste it into Swagger Editor, Postman or
+Insomnia, or feed it to a client generator. CI fails if it drifts from the
+routes the services register (`scripts/check-openapi.js`) or stops being a
+valid OpenAPI document.
+
+
 ```
 POST   /api/auth/register              {email, password, name?} -> {token, user}
 POST   /api/auth/login                 {email, password} -> {token, user}

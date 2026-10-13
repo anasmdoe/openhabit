@@ -1,0 +1,1139 @@
+openapi: 3.1.0
+info:
+  title: OpenHabit API
+  version: 1.0.0
+  summary: REST API of the self-hosted OpenHabit habit tracker.
+  description: |
+    Every route is served under `/api` by the gateway (nginx, the Kubernetes ingress, or API Gateway on AWS),
+    for example `GET /api/habits`.
+
+    **Authentication.** Send `Authorization: Bearer <token>`. The token is either a session token from
+    `/auth/login` (or `/auth/register`) or a long-lived **personal API token** created under
+    `/auth/tokens`. Personal tokens can read everything and log data, but cannot manage the account
+    (password, deletion, tokens, push devices): those routes answer `403` for them.
+
+    **Conventions.** Dates are `YYYY-MM-DD`. Weekdays are `0` (Sunday) to `6` (Saturday). An entry with
+    `value: -1` is a *skip* (the day is excused: streak kept, removed from goals). For a quit habit
+    (`kind: quit`) an entry with `value >= 1` records a slip. Errors are `{"error": "message"}`
+    (habit validation returns `{"errors": [...]}`).
+
+    This file is served by the app at `/openapi.yaml` and checked against the services' routes in CI.
+  license:
+    name: AGPL-3.0-or-later
+    identifier: AGPL-3.0-or-later
+servers:
+  - url: /api
+tags:
+  - name: Auth
+    description: Accounts, sessions, personal API tokens and Web Push devices.
+  - name: Habits
+    description: Habit definitions.
+  - name: Tracking
+    description: Entries (check-ins) and mood/sleep.
+  - name: Analytics
+    description: 'Computed stats: overviews, streaks, insights.'
+  - name: Groups
+    description: 'Collaboration: groups, invites, sharing, reactions.'
+  - name: Reminders
+    description: Links behind reminder notification buttons.
+security:
+  - bearerAuth: []
+paths:
+  /auth/config:
+    get:
+      operationId: getAuthConfig
+      tags: [Auth]
+      summary: Which sign-in methods this server offers
+      security: []
+      responses:
+        '200':
+          description: Registration and SSO availability.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  registration: { type: boolean }
+                  oidc:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+                      name: { type: string, description: 'Provider name, present when enabled.' }
+  /auth/register:
+    post:
+      operationId: register
+      tags: [Auth]
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                name: { type: string }
+      responses:
+        '201': { $ref: '#/components/responses/Session' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { description: 'Registration is disabled (`ALLOW_REGISTRATION=false`).', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'An account with this email already exists.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Auth]
+      summary: Sign in with email and password
+      security: []
+      description: Rate limited (10 attempts per 15 minutes per client).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/oidc/login:
+    get:
+      operationId: startSso
+      tags: [Auth]
+      summary: Start single sign-on (browser redirect)
+      security: []
+      responses:
+        '302': { description: 'Redirect to the identity provider.' }
+        '404': { description: 'SSO is not configured.' }
+  /auth/oidc/callback:
+    get:
+      operationId: ssoCallback
+      tags: [Auth]
+      summary: Single sign-on callback (browser redirect)
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        '302': { description: 'Redirect back to the app, signed in.' }
+        '404': { description: 'SSO is not configured.' }
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [Auth]
+      summary: The signed-in user
+      responses:
+        '200':
+          description: The user.
+          content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        '401': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: updateMe
+      tags: [Auth]
+      summary: Update the profile, or change the password
+      description: Send profile fields, or `currentPassword` and `newPassword`. Session tokens only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                ntfyUrl: { type: string, description: 'ntfy topic URL, http(s), or empty to turn off.' }
+                timezone: { type: string, example: Asia/Kolkata }
+                quietStart: { type: string, example: '22:00', description: 'HH:MM; send with quietEnd, or both empty.' }
+                quietEnd: { type: string, example: '07:00' }
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: The updated user.
+          content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteMe
+      tags: [Auth]
+      summary: Delete the account and all its data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        '204': { description: 'Deleted.' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /auth/tokens:
+    get:
+      operationId: listTokens
+      tags: [Auth]
+      summary: List personal API tokens
+      responses:
+        '200':
+          description: Tokens (the secret is never shown again).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiToken' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createToken
+      tags: [Auth]
+      summary: Create a personal API token
+      description: The token is returned once. Session tokens only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 60, example: Shortcuts on my phone }
+      responses:
+        '201':
+          description: The new token, including its secret.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiToken'
+                  - type: object
+                    properties:
+                      token: { type: string, description: 'Use as `Authorization: Bearer <token>`.' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/tokens/{id}:
+    delete:
+      operationId: revokeToken
+      tags: [Auth]
+      summary: Revoke a personal API token
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '204': { description: 'Revoked.' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /auth/push/key:
+    get:
+      operationId: getPushKey
+      tags: [Auth]
+      summary: Web Push public key (VAPID)
+      responses:
+        '200':
+          description: '`publicKey` is null when Web Push is not configured.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicKey: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/push/subscriptions:
+    post:
+      operationId: addPushDevice
+      tags: [Auth]
+      summary: Register this browser for Web Push reminders
+      description: Body is a browser `PushSubscription` (JSON). Up to 10 devices per user; the endpoint must be on the push-service allowlist (`PUSH_ENDPOINT_HOSTS`). Session tokens only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, keys]
+              properties:
+                endpoint: { type: string, format: uri }
+                keys:
+                  type: object
+                  required: [p256dh, auth]
+                  properties:
+                    p256dh: { type: string, description: 'Base64url, 65 bytes.' }
+                    auth: { type: string, description: 'Base64url, 16 bytes.' }
+      responses:
+        '201':
+          description: Registered (an existing endpoint is updated).
+          content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { description: 'Web Push is not configured on this server.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: removePushDevice
+      tags: [Auth]
+      summary: Remove a Web Push device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint: { type: string, format: uri }
+      responses:
+        '204': { description: 'Removed.' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /habits:
+    get:
+      operationId: listHabits
+      tags: [Habits]
+      summary: List habits
+      parameters:
+        - name: archived
+          in: query
+          description: '`true` includes archived habits.'
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Habits in display order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Habit' }
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createHabit
+      tags: [Habits]
+      summary: Create a habit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HabitInput' }
+      responses:
+        '201':
+          description: The new habit.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Habit' } } }
+        '400': { $ref: '#/components/responses/ValidationErrors' }
+  /habits/reorder:
+    put:
+      operationId: reorderHabits
+      tags: [Habits]
+      summary: Set the display order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid }, description: 'Habit ids in the desired order.' }
+      responses:
+        '200': { description: 'Reordered.', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /habits/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      operationId: getHabit
+      tags: [Habits]
+      summary: Get a habit
+      responses:
+        '200':
+          description: The habit.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Habit' } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: updateHabit
+      tags: [Habits]
+      summary: Update a habit (partial)
+      description: 'Also used to archive (`archived: true`).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/HabitInput' }
+                - type: object
+                  properties:
+                    archived: { type: boolean }
+                    position: { type: integer }
+      responses:
+        '200':
+          description: The updated habit.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Habit' } } }
+        '400': { $ref: '#/components/responses/ValidationErrors' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteHabit
+      tags: [Habits]
+      summary: Delete a habit and its entries
+      responses:
+        '204': { description: 'Deleted.' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /entries:
+    get:
+      operationId: listEntries
+      tags: [Tracking]
+      summary: List entries in a date range
+      parameters:
+        - { name: from, in: query, required: true, schema: { $ref: '#/components/schemas/Date' } }
+        - { name: to, in: query, required: true, schema: { $ref: '#/components/schemas/Date' } }
+        - { name: habitId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Entries ordered by date.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Entry' }
+        '400': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putEntry
+      tags: [Tracking]
+      summary: Log (create or replace) an entry
+      description: |
+        Yes/no habits use `value: 1`; measurable habits use the amount; `-1` skips the day;
+        for quit habits `1` records a slip. Fires the habit's completion webhook when the entry completes it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [habitId, date, value]
+              properties:
+                habitId: { type: string, format: uuid }
+                date: { $ref: '#/components/schemas/Date' }
+                value: { type: number }
+                notes: { type: string }
+      responses:
+        '200':
+          description: The stored entry.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Entry' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /entries/{habitId}/{date}:
+    delete:
+      operationId: deleteEntry
+      tags: [Tracking]
+      summary: Clear an entry
+      parameters:
+        - { name: habitId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: date, in: path, required: true, schema: { $ref: '#/components/schemas/Date' } }
+      responses:
+        '204': { description: 'Cleared.' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /entries/bulk:
+    post:
+      operationId: bulkPutEntries
+      tags: [Tracking]
+      summary: Upsert many entries at once
+      description: Used for imports and for pausing habits. Invalid rows and habits that are not yours are skipped.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  items: { $ref: '#/components/schemas/Entry' }
+      responses:
+        '200':
+          description: Number of entries stored.
+          content: { application/json: { schema: { type: object, properties: { imported: { type: integer } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /entries/done/{token}:
+    post:
+      operationId: markDoneFromNotification
+      tags: [Reminders]
+      summary: The Done button of a reminder notification
+      description: |
+        Marks a yes/no habit done for the day named in the signed link, which is the only authorisation
+        (no `Authorization` header). Links are bound to this action and expire after 24 hours.
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'Habit marked done.', content: { text/plain: { schema: { type: string } } } }
+        '403': { description: 'Invalid or expired link.', content: { text/plain: { schema: { type: string } } } }
+        '404': { description: 'Habit not found (or not a yes/no habit).', content: { text/plain: { schema: { type: string } } } }
+  /wellness:
+    get:
+      operationId: listWellness
+      tags: [Tracking]
+      summary: Mood and sleep for a date range
+      parameters:
+        - { name: from, in: query, required: true, schema: { $ref: '#/components/schemas/Date' } }
+        - { name: to, in: query, required: true, schema: { $ref: '#/components/schemas/Date' } }
+      responses:
+        '200':
+          description: Wellness days.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WellnessDay' }
+        '400': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putWellness
+      tags: [Tracking]
+      summary: Save mood and/or sleep for a day
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date]
+              properties:
+                date: { $ref: '#/components/schemas/Date' }
+                mood: { type: [integer, 'null'], minimum: 1, maximum: 5 }
+                sleepHours: { type: [number, 'null'], minimum: 0, maximum: 24 }
+      responses:
+        '200':
+          description: The stored day.
+          content: { application/json: { schema: { $ref: '#/components/schemas/WellnessDay' } } }
+        '400': { $ref: '#/components/responses/Error' }
+
+  /analytics/overview:
+    get:
+      operationId: getOverview
+      tags: [Analytics]
+      summary: Month overview for the dashboard
+      parameters:
+        - { name: year, in: query, schema: { type: integer }, description: 'Defaults to the current year.' }
+        - { name: month, in: query, schema: { type: integer, minimum: 1, maximum: 12 }, description: 'Defaults to the current month.' }
+      responses:
+        '200':
+          description: Goals, completion per day/week/habit, and wellness for the month.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Overview' } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /analytics/habits/{id}:
+    get:
+      operationId: getHabitDetail
+      tags: [Analytics]
+      summary: One habit's streaks, score and history
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: Streaks, strength score series, weekday frequency, monthly history.
+          content: { application/json: { schema: { $ref: '#/components/schemas/HabitDetail' } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /analytics/insights:
+    get:
+      operationId: getInsights
+      tags: [Analytics]
+      summary: Mood and sleep correlations
+      parameters:
+        - { name: days, in: query, schema: { type: integer, minimum: 14, maximum: 365, default: 90 }, description: 'Days to look back.' }
+      responses:
+        '200':
+          description: How mood and sleep line up with completions.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Insights' } } }
+        '401': { $ref: '#/components/responses/Error' }
+  /analytics/groups/{id}:
+    get:
+      operationId: getGroupDashboard
+      tags: [Groups]
+      summary: Group dashboard (members' shared progress, leaderboard, milestones)
+      description: Shows only what members chose to share. Members only.
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: The dashboard.
+          content: { application/json: { schema: { $ref: '#/components/schemas/GroupDashboard' } } }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /groups:
+    get:
+      operationId: listGroups
+      tags: [Groups]
+      summary: My groups
+      responses:
+        '200':
+          description: Groups I belong to.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createGroup
+      tags: [Groups]
+      summary: Create a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                icon: { type: string }
+      responses:
+        '201':
+          description: The group, with an invite code.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /groups/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    put:
+      operationId: updateGroup
+      tags: [Groups]
+      summary: Rename a group or change its icon (owner)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                icon: { type: string }
+      responses:
+        '200':
+          description: The updated group.
+          content: { application/json: { schema: { type: object } } }
+        '403': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteGroup
+      tags: [Groups]
+      summary: Delete a group (owner)
+      responses:
+        '204': { description: 'Deleted.' }
+        '403': { $ref: '#/components/responses/Error' }
+  /groups/{id}/members:
+    get:
+      operationId: listGroupMembers
+      tags: [Groups]
+      summary: Members of a group
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: Members.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupMember' }
+        '403': { $ref: '#/components/responses/Error' }
+  /groups/{id}/leave:
+    post:
+      operationId: leaveGroup
+      tags: [Groups]
+      summary: Leave a group
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '204': { description: 'Left.' }
+        '403': { $ref: '#/components/responses/Error' }
+  /groups/{id}/invites:
+    post:
+      operationId: inviteToGroup
+      tags: [Groups]
+      summary: Invite someone by email
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '201':
+          description: The invite.
+          content: { application/json: { schema: { type: object } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /groups/{id}/shares:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      operationId: getGroupShares
+      tags: [Groups]
+      summary: Which of my habits this group can see
+      responses:
+        '200':
+          description: Habit ids I share with the group.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string, format: uuid }
+        '403': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: setGroupShares
+      tags: [Groups]
+      summary: Choose which of my habits this group can see
+      description: Sharing is per habit and opt-in. Only streak, month % and a 7-day strip are visible to others, never notes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [habitIds]
+              properties:
+                habitIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The shared habit ids.
+          content: { application/json: { schema: { type: object, properties: { habitIds: { type: array, items: { type: string, format: uuid } } } } } }
+        '403': { $ref: '#/components/responses/Error' }
+  /groups/{id}/habits:
+    post:
+      operationId: createGroupHabit
+      tags: [Groups]
+      summary: Create a group habit (a shared streak)
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                question: { type: string, maxLength: 200 }
+                icon: { type: string }
+                color: { type: string, example: '#7FD1AE' }
+      responses:
+        '201':
+          description: The group habit.
+          content: { application/json: { schema: { type: object } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /groups/{id}/habits/{hid}:
+    delete:
+      operationId: deleteGroupHabit
+      tags: [Groups]
+      summary: Delete a group habit
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: hid, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Deleted.' }
+        '403': { $ref: '#/components/responses/Error' }
+  /groups/{id}/habits/{hid}/my-entry:
+    put:
+      operationId: putGroupHabitEntry
+      tags: [Groups]
+      summary: Check in (or skip) a group habit for a day
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: hid, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, value]
+              properties:
+                date: { $ref: '#/components/schemas/Date' }
+                value: { type: [integer, 'null'], enum: [1, -1, null], description: '1 = done, -1 = skip, null = clear.' }
+      responses:
+        '200':
+          description: The stored check-in.
+          content: { application/json: { schema: { type: object, properties: { date: { $ref: '#/components/schemas/Date' }, value: { type: number } } } } }
+        '204': { description: 'Cleared (`value: null`).' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /groups/{id}/reactions:
+    post:
+      operationId: reactToHabit
+      tags: [Groups]
+      summary: Cheer a member's habit
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [toUser, habitId, emoji]
+              properties:
+                toUser: { type: string, format: uuid }
+                habitId: { type: string, format: uuid }
+                emoji: { type: string, enum: ['🔥', '👏', '💪', '🎉'] }
+      responses:
+        '201': { description: 'Sent.', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /reactions:
+    get:
+      operationId: listReactions
+      tags: [Groups]
+      summary: Reactions I received (latest 30)
+      responses:
+        '200':
+          description: Reactions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Reaction' }
+        '401': { $ref: '#/components/responses/Error' }
+  /invites:
+    get:
+      operationId: listInvites
+      tags: [Groups]
+      summary: My pending group invites
+      responses:
+        '200':
+          description: Invites sent to my email.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupInvite' }
+        '401': { $ref: '#/components/responses/Error' }
+  /invites/{id}/{action}:
+    post:
+      operationId: answerInvite
+      tags: [Groups]
+      summary: Accept or decline an invite
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [accept, decline] } }
+      responses:
+        '201': { description: 'Accepted.', content: { application/json: { schema: { type: object, properties: { groupId: { type: string, format: uuid } } } } } }
+        '204': { description: 'Declined.' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /join:
+    post:
+      operationId: joinGroup
+      tags: [Groups]
+      summary: Join a group with its invite code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '201': { description: 'Joined.', content: { application/json: { schema: { type: object, properties: { groupId: { type: string, format: uuid } } } } } }
+        '200': { description: 'Already a member.', content: { application/json: { schema: { type: object, properties: { groupId: { type: string, format: uuid } } } } } }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /reminders/snooze/{token}:
+    post:
+      operationId: snoozeFromNotification
+      tags: [Reminders]
+      summary: The Snooze button of a reminder notification
+      description: |
+        Snoozes the reminder you just received. The signed link is the only authorisation (no `Authorization`
+        header); links are bound to this action and expire after 24 hours. A snoozed reminder is re-sent only
+        if the habit still isn't logged, and waits out quiet hours.
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'Snoozed.', content: { text/plain: { schema: { type: string } } } }
+        '403': { description: 'Invalid or expired link.', content: { text/plain: { schema: { type: string } } } }
+        '404': { description: 'Nothing to snooze.', content: { text/plain: { schema: { type: string } } } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Session token from `/auth/login`, or a personal API token from `/auth/tokens`.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationErrors:
+      description: Invalid input.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              errors: { type: array, items: { type: string } }
+    Session:
+      description: A session token and the user.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              token: { type: string }
+              user: { $ref: '#/components/schemas/User' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    Date:
+      type: string
+      format: date
+      example: '2026-10-13'
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        ntfyUrl: { type: string }
+        timezone: { type: string }
+        quietStart: { type: string }
+        quietEnd: { type: string }
+        createdAt: { type: string, format: date-time }
+    ApiToken:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string, description: 'First characters, to recognise the token.' }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: [string, 'null'], format: date-time }
+    HabitInput:
+      type: object
+      properties:
+        name: { type: string, description: 'Required when creating.' }
+        question: { type: string }
+        type: { type: string, enum: [boolean, numeric], default: boolean }
+        unit: { type: string }
+        target: { type: number, exclusiveMinimum: 0, default: 1 }
+        targetType: { type: string, enum: [at_least, at_most], default: at_least }
+        color: { type: string, pattern: '^#[0-9a-fA-F]{6}$', default: '#7FD1AE' }
+        icon: { type: string, maxLength: 32, pattern: '^[a-z0-9-]*$' }
+        scheduleType: { type: string, enum: [weekdays, per_week], default: weekdays }
+        frequency: { type: integer, minimum: 1, maximum: 7, description: 'Times per week when `scheduleType` is `per_week`.' }
+        activeDays: { type: array, minItems: 1, items: { type: integer, minimum: 0, maximum: 6 } }
+        webhookUrl: { type: string, maxLength: 500, description: 'POSTed when the habit is completed (http/https or empty).' }
+        reminderTime:
+          type: string
+          example: '08:00,20:00'
+          description: Up to 3 distinct local `HH:MM` times, comma-separated. Empty turns reminders off. Needs an ntfy topic or a Web Push device.
+        cue: { type: string, maxLength: 120, description: 'When/where cue shown with the habit and in its reminder.' }
+        category: { type: string, maxLength: 40 }
+        kind:
+          type: string
+          enum: [build, quit]
+          default: build
+          description: A `quit` habit must be yes/no and scheduled by weekday; entries record slips and days without one count as done.
+    Habit:
+      allOf:
+        - $ref: '#/components/schemas/HabitInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            position: { type: integer }
+            archived: { type: boolean }
+            createdAt: { type: string, format: date-time }
+    Entry:
+      type: object
+      required: [habitId, date, value]
+      properties:
+        habitId: { type: string, format: uuid }
+        date: { $ref: '#/components/schemas/Date' }
+        value: { type: number, description: '-1 = skipped.' }
+        notes: { type: string }
+    WellnessDay:
+      type: object
+      properties:
+        date: { $ref: '#/components/schemas/Date' }
+        mood: { type: [integer, 'null'] }
+        sleepHours: { type: [number, 'null'] }
+    Overview:
+      type: object
+      properties:
+        year: { type: integer }
+        month: { type: integer }
+        start: { $ref: '#/components/schemas/Date' }
+        end: { $ref: '#/components/schemas/Date' }
+        daysInMonth: { type: integer }
+        goal: { type: integer }
+        completed: { type: integer }
+        left: { type: integer }
+        overallPct: { type: integer }
+        days:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { $ref: '#/components/schemas/Date' }
+              dow: { type: integer }
+              scheduled: { type: integer }
+              completed: { type: integer }
+              pct: { type: [integer, 'null'] }
+              isFuture: { type: boolean }
+        weeks:
+          type: array
+          items: { type: object, properties: { week: { type: integer }, pct: { type: integer } } }
+        habits:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              color: { type: string }
+              icon: { type: string }
+              type: { type: string }
+              unit: { type: string }
+              target: { type: number }
+              activeDays: { type: array, items: { type: integer } }
+              goal: { type: integer }
+              actual: { type: integer }
+              left: { type: integer }
+              sum: { type: number }
+              pct: { type: integer }
+        topHabits:
+          type: array
+          items: { type: object, properties: { id: { type: string }, name: { type: string }, color: { type: string }, pct: { type: integer } } }
+        wellness:
+          type: array
+          items: { $ref: '#/components/schemas/WellnessDay' }
+    HabitDetail:
+      type: object
+      properties:
+        habit: { $ref: '#/components/schemas/Habit' }
+        streakUnit: { type: string, enum: [days, weeks] }
+        currentStreak: { type: integer }
+        bestStreaks:
+          type: array
+          items:
+            type: object
+            properties:
+              start: { type: string }
+              end: { type: string }
+              length: { type: integer }
+        weekdayFrequency:
+          type: array
+          items: { type: object, properties: { dow: { type: integer }, pct: { type: integer } } }
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              month: { type: string, example: 2026-10 }
+              completions: { type: integer, description: 'Slips for quit habits.' }
+              sum: { type: number }
+        scoreSeries:
+          type: array
+          items: { type: object, properties: { date: { type: string }, score: { type: number } } }
+        entries:
+          type: array
+          items: { type: object, properties: { date: { type: string }, value: { type: number } } }
+    Insights:
+      type: object
+      properties:
+        span: { type: integer }
+        moodImpact:
+          type: array
+          items:
+            type: object
+            properties:
+              habitId: { type: string }
+              name: { type: string }
+              color: { type: string }
+              icon: { type: string }
+              avgMoodDone: { type: number }
+              avgMoodMissed: { type: number }
+              diff: { type: number }
+              nDone: { type: integer }
+              nMissed: { type: integer }
+        sleepCompletion:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              days: { type: integer }
+              pct: { type: [integer, 'null'] }
+    Group:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        icon: { type: string }
+        inviteCode: { type: string }
+        ownerId: { type: string, format: uuid }
+        role: { type: string, enum: [owner, member] }
+        memberCount: { type: integer }
+    GroupMember:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [owner, member] }
+        joinedAt: { type: string, format: date-time }
+    GroupInvite:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        groupId: { type: string, format: uuid }
+        groupName: { type: string }
+        groupIcon: { type: string }
+        inviterName: { type: string }
+        createdAt: { type: string, format: date-time }
+    Reaction:
+      type: object
+      properties:
+        emoji: { type: string }
+        createdAt: { type: string, format: date-time }
+        fromName: { type: string }
+        habitName: { type: string }
+        groupName: { type: string }
+    GroupDashboard:
+      type: object
+      description: Members' shared progress, a leaderboard, recent streak milestones and shared group habits.
+      properties:
+        groupId: { type: string, format: uuid }
+        month: { type: string }
+        members: { type: array, items: { type: object } }
+        leaderboard:
+          type: array
+          items: { type: object, properties: { userId: { type: string }, name: { type: string }, monthPct: { type: integer } } }
+        milestones: { type: array, items: { type: object } }
+        sharedHabits: { type: array, items: { type: object } }

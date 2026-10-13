@@ -30,6 +30,18 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  api-docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: openapi.yaml documents exactly the routes the services register
+        run: node scripts/check-openapi.js
+      - name: openapi.yaml is a valid OpenAPI document
+        run: npx --yes @redocly/cli@1.25.11 lint frontend/public/openapi.yaml --max-problems=20
+
   services:
     runs-on: ubuntu-24.04
     strategy:
