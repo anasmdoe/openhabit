@@ -11,7 +11,7 @@ afterEach(() => vi.useRealTimers());
 const habit = (over: Partial<Habit> = {}): Habit => ({
   id: 'h1', name: 'Test', question: '', type: 'boolean', unit: '', target: 1, targetType: 'at_least',
   color: '#000', icon: '', scheduleType: 'weekdays', frequency: 3, webhookUrl: '', reminderTime: '',
-  activeDays: [0, 1, 2, 3, 4, 5, 6], position: 0, archived: false, category: '', cue: '', kind: 'build',
+  activeDays: [0, 1, 2, 3, 4, 5, 6], position: 0, archived: false, category: '', cue: '', savingsPerDay: 0, savingsUnit: '', kind: 'build',
   createdAt: '2026-01-01T00:00:00Z', ...over,
 });
 const done = (h: Habit, ...offsets: number[]) => offsets.map((n) => ({ habitId: h.id, date: addDays(TODAY, -n), value: 1 }));

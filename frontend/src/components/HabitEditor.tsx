@@ -40,6 +40,8 @@ export function HabitEditor() {
   // up to 3 reminder times a day ('' = off); stored comma-separated
   const [times, setTimes] = useState<string[]>(existing?.reminderTime ? existing.reminderTime.split(',') : []);
   const [cue, setCue] = useState(existing?.cue ?? '');
+  const [savings, setSavings] = useState(existing?.savingsPerDay ? String(existing.savingsPerDay) : '');
+  const [savingsUnit, setSavingsUnit] = useState(existing?.savingsUnit ?? '');
   const reminderTime = [...new Set(times.filter(Boolean))].sort().join(',');
   const [kind, setKind] = useState<HabitKind>(existing?.kind ?? 'build');
   const [category, setCategory] = useState(existing?.category ?? '');
@@ -80,6 +82,8 @@ export function HabitEditor() {
         webhookUrl: quit ? '' : webhookUrl.trim(),
         reminderTime: quit ? '' : reminderTime,
         cue: cue.trim(),
+        savingsPerDay: quit && parseFloat(savings) > 0 ? parseFloat(savings) : 0,
+        savingsUnit: quit && parseFloat(savings) > 0 ? savingsUnit.trim() : '',
         category: category.trim(),
         kind,
       },
@@ -159,6 +163,17 @@ export function HabitEditor() {
               className="input"
             />
           </Field>
+
+          {quit && (
+            <Field label="What a clean day is worth" hint="optional — shows a running total in the habit window">
+              <div className="grid grid-cols-[1fr_6rem] gap-2">
+                <input type="number" min="0" step="any" inputMode="decimal" value={savings} onChange={(e) => setSavings(e.target.value)}
+                  placeholder="4" className="input num" aria-label="Value of a clean day" />
+                <input value={savingsUnit} onChange={(e) => setSavingsUnit(e.target.value)} maxLength={12}
+                  placeholder="$ or min" className="input" aria-label="Unit of a clean day's value" />
+              </div>
+            </Field>
+          )}
 
           <Field label="Category" hint="optional — groups habits, e.g. Health, Work">
             <input

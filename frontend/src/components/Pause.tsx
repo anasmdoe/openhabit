@@ -10,7 +10,7 @@ const MAX_DAYS = 60;
 // as skipped (excused), so goals shrink and streaks survive. Undo any single
 // day by tapping it in the grid.
 export function PauseModal() {
-  const { pauseOpen, setPauseOpen, habits, pauseHabits } = useApp();
+  const { pauseOpen, setPauseOpen, habits, pauseHabits, pausePreset } = useApp();
   const t = today();
   const [from, setFrom] = useState(t);
   const [to, setTo] = useState(addDays(t, 6));
@@ -18,6 +18,8 @@ export function PauseModal() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
 
+  // opened from one habit's window: start with just that habit ticked
+  React.useEffect(() => { if (pauseOpen) setPicked(pausePreset ? new Set(pausePreset) : null); }, [pauseOpen, pausePreset]);
   useModalOpen(pauseOpen, () => { setPauseOpen(false); setDone(null); setPicked(null); });
   if (!pauseOpen) return null;
 

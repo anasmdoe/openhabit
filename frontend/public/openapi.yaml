@@ -954,6 +954,8 @@ components:
           description: Up to 3 distinct local `HH:MM` times, comma-separated. Empty turns reminders off. Needs an ntfy topic or a Web Push device.
         cue: { type: string, maxLength: 120, description: 'When/where cue shown with the habit and in its reminder.' }
         category: { type: string, maxLength: 40 }
+        savingsPerDay: { type: number, minimum: 0, description: 'Quit habits: what a clean day is worth (e.g. 4), shown as a running total.' }
+        savingsUnit: { type: string, maxLength: 12, description: 'Unit of savingsPerDay, e.g. "$", "min" or "cigarettes".' }
         kind:
           type: string
           enum: [build, quit]

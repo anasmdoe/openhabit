@@ -88,7 +88,9 @@ interface AppState {
   openArchived(): Promise<void>;
   closeArchived(): void;
   pauseOpen: boolean;
-  setPauseOpen(open: boolean): void;
+  /** Habits ticked when the Take a break popup opens (null = all of them). */
+  pausePreset: string[] | null;
+  setPauseOpen(open: boolean, preset?: string[]): void;
   /** Vacation / sick days: skip every open day from..to for these habits. Returns days paused. */
   pauseHabits(habitIds: string[], from: string, to: string): Promise<number>;
   restoreHabit(id: string): Promise<void>;
@@ -101,6 +103,8 @@ interface AppState {
   archiveHabit(id: string): Promise<void>;
   openDetail(id: string): Promise<void>;
   closeDetail(): void;
+  /** Reload the open habit window after its entries changed from inside it. */
+  refreshDetail(): Promise<void>;
   openEditor(habit: Habit | 'new'): void;
   closeEditor(): void;
   setTheme(theme: Theme): void;
@@ -362,7 +366,8 @@ export const useApp = create<AppState>((set, get) => ({
 
   closeArchived: () => set({ archivedOpen: false }),
   pauseOpen: false,
-  setPauseOpen: (open) => set({ pauseOpen: open }),
+  pausePreset: null,
+  setPauseOpen: (open, preset) => set({ pauseOpen: open, pausePreset: open ? preset ?? null : null }),
   async pauseHabits(habitIds, from, to) {
     const { adapter, entries } = get();
     if (!adapter || from > to) return 0;
@@ -592,6 +597,12 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   closeDetail: () => set({ detailOpen: false, detail: null }),
+  async refreshDetail() {
+    const { adapter, detail } = get();
+    if (!adapter || !detail) return;
+    const fresh = await adapter.getHabitDetail(detail.habit.id);
+    if (get().detail?.habit.id === fresh.habit.id) set({ detail: fresh });
+  },
   openEditor: (habit) => set({ editorHabit: habit }),
   closeEditor: () => set({ editorHabit: null }),
 

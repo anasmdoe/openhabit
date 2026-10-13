@@ -135,6 +135,8 @@ export async function importJSON(adapter: DataAdapter, file: File): Promise<Impo
       activeDays: h.activeDays,
       category: h.category ?? '',
       cue: h.cue ?? '',
+      savingsPerDay: h.savingsPerDay ?? 0,
+      savingsUnit: h.savingsUnit ?? '',
       kind: h.kind === 'quit' ? 'quit' : 'build',
     });
     idMap.set(h.id, fresh.id);

@@ -320,3 +320,10 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ============================================================
+-- Quit habits can value a clean day (e.g. 4 "$" or 20 "min"), so the habit
+-- window can show what staying clean has saved.
+-- ============================================================
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS savings_per_day NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS savings_unit    TEXT    NOT NULL DEFAULT '';

@@ -22,6 +22,8 @@ export interface Habit {
   archived: boolean;
   category: string; // '' = none
   cue: string; // when/where: "After my morning coffee, at my desk"
+  savingsPerDay: number; // quit habits: what a clean day is worth (0 = not tracked)
+  savingsUnit: string;   // ...in this unit ("$", "min", "cigarettes")
   kind: HabitKind;
   createdAt: string;
 }

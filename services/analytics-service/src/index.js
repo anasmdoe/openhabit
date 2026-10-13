@@ -396,7 +396,8 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT h.id, h.name, h.question, h.type, h.unit, h.target::float AS target, h.target_type AS "targetType",
             h.color, h.icon, h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays",
-            h.kind, h.category,
+            h.kind, h.category, h.cue, h.reminder_time AS "reminderTime",
+            h.savings_per_day::float AS "savingsPerDay", h.savings_unit AS "savingsUnit",
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
      FROM habits h
      LEFT JOIN entries e ON e.habit_id = h.id

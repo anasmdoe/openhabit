@@ -8,11 +8,16 @@ import { useModalOpen } from '../lib/modal';
 import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, todayISO, weekKey } from '../lib/stats';
 import type { HabitDetail as HabitDetailData } from '../lib/types';
 import {
-  aggregateHistory, aggregateScore, buildCalendars, targetProgress, PERIODS, type Period,
+  aggregateHistory, aggregateScore, targetProgress, PERIODS, type Period,
 } from '../lib/periods';
+import {
+  EditableCalendar, NotesPanel, NumbersPanel, QuickActions, QuitPanel, SummaryPanel, TrendPanel, useHabitEntries,
+} from './DetailPanels';
 
 export function HabitDetail() {
-  const { detailOpen, detail, closeDetail, openEditor, habits } = useApp();
+  const { detailOpen, detail, closeDetail, openEditor, habits, refreshDetail } = useApp();
+  const { entries: habitEntries, reload: reloadEntries } = useHabitEntries(detail?.habit.id ?? '');
+  const changed = async () => { await refreshDetail(); await reloadEntries(); };
   const [scorePeriod, setScorePeriod] = useState<Period>('week');
   const [histPeriod, setHistPeriod] = useState<Period>('month');
   useModalOpen(detailOpen, closeDetail);
@@ -22,7 +27,6 @@ export function HabitDetail() {
   const score = useMemo(() => (detail ? aggregateScore(detail, scorePeriod) : []), [detail, scorePeriod]);
   const hist = useMemo(() => (detail ? aggregateHistory(detail, histPeriod) : []), [detail, histPeriod]);
   const targets = useMemo(() => (detail ? targetProgress(detail) : []), [detail]);
-  const calendars = useMemo(() => (detail ? buildCalendars(detail, 3) : []), [detail]);
 
   if (!detailOpen) return null;
 
@@ -97,6 +101,10 @@ export function HabitDetail() {
               />
             </div>
 
+            {habit && <SummaryPanel habit={habit} detail={detail} entries={habitEntries} color={color} />}
+            {habit && <TrendPanel habit={habit} detail={detail} entries={habitEntries} />}
+            {habit && quit && <QuitPanel habit={habit} detail={detail} entries={habitEntries} />}
+
             {/* score */}
             <section className="panel">
               <div className="panel-head">
@@ -142,6 +150,8 @@ export function HabitDetail() {
               </section>
             )}
 
+            {habit && isNumeric && <NumbersPanel habit={habit} entries={habitEntries} color={color} />}
+
             {/* history */}
             <section className="panel">
               <div className="panel-head">
@@ -167,40 +177,10 @@ export function HabitDetail() {
               </div>
             </section>
 
-            {/* compact 3-month calendar */}
-            <section className="panel">
-              <div className="panel-head">Calendar</div>
-              <div className="px-4 pb-3 grid grid-cols-1 min-[420px]:grid-cols-3 gap-4">
-                {calendars.map((m) => (
-                  <div key={m.key}>
-                    <div className="text-[11px] font-medium text-ink-soft mb-1.5">{m.label}</div>
-                    <div className="grid grid-cols-7 gap-[3px]">
-                      {DAY_LETTERS.map((l) => (
-                        <div key={l} className="text-[8px] text-ink-soft text-center">{l[0]}</div>
-                      ))}
-                      {m.cells.map((c, i) => (
-                        <div
-                          key={i}
-                          title={c.date}
-                          className="aspect-square rounded-[3px]"
-                          style={{
-                            background: !c.inMonth ? 'transparent'
-                              : c.state === 'done' ? color
-                              : c.state === 'partial' ? `${color}55`
-                              : c.state === 'miss' ? 'rgb(var(--forest-800))'
-                              : c.state === 'future' ? 'transparent'
-                              : 'rgb(var(--forest-850))',
-                            outline: c.state === 'future' ? '1px solid rgb(var(--line))' : undefined,
-                            outlineOffset: -1,
-                            opacity: c.state === 'off' && c.inMonth ? 0.45 : 1,
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+            {habit ? (
+              <EditableCalendar habit={habit} detail={detail} entries={habitEntries} color={color} onChanged={changed} />
+            ) : null}
+            {habit && <NotesPanel entries={habitEntries} />}
 
             {/* best streaks */}
             <section className="panel">
@@ -253,6 +233,8 @@ export function HabitDetail() {
                 />
               </div>
             </section>
+
+            {habit && <QuickActions habit={habit} detail={detail} entries={habitEntries} />}
 
             {/* destructive actions live at the bottom, out of the way */}
             {habit && <DangerRow habitId={habit.id} />}
