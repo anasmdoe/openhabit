@@ -93,25 +93,25 @@ export function TopBar() {
       </div>
       <div className="flex items-center gap-1.5">
       {adapter?.mode === 'local' && (
-        <>
+        <span className="max-sm:hidden flex items-center gap-1.5">
           <span className="text-[11px] text-ink-soft px-2 py-1 rounded-lg bg-forest-850"
             data-tip="No backend — data lives in this browser">demo</span>
           <button onClick={resetDemo}
             className="text-[11px] text-ink-soft hover:text-ink px-2 py-1 rounded-lg hover:bg-forest-850"
             data-tip="Regenerate demo data">reset</button>
-        </>
+        </span>
       )}
       {habits.length > 0 && (
-        <IconBtn onClick={() => setPauseOpen(true)} label="Take a break (vacation, sick days)">
+        <span className="max-sm:hidden"><IconBtn onClick={() => setPauseOpen(true)} label="Take a break (vacation, sick days)">
           <path d="M9 7v10M15 7v10" strokeLinecap="round" />
           <circle cx="12" cy="12" r="9" />
-        </IconBtn>
+        </IconBtn></span>
       )}
-      <IconBtn onClick={openArchived} label="Archived habits">
+      <span className="max-sm:hidden"><IconBtn onClick={openArchived} label="Archived habits">
         <path d="M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" />
-      </IconBtn>
-      <AccentPicker />
-      <IconBtn onClick={nextTheme} label={`Theme: ${theme === 'forest-dark' ? 'dark' : theme === 'pitch-black' ? 'pitch black' : 'light'}`}>
+      </IconBtn></span>
+      <span className="max-sm:hidden"><AccentPicker /></span>
+      <span className="max-sm:hidden"><IconBtn onClick={nextTheme} label={`Theme: ${theme === 'forest-dark' ? 'dark' : theme === 'pitch-black' ? 'pitch black' : 'light'}`}>
         {theme === 'forest-dark' ? (
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" strokeLinejoin="round" />
         ) : theme === 'pitch-black' ? (
@@ -125,13 +125,75 @@ export function TopBar() {
             <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4l1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" strokeLinecap="round" />
           </>
         )}
-      </IconBtn>
+      </IconBtn></span>
       <IconBtn onClick={() => openEditor('new')} label="New habit">
         <path d="M12 5v14M5 12h14" strokeLinecap="round" />
       </IconBtn>
-      {adapter?.mode === 'api' && <InviteBell />}
+      {adapter?.mode === 'api' && <span className="max-sm:hidden"><InviteBell /></span>}
+      <OverflowMenu />
       {adapter?.mode === 'api' && <AccountMenu />}
       </div>
+    </div>
+  );
+}
+
+// Phones: the secondary toolbar actions live behind one ⋯ button instead of filling the top row.
+const THEME_LABEL: Record<string, string> = { 'forest-dark': 'Dark', 'pitch-black': 'Black', 'forest-light': 'Light' };
+
+function OverflowMenu() {
+  const { theme, setTheme, accent, setAccent, adapter, habits, openArchived, setPauseOpen, resetDemo } = useApp();
+  const [open, setOpen] = useState(false);
+  useModalOpen(open, () => setOpen(false), { blur: false });
+  const pick = (fn: () => void) => () => { setOpen(false); fn(); };
+  const row = 'text-left text-[13px] rounded-lg px-2.5 py-2 hover:bg-forest-850 flex items-center gap-3 w-full';
+  return (
+    <div className="relative sm:hidden">
+      <IconBtn onClick={() => setOpen((o) => !o)} label="More">
+        <circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+        <circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      </IconBtn>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-10 z-40 panel w-64 p-2 flex flex-col gap-0.5 shadow-xl" role="menu">
+            {habits.length > 0 && (
+              <button role="menuitem" className={row} onClick={pick(() => setPauseOpen(true))}>
+                <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-soft" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 7v10M15 7v10" strokeLinecap="round" /><circle cx="12" cy="12" r="9" /></svg>
+                Take a break
+              </button>
+            )}
+            <button role="menuitem" className={row} onClick={pick(() => { void openArchived(); })}>
+              <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-soft" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Archived habits
+            </button>
+            <div className="px-2.5 pt-2 pb-1 border-t border-line mt-1">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-ink-soft mb-1.5">Theme</div>
+              <div className="seg w-full" role="group" aria-label="Theme">
+                {THEME_CYCLE.map((t) => (
+                  <button key={t} onClick={() => setTheme(t)} aria-pressed={theme === t} className="flex-1">{THEME_LABEL[t] ?? t}</button>
+                ))}
+              </div>
+            </div>
+            <div className="px-2.5 pt-2 pb-1">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-ink-soft mb-1.5">Accent</div>
+              <div className="flex gap-2 flex-wrap items-center">
+                {ACCENTS.map((c) => (
+                  <button key={c} onClick={() => setAccent(c)} aria-label={`Accent ${c}`} aria-pressed={accent === c}
+                    className="w-6 h-6 rounded-full" style={{ background: c, outline: accent === c ? '2px solid rgb(var(--ink))' : 'none', outlineOffset: 2 }} />
+                ))}
+                {accent && <button onClick={() => setAccent(null)} className="text-[11px] text-ink-soft hover:text-ink">reset</button>}
+              </div>
+            </div>
+            {adapter?.mode === 'local' && (
+              <div className="px-2.5 pt-2 mt-1 border-t border-line flex items-center justify-between gap-2">
+                <span className="text-[11px] text-ink-soft">Demo: data lives in this browser</span>
+                <button onClick={pick(() => { void resetDemo(); })} className="text-[11px] font-semibold text-ink hover:text-mint">Reset</button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -519,7 +581,7 @@ export function CategoryBar() {
 // ---------------------------------------------------------------- cells
 const SkipGlyph = ({ size = 15 }: { size?: number }) => (
   <svg viewBox="0 0 20 20" width={size} height={size} aria-hidden>
-    <path d="M5 6l4 4-4 4M11 6l4 4-4 4" fill="none" stroke="rgb(var(--ink-soft))"
+    <path d="M5 6l4 4-4 4M11 6l4 4-4 4" fill="none" stroke="rgb(var(--skip))"
       strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
   </svg>
 );

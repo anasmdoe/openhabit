@@ -12,7 +12,9 @@ const ICONS: Record<AppView | 'groups', React.ReactNode> = {
 // Phone-only bottom navigation. Today, Habits and Stats switch what the page
 // shows; Groups opens the groups sheet (API mode only).
 export function TabBar({ dimmed = false }: { dimmed?: boolean }) {
-  const { view, goView, adapter } = useApp();
+  const { view, goView, adapter, invites, reactions, cheersSeenAt } = useApp();
+  // new invites and cheers show as a badge on the Groups tab (the toolbar bell is hidden on phones)
+  const updates = invites.length + reactions.filter((r) => r.createdAt > cheersSeenAt).length;
   const tabs: { id: AppView; label: string }[] = [
     { id: 'today', label: 'Today' },
     { id: 'habits', label: 'Habits' },
@@ -34,10 +36,15 @@ export function TabBar({ dimmed = false }: { dimmed?: boolean }) {
             view === t.id ? 'text-mint' : 'text-ink-soft'
           }`}
         >
+          <span className="relative">
           <svg viewBox="0 0 24 24" className="w-[22px] h-[22px]" fill="none" stroke="currentColor"
             strokeWidth={view === t.id ? 2 : 1.7}>
             {ICONS[t.id]}
           </svg>
+          {t.id === 'groups' && updates > 0 && (
+            <span className="absolute -top-1 -right-2 min-w-4 h-4 px-1 rounded-full bg-mint text-forest-950 text-[9px] font-bold grid place-items-center">{updates}</span>
+          )}
+          </span>
           {t.label}
         </button>
       ))}

@@ -19,6 +19,7 @@ import { GroupsModal } from './components/Groups';
 import { JournalModal } from './components/Journal';
 import { PauseModal } from './components/Pause';
 import { Welcome } from './components/Welcome';
+import { Tooltips } from './components/Tooltips';
 import { StatsView } from './components/StatsView';
 
 export default function App() {
@@ -91,6 +92,7 @@ export default function App() {
       <JournalModal />
       <PauseModal />
       <Welcome />
+      <Tooltips />
     </div>
   );
 }

@@ -181,30 +181,22 @@ button { cursor: pointer; }
   .app-content { transition: filter 160ms ease; }
 }
 
-/* styled tooltips: rounded pill, thin border, dimmed */
-[data-tip] { position: relative; }
-[data-tip]:hover::after,
-[data-tip]:focus-visible::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 6px);
-  transform: translateX(-50%);
-  white-space: nowrap;
-  padding: 3px 10px;
-  border-radius: 9999px;
+/* tooltips are drawn by components/Tooltips.tsx so no panel can clip them */
+.tooltip {
+  position: fixed;
+  z-index: 80;
+  max-width: min(260px, calc(100vw - 12px));
+  padding: 4px 11px;
+  border-radius: 12px;
   border: 1px solid rgb(var(--line));
-  background: rgb(var(--forest-900) / 0.92);
-  color: rgb(var(--ink-soft));
-  font-size: 10.5px;
+  background: rgb(var(--forest-900) / 0.97);
+  color: rgb(var(--ink));
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1.35;
   letter-spacing: 0.01em;
   pointer-events: none;
-  z-index: 60;
-}
-[data-tip-below]:hover::after {
-  bottom: auto;
-  top: calc(100% + 6px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
 }
 
 /* segmented period toggle */
@@ -254,3 +246,15 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 @keyframes tab-in-l { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
 .tab-in-r { animation: tab-in-r 220ms cubic-bezier(0.22, 1, 0.36, 1); }
 .tab-in-l { animation: tab-in-l 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* A sliding page must never make the document wider than the screen (it showed Android's
+   horizontal scrollbar and shifted the fixed tab bar), so clip sideways overflow. */
+html, body, #root { overflow-x: clip; }
+body { overscroll-behavior-x: none; }
+.app-content { overflow-x: clip; }
+nav[aria-label='Main'] { transform: translateZ(0); will-change: transform; }
+
+/* skipped habits get their own cool slate tone: not done (mint), not open (grey), not a miss */
+:root, :root[data-theme='forest-dark'] { --skip: 147 164 196; }
+:root[data-theme='pitch-black'] { --skip: 147 164 196; }
+:root[data-theme='forest-light'] { --skip: 84 104 148; }

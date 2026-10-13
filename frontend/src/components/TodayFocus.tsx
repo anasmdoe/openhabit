@@ -189,7 +189,7 @@ function SwipeRow({ children, enabled, rightLabel, leftLabel, onRight, onLeft }:
       {dx !== 0 && (
         <div
           className={`absolute inset-0 rounded-xl flex items-center px-4 text-[12px] font-bold ${
-            dx > 0 ? 'justify-start bg-mint/25 text-mint' : 'justify-end bg-forest-800 text-ink-soft'
+            dx > 0 ? 'justify-start bg-mint/25 text-mint' : 'justify-end bg-[rgb(var(--skip)/0.2)] text-[rgb(var(--skip))]'
           } ${armed ? 'opacity-100' : 'opacity-70'}`}
           aria-hidden
         >
@@ -288,16 +288,22 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
 
   const shell = `relative shrink-0 flex w-full sm:w-auto items-center gap-2.5 rounded-xl border px-3 min-h-12 sm:min-h-11 py-1 text-[13px] font-medium transition-colors ${
     slipped ? 'border-[rgb(var(--slip)/0.5)] bg-[rgb(var(--slip)/0.08)]'
+    : skipped ? 'border-dashed border-[rgb(var(--skip)/0.6)] bg-[rgb(var(--skip)/0.09)]'
     : done ? 'border-mint/50 bg-mint/10'
     : 'border-line hover:bg-forest-850'
   } text-ink`;
 
   const meta = (
     <span className="ml-auto sm:ml-0 flex items-center gap-1.5 shrink-0">
-      {!isFixedDay(habit) && (
+      {skipped && (
+        <span className="text-[10px] font-semibold uppercase tracking-wider rounded-full px-2 py-0.5 text-[rgb(var(--skip))] bg-[rgb(var(--skip)/0.16)]">
+          skipped
+        </span>
+      )}
+      {!isFixedDay(habit) && !skipped && (
         <span className="num text-[10px] text-ink-soft">{Math.min(weekCount, habit.frequency)}/{habit.frequency} wk</span>
       )}
-      {streak >= 2 && <Flame n={streak} unit={isFixedDay(habit) ? 'd' : 'w'} color={habit.color} />}
+      {streak >= 2 && !skipped && <Flame n={streak} unit={isFixedDay(habit) ? 'd' : 'w'} color={habit.color} />}
     </span>
   );
 
@@ -305,7 +311,7 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
     <>
       {habit.icon && <HabitIcon name={habit.icon} color={habit.color} size={15} className="shrink-0" />}
       <span className="min-w-0 flex flex-col leading-tight">
-        <span className="truncate sm:max-w-[170px]">{habit.name}</span>
+        <span className={`truncate sm:max-w-[170px] ${skipped ? 'text-ink-soft' : ''}`}>{habit.name}</span>
         {nudge ? (
           <span className="truncate text-[10.5px] font-semibold text-amber-400" title="Missing once is fine; missing twice starts a new pattern">
             Don't miss twice
@@ -405,12 +411,12 @@ function Check({ done, skipped, burst, color }: { done: boolean; skipped: boolea
       {burst > 0 && <span key={burst} className="burst" style={{ borderColor: color }} aria-hidden />}
       <span
         key={String(done)}
-        className={`absolute inset-0 rounded-full grid place-items-center ${done ? 'pop bg-mint' : skipped ? 'border border-dashed border-line' : 'border border-line'}`}
+        className={`absolute inset-0 rounded-full grid place-items-center ${done ? 'pop bg-mint' : skipped ? 'border border-dashed border-[rgb(var(--skip))] bg-[rgb(var(--skip)/0.14)]' : 'border border-line'}`}
       >
         {done && <CheckMark className="w-3 h-3" stroke="rgb(var(--forest-950))" />}
         {skipped && (
           <svg viewBox="0 0 20 20" className="w-3 h-3" aria-label="skipped">
-            <path d="M5 6l4 4-4 4M11 6l4 4-4 4" fill="none" stroke="rgb(var(--ink-soft))" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M5 6l4 4-4 4M11 6l4 4-4 4" fill="none" stroke="rgb(var(--skip))" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
       </span>
