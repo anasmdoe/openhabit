@@ -61,6 +61,29 @@ HabitNow. Vote counts are upvotes at the time of writing.
 5. **Empty and loading states** on Today (no habits yet, rest day, skeleton while loading).
 6. **OpenAPI 3.1 document** at `/openapi.yaml`, with a CI check that it matches the routes the services register.
 
+## Dashboard review (October 2026)
+
+Compared with Habitify, HabitKit, Daylio, Loop, Bearable, Exist, TickTick and Beaver Habits. Evidence for the commercial apps comes from store listings, reviews and vendor blogs, not from opening their screens, so treat the "who has it" column as claims.
+
+**What we already match:** a glanceable top line (Today ring, four stat cards), per-habit heatmap and strength score (Loop-style), weekday frequency per habit, mood/sleep insights, shareable cards, month and week grids.
+
+**Gaps, ranked by evidence and effort:**
+
+| # | Add | Why | Size |
+|---|---|---|---|
+| 1 | Trend deltas on the stat cards ("+8 pts vs last week") | Every recap compares with the previous period | S |
+| 2 | Weekly and monthly recap: best and worst habit, best day, 1–2 written sentences | Daylio, Habitify, HabitKit | M |
+| 3 | Best/worst weekday across all habits | Habitify; we only have it per habit | S |
+| 4 | Target-aware completion for "N per week" habits (3 of 3 = 100%) | TickTick; check our flexible habits | S |
+| 5 | Insights as plain sentences, with "need N more days" when data is thin | Daylio; Bearable's minimum-data rule | S–M |
+| 6 | Year in pixels coloured by mood | Daylio; we already store mood | S |
+| 7 | One calendar of all habits; tap a day to see what was done | Fills our calendar-overview gap | M |
+| 8 | Habit-to-habit correlations with a sample-size label | Bearable, Exist; never claim from a few days | M–L |
+| 9 | Collapse, hide and reorder dashboard sections | HabitKit layouts; our page is already long | M |
+| 10 | Home-screen widgets (a PWA can only offer shortcuts and a compact Today route) | HabitKit, Bearable | L |
+
+**Not copying:** streak-loss punishment, paywalled core analytics, coin and reward economies, correlations from a handful of days, and an ever-longer dashboard.
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |
