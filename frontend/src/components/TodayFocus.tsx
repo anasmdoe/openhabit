@@ -286,7 +286,7 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
     if (!Number.isNaN(v) && v >= 0) onSetValue(v);
   };
 
-  const shell = `relative shrink-0 flex items-center gap-2.5 rounded-xl border px-3 min-h-12 sm:min-h-11 py-1 text-[13px] font-medium transition-colors ${
+  const shell = `relative shrink-0 flex w-full sm:w-auto items-center gap-2.5 rounded-xl border px-3 min-h-12 sm:min-h-11 py-1 text-[13px] font-medium transition-colors ${
     slipped ? 'border-[rgb(var(--slip)/0.5)] bg-[rgb(var(--slip)/0.08)]'
     : done ? 'border-mint/50 bg-mint/10'
     : 'border-line hover:bg-forest-850'

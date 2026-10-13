@@ -19,6 +19,7 @@ import { GroupsModal } from './components/Groups';
 import { JournalModal } from './components/Journal';
 import { PauseModal } from './components/Pause';
 import { Welcome } from './components/Welcome';
+import { StatsView } from './components/StatsView';
 
 export default function App() {
   const { init, ready, editorHabit, authRequired, view, viewDir, goView, adapter } = useApp();
@@ -73,13 +74,7 @@ export default function App() {
           <HabitList />
         </div>
         <div className={`${group} ${show('stats')}`}>
-          <MonthTrendPanel />
-          <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
-            <MonthlyCompletionPanel />
-            <StreaksPanel />
-          </div>
-          <CategoryPanel />
-          <InsightsPanel />
+          <StatsView />
         </div>
         <div className={`${group} ${view === 'groups' ? show('groups') : 'hidden'}`}>
           <GroupsModal inline />

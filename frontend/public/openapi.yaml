@@ -1067,6 +1067,7 @@ components:
       type: object
       properties:
         span: { type: integer }
+        moodDays: { type: integer, description: Days in the span with a mood logged. }
         moodImpact:
           type: array
           items:

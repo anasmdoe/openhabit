@@ -2,7 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { useApp, today } from '../store';
 import { Bars, HBar, LineChart, MiniRing } from '../charts';
 import { quickCurrentStreak } from '../lib/periods';
-import { addDays, dow, isCompleted, isQuit } from '../lib/stats';
+import { addDays, fromISO } from '../lib/stats';
+import { entryLookup, periodStats } from '../lib/periodStats';
+import type { PeriodStat } from '../lib/periodStats';
 import { shareCard } from '../lib/share';
 import { HabitIcon } from '../lib/icons';
 import { MONTH_NAMES } from '../lib/types';
@@ -34,25 +36,25 @@ export function StatCards() {
     return best;
   }, [habits, entries]);
 
-  const week = useMemo(() => {
-    const lookup = new Map(entries.map((e) => [`${e.habitId}|${e.date}`, e.value]));
-    const values: (number | null)[] = [];
-    const labels: string[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = addDays(t, -i);
-      let scheduled = 0;
-      let completed = 0;
-      for (const h of habits) {
-        if (!h.activeDays.includes(dow(date))) continue;
-        if (isQuit(h) && date < h.createdAt.slice(0, 10)) continue; // clean days count from the start
-        scheduled += 1;
-        if (isCompleted(h, lookup.get(`${h.id}|${date}`))) completed += 1;
-      }
-      values.push(scheduled ? Math.round((completed / scheduled) * 100) : null);
-      labels.push(String(+date.slice(8, 10)));
-    }
-    return { values, labels };
+  // last 7 days, and how they compare with the 7 before and with last month so far
+  const trend = useMemo(() => {
+    const lookup = entryLookup(entries);
+    const last7 = periodStats(habits, lookup, addDays(t, -6), t, t);
+    const prev7 = periodStats(habits, lookup, addDays(t, -13), addDays(t, -7), t);
+    const monthStart = `${t.slice(0, 7)}-01`;
+    const sofar = periodStats(habits, lookup, monthStart, t, t);
+    const prevMonthStart = (() => { const d = fromISO(monthStart); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 10); })();
+    const prevSofar = periodStats(habits, lookup, prevMonthStart, addDays(prevMonthStart, +t.slice(8, 10) - 1), t);
+    const diff = (a: PeriodStat, b: PeriodStat) =>
+      a.goal >= 5 && b.goal >= 5 && a.pct !== null && b.pct !== null ? a.pct - b.pct : null;
+    return {
+      values: last7.days.map((d) => (d.goal ? Math.round((d.done / d.goal) * 100) : null)),
+      labels: last7.days.map((d) => String(+d.date.slice(8, 10))),
+      weekDelta: diff(last7, prev7),
+      monthDelta: diff(sofar, prevSofar),
+    };
   }, [habits, entries, t]);
+  const week = trend;
 
   if (!overview) {
     return (
@@ -83,6 +85,7 @@ export function StatCards() {
             </div>
           </div>
         </div>
+        <Delta value={trend.monthDelta} vs="last month so far" />
       </Card>
       <Card label="Best streak">
         <Big value={String(bestStreak.len)} color={bestStreak.len ? bestStreak.color : undefined} />
@@ -90,8 +93,19 @@ export function StatCards() {
       </Card>
       <Card label="Last 7 days">
         <Bars values={week.values} labels={week.labels} height={56} yMax={100} />
+        <Delta value={trend.weekDelta} vs="the 7 days before" />
       </Card>
     </>
+  );
+}
+
+/** Change against an earlier period. Up is mint; down is neutral, never red: a dip is information, not failure. */
+export function Delta({ value, vs }: { value: number | null; vs: string }) {
+  if (value === null) return null;
+  return (
+    <span className={`num text-[10.5px] font-medium leading-tight ${value > 0 ? 'text-mint' : 'text-ink-soft'}`}>
+      {value > 0 ? '▲' : value < 0 ? '▼' : '＝'} {Math.abs(value)} pt{Math.abs(value) === 1 ? '' : 's'} <span className="font-normal text-ink-soft">vs {vs}</span>
+    </span>
   );
 }
 

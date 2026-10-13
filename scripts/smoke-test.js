@@ -264,7 +264,8 @@ async function main() {
   await call('analytics', 'GET', '/analytics/overview', { token: T });
   await call('analytics', 'GET', `/analytics/habits/${h1.id}`, { token: A });
   await call('analytics', 'GET', `/analytics/habits/${h2.id}`, { token: A });
-  await call('analytics', 'GET', '/analytics/insights', { token: A });
+  const ins = await call('analytics', 'GET', '/analytics/insights', { token: A });
+  check(Number.isInteger(ins.moodDays) && ins.moodDays >= 1, `analytics: insights report how many days have a mood (${ins.moodDays})`);
 
   // ---- categories, quit habits, pause --------------------------------------
   const quitH = await call('habit', 'POST', '/habits', {

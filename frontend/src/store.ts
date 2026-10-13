@@ -63,6 +63,8 @@ interface AppState {
   categoryFilter: string; // '' = all categories (Today + grid)
   feedback: FeedbackPrefs;
   setFeedback(p: Partial<FeedbackPrefs>): void;
+  /** bumped whenever mood or sleep is saved, so views built from it can refetch */
+  wellnessVersion: number;
   /** Phone navigation: which part of the app the bottom tab bar shows. Wider screens show everything. */
   view: AppView;
   /** +1 when the last tab change moved right (towards Groups), -1 when it moved left: drives the slide-in. */
@@ -280,6 +282,7 @@ export const useApp = create<AppState>((set, get) => ({
     get().setView(v);
   },
   feedback: loadPrefs(),
+  wellnessVersion: 0,
   setFeedback(p) {
     const next = { ...get().feedback, ...p };
     savePrefs(next);
@@ -601,6 +604,7 @@ export const useApp = create<AppState>((set, get) => ({
     const { adapter } = get();
     if (!adapter) return;
     await adapter.putWellness({ date, mood, sleepHours });
+    set((st) => ({ wellnessVersion: st.wellnessVersion + 1 }));
     await get().refreshOverview();
   },
 

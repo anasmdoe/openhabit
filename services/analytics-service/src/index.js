@@ -577,6 +577,7 @@ app.get('/analytics/insights', asyncH(async (req, res) => {
 
   res.json({
     span,
+    moodDays: moodByDate.size,
     moodImpact: moodImpact.slice(0, 5),
     sleepCompletion: buckets.map((b) => ({
       id: b.id, label: b.label, days: b.scheduled,

@@ -340,6 +340,7 @@ export function computeInsights(
 
   return {
     span,
+    moodDays: moodByDate.size,
     moodImpact: moodImpact.slice(0, 5),
     sleepCompletion: buckets.map((b) => ({
       id: b.id, label: b.label, days: b.scheduled,

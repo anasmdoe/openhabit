@@ -89,6 +89,8 @@ export interface Streak {
 
 export interface Insights {
   span: number;
+  /** days in the span with a mood logged: insights need enough of them */
+  moodDays: number;
   moodImpact: {
     habitId: string; name: string; color: string; icon: string;
     avgMoodDone: number; avgMoodMissed: number; diff: number;

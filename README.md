@@ -64,6 +64,15 @@ it standalone.
   everything on one page. The habit grid has a **Week** view (seven days that
   always fit the screen, with ‹ › to move through the weeks) next to the full
   **Month** view
+- **Swipe between tabs** — on a phone, swipe sideways to move between *Today*,
+  *Habits*, *Stats* and *Groups* (Groups is a page of its own on phones, a popup
+  on wider screens); the month grid and Today's own swipe rows keep their gestures
+- **Stats that explain themselves** — a **Recap** of the last 7 or 30 days against
+  the period before (best habit, most room, strongest weekday over four weeks, and a
+  few plain sentences), **trend arrows** on the stat cards, a **calendar of all habits**
+  (tap a day to see what was done), a **year in pixels** coloured by mood, and insights
+  that say how many more mood days they need. "N per week" habits are scored against
+  their weekly quota (3 of 3 is 100%). **Customize** hides and reorders the sections
 - **Swipe on Today** — swipe a row right to log it (or undo), left to skip it;
   scrolling and the buttons work as before
 - **First-run checklist** — a new account is walked through adding habits,

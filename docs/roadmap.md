@@ -84,6 +84,20 @@ Compared with Habitify, HabitKit, Daylio, Loop, Bearable, Exist, TickTick and Be
 
 **Not copying:** streak-loss punishment, paywalled core analytics, coin and reward economies, correlations from a handful of days, and an ever-longer dashboard.
 
+## Added in round 4
+
+Everything from the dashboard review that fitted, plus tab swiping:
+
+1. **Swipe sideways between tabs** (Today / Habits / Stats / Groups), with Groups as a phone page.
+2. **Trend arrows** on the "This month" and "Last 7 days" cards (down is neutral, never red).
+3. **Recap** (week / month): percentage and change, best habit, most room, strongest and weakest weekday over four weeks (at least 3 days each, so one Monday never decides), perfect days, plain sentences. Says "not enough days yet" instead of guessing.
+4. **Target-aware completion** shared by the cards and the recap: "N per week" habits against their prorated quota, quit habits by clean days, skips excused.
+5. **Insights** say what would unlock them ("log your mood on 9 more days").
+6. **Year in pixels**, coloured by mood, and an **all-habits calendar** with a per-day list.
+7. **Customize Stats**: hide and reorder sections, kept on the device. (Per-section collapse was skipped: hiding covers it.)
+
+Not built from the review: habit-to-habit correlations (needs a careful sample-size rule), native home-screen widgets (not possible in a PWA).
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |

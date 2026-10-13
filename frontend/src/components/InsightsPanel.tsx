@@ -9,7 +9,11 @@ export function InsightsPanel() {
   if (!insights) return null;
   const mood = insights.moodImpact.slice(0, 3);
   const sleep = insights.sleepCompletion.filter((b) => b.pct != null && b.days >= 10);
-  if (!mood.length && sleep.length < 2) return null; // not enough data yet
+  if (!habits.length) return null;
+  // Not enough data is said out loud, with what would unlock it, instead of an empty or hidden panel
+  const MOOD_DAYS_NEEDED = 14;
+  const needMood = Math.max(0, MOOD_DAYS_NEEDED - (insights.moodDays ?? 0));
+  const thin = !mood.length && sleep.length < 2;
 
   return (
     <section className="panel">
@@ -18,6 +22,13 @@ export function InsightsPanel() {
         <span className="normal-case tracking-normal font-medium">last {insights.span} days</span>
       </div>
       <div className="px-4 pb-3.5 flex flex-col gap-2.5">
+        {thin && (
+          <p className="text-[12.5px] leading-snug text-ink-soft">
+            {needMood > 0
+              ? `Log your mood on ${needMood} more day${needMood === 1 ? '' : 's'} (${insights.moodDays ?? 0} of ${MOOD_DAYS_NEEDED} so far) and OpenHabit will start showing how it lines up with your habits and your sleep.`
+              : 'Nothing stands out yet. A pattern shows up once a habit has at least 5 days done and 5 missed with a mood logged.'}
+          </p>
+        )}
         {mood.map((m) => (
           <div key={m.habitId} className="flex items-start gap-2.5">
             <span className="mt-0.5 shrink-0">
