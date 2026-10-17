@@ -108,6 +108,14 @@ Not built from the review: habit-to-habit correlations (needs a careful sample-s
 
 The per-habit mood link already lives in the Trend panel (needs 5 done and 5 missed days with a mood logged).
 
+## Added in round 6
+
+1. **Duration habits**: `min` / `h` units shown as `1h 30m`, with a 5-minute (or quarter-hour) step.
+2. **Calendar feed** (iCal URL) of habits due, per user, read-only.
+3. **Scheduled export**: `scripts/export-data.js` for cron, with local rotation and optional PUT upload.
+4. **Android app inputs** (`twa/`): Bubblewrap manifest, Digital Asset Links example and steps. Not built here (needs the Android SDK and your signing key).
+5. **Launcher shortcuts**: `?view=today|habits|stats` opens that tab.
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |

@@ -54,6 +54,14 @@ it standalone.
   tick, skip, clear, set a value or add a note), a notes timeline, average/best/total for
   measurable habits, clean days and money or time saved for quit habits, plus share card,
   per-habit CSV export, pause just this habit and edit reminders
+- **Duration habits** — a numeric habit with the unit `min` or `h` is shown as `1h 30m`, and its
+  + button adds 5 minutes (or a quarter hour)
+- **Calendar feed** — Account menu > Calendar feed gives a subscription link (iCal) for Google,
+  Apple or Outlook Calendar: recurring events on the days a habit is due, at its first reminder
+  time. Names and cues only; anyone with the link can read it, and changing `JWT_SECRET` revokes it
+- **Scheduled export** — `scripts/export-data.js` writes the app's re-importable JSON export to a
+  folder and optionally uploads it (WebDAV or a presigned S3 URL); see *Scheduled export* below
+- **Android app** — build config for a Trusted Web Activity in [`twa/`](twa/README.md)
 - **Undo and time of day** — every Today action offers a 5-second Undo; Today groups habits into
   Morning / Afternoon / Evening / Anytime from their first reminder time
 - **Accessibility** — axe-core clean (WCAG 2 A/AA) in all three themes, landmarks and a page
@@ -572,6 +580,22 @@ and k8s Prometheus: service down, DB unreachable (per service), reminder loop
 stalled (>5 min without a tick), reminder tick errors, 5xx rate >5%, p95
 latency >1s, and pg pool saturation. Point Alertmanager (or Grafana alerting)
 at them to get notified — an ntfy receiver works nicely here too.
+
+## Scheduled export
+
+Keep an off-site copy of your habits, entries and mood, in the same JSON the app's Export button
+produces (re-importable from Account > Import). Create an API token under Account > API tokens, then:
+
+```bash
+OPENHABIT_URL=https://habits.example.com/api OPENHABIT_TOKEN=oh_xxx \
+  node scripts/export-data.js --out ~/openhabit-backups --keep 14
+# optional upload: --put https://cloud.example.com/remote.php/dav/files/me/backups/ --put-auth user:app-password
+#                  (a presigned S3 PUT URL also works)
+```
+
+Run it daily from cron (`15 3 * * * ...`), a systemd timer, a GitHub Actions `schedule:` job, or a
+Kubernetes CronJob. The database-level backup in *Backups & restore* covers the whole instance;
+this one covers a single account and works against any deployment, including AWS serverless.
 
 ## Tests & CI
 

@@ -289,7 +289,12 @@ export const useApp = create<AppState>((set, get) => ({
   gridYear: new Date().getFullYear(),
   gridMonth: new Date().getMonth() + 1,
   view: (() => {
-    try { const v = localStorage.getItem(VIEW_KEY); return v === 'habits' || v === 'stats' ? v : 'today'; } catch { return 'today'; }
+    try {
+      // launcher shortcuts (?view=stats) win over the remembered tab
+      const q = new URLSearchParams(location.search).get('view');
+      if (q === 'today' || q === 'habits' || q === 'stats') return q;
+      const v = localStorage.getItem(VIEW_KEY); return v === 'habits' || v === 'stats' ? v : 'today';
+    } catch { return 'today'; }
   })() as AppView,
   viewDir: 1,
   setView(v) {
