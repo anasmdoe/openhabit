@@ -398,7 +398,7 @@ function seedDemo(): LocalDB {
   }
   habits[6].afterHabitId = habits[0].id; // demo of stacking: Meditation after waking up
   const goals: Goal[] = [
-    { id: uuid(), habitId: habits[3].id, title: 'Read 1,200 pages', target: 1200, unit: 'pages', startDate: `${today.slice(0, 4)}-01-01`, deadline: `${today.slice(0, 4)}-12-31`, completedAt: null },
+    { id: uuid(), habitId: habits[3].id, title: 'Read 1,800 pages', target: 1800, unit: 'pages', startDate: `${today.slice(0, 4)}-01-01`, deadline: `${today.slice(0, 4)}-12-31`, completedAt: null },
     { id: uuid(), habitId: habits[2].id, title: 'Run 100 Km', target: 100, unit: 'Km', startDate: addDays(today, -30), deadline: addDays(today, 60), completedAt: null },
   ];
   return { habits, entries, wellness, goals };

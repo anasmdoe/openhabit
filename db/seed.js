@@ -103,6 +103,26 @@ async function main() {
   }
   await req('/wellness/bulk', 'POST', { days: wellness });
   console.log('  wellness: mood + sleep for every day');
+  // stacking and goals (idempotent: only added when missing)
+  const all = await req('/habits');
+  const byName = (n) => all.find((h) => h.name === n);
+  const wake = byName('Wake up at 05:00'), med = byName('Meditation');
+  if (wake && med && !med.afterHabitId) {
+    await req(`/habits/${med.id}`, 'PUT', { afterHabitId: wake.id });
+    console.log('  stacking: Meditation after Wake up at 05:00');
+  }
+  const goals = await req('/habits/goals');
+  const year = today.getUTCFullYear();
+  const plan = [
+    { habit: 'Reading', title: 'Read 1,800 pages', target: 1800, unit: 'pages', startDate: `${year}-01-01`, deadline: `${year}-12-31` },
+    { habit: 'Running', title: 'Run 100 Km', target: 100, unit: 'Km', startDate: iso(new Date(today.getTime() - 30 * 864e5)), deadline: iso(new Date(today.getTime() + 60 * 864e5)) },
+  ];
+  for (const g of plan) {
+    const h = byName(g.habit);
+    if (!h || goals.some((x) => x.title === g.title)) continue;
+    await req('/habits/goals', 'POST', { habitId: h.id, title: g.title, target: g.target, unit: g.unit, startDate: g.startDate, deadline: g.deadline });
+    console.log(`  goal: ${g.title}`);
+  }
   console.log(`Done. Sign in as ${EMAIL} / ${PASSWORD} and enjoy.`);
 }
 

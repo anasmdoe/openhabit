@@ -67,7 +67,7 @@ export function goalProgress(
       ? `${fmt(current)} of ${fmt(target)} so far; ${need} to finish by ${goal.deadline}.`
       : status === 'behind'
         ? `${fmt(current)} of ${fmt(target)}. At your pace of the last ${window} days you would reach ${fmt(projected)}; ${need} to make it.`
-        : `${fmt(current)} of ${fmt(target)}. ${etaDate ? `At your pace you finish around ${etaDate}.` : ''} ${need}.`.replace(/\s+/g, ' ').trim();
+        : `${fmt(current)} of ${fmt(target)}. ${etaDate ? `At your pace you finish around ${etaDate}.` : ''} ${need[0].toUpperCase()}${need.slice(1)}.`.replace(/\s+/g, ' ').trim();
   }
   return {
     measure, current, target, remaining, pct: Math.min(100, Math.round((current / target) * 100)),

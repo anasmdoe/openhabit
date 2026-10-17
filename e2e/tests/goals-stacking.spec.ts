@@ -6,7 +6,7 @@ test('goals: the demo goals show progress, and a new one can be added and remove
   await goTab(page, 'Stats');
   const goals = page.locator('section.panel', { has: page.locator('.panel-head', { hasText: 'Goals' }) }).first();
   await expect(goals.getByRole('progressbar')).toHaveCount(2);
-  await expect(goals).toContainText('Read 1,200 pages');
+  await expect(goals).toContainText('Read 1,800 pages');
   await expect(goals).toContainText(/days left/);
 
   await goals.getByRole('button', { name: '+ New goal' }).click();

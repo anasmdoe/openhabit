@@ -56,7 +56,7 @@ it standalone.
   completed day is "frozen" and the streak carries on (never two in a row; Off, 1, 2 or 3 a month per
   habit, set in the habit editor, default 1). Frozen days show as a snowflake in the calendar, and the
   habit window says how many freezes are left. Skips, Take a break and flexible "N per week" habits work as before
-- **Goals with deadlines** — "Read 1,200 pages by December", "Run 100 Km by June": pick a habit, a target and a
+- **Goals with deadlines** — "Read 1,800 pages by December", "Run 100 Km by June": pick a habit, a target and a
   deadline. Stats > Goals shows a progress bar with a marker for where you should be by now, the pace you need per
   day, and an honest status (ahead, on track, behind, missed, done). Numeric habits add up their values; yes/no
   habits count days done. Needs about three days before it will call you behind
