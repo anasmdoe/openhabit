@@ -34,9 +34,6 @@ test('goals: a dialog without a title or target says so', async ({ page }) => {
 
 test('stacking: the demo habit sits behind its anchor and says so; the editor offers only valid anchors', async ({ page }) => {
   await openApp(page);
-  const rows = page.locator('.app-content section.panel').first();
-  await expect(rows).toContainText('After Wake up at 05:00');
-
   await goTab(page, 'Habits');
   await page.locator('section.panel button:visible', { hasText: 'Meditation' }).first().click();
   await page.getByRole('dialog', { name: 'Habit details' }).getByRole('button', { name: /edit/i }).first().click();

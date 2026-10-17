@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useApp, today } from '../store';
 import type { GoalStatus, GoalView } from '../lib/types';
@@ -116,9 +117,9 @@ function GoalDialog({ goal, onClose, onSaved }: { goal: GoalView | null; onClose
     onSaved();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60" onClick={onClose}>
-      <div role="dialog" aria-label={goal ? 'Edit goal' : 'New goal'} className="panel w-full sm:max-w-md p-4 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+  return createPortal(
+    <div className="backdrop grid place-items-center p-4" onClick={onClose} role="dialog" aria-modal="true" aria-label={goal ? 'Edit goal' : 'New goal'}>
+      <div className="panel w-full max-w-md modal-scroll thin-scroll p-4 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-base font-semibold">{goal ? 'Edit goal' : 'New goal'}</h2>
         <label className="flex flex-col gap-1 text-[12px] text-ink-soft">Habit
           <select className="input" value={habitId} disabled={!!goal} onChange={(e) => setHabitId(e.target.value)} aria-label="Goal habit">
@@ -144,6 +145,7 @@ function GoalDialog({ goal, onClose, onSaved }: { goal: GoalView | null; onClose
           <button className="text-[11px] uppercase tracking-wider font-bold bg-mint text-forest-950 rounded-sm px-4 py-1.5 disabled:opacity-40" disabled={busy} onClick={save}>Save</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
