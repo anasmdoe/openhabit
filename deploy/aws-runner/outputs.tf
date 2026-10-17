@@ -14,3 +14,8 @@ output "runner_labels" {
 output "shell_access" {
   value = "aws ssm start-session --target ${aws_instance.runner.id}"
 }
+
+output "data_volume_id" {
+  description = "The data disk (survives instance replacement). Snapshot it if you care about the caches."
+  value       = var.data_volume_gb > 0 ? aws_ebs_volume.data[0].id : ""
+}

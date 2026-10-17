@@ -42,3 +42,13 @@ test('launcher shortcuts open the right tab', async ({ page }) => {
   await openApp(page, '/?view=stats');
   await expect(page.locator('nav[aria-label=Main] button[aria-current=page]')).toContainText('Stats');
 });
+
+test('Today can be divided by category instead of time of day, and remembers the choice', async ({ page }) => {
+  await openApp(page);
+  await page.getByRole('button', { name: /Grouped by time of day/ }).click();
+  const heads = (await page.locator('h2').allInnerTexts()).map((t) => t.toLowerCase());
+  expect(heads).toEqual(expect.arrayContaining(['fitness', 'mind']));
+  expect(heads).not.toContain('morning habit');
+  await page.reload();
+  await expect(page.getByRole('button', { name: /Grouped by category/ })).toBeVisible();
+});

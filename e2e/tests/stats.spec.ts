@@ -32,3 +32,15 @@ test('recap, calendar, year in pixels and customize', async ({ page }) => {
   await page.getByRole('button', { name: 'Done', exact: true }).click();
   await expect.poll(text).toMatch(/insights/i);
 });
+
+test('the Habits grid is divided into labelled category groups, and a chip narrows it', async ({ page }) => {
+  await openApp(page);
+  await goTab(page, 'Habits');
+  const groups = page.locator('section [role=presentation]');
+  expect(await groups.count()).toBeGreaterThanOrEqual(3);
+  const labels = (await groups.allInnerTexts()).map((t) => t.toLowerCase());
+  expect(labels).toEqual(expect.arrayContaining(['fitness', 'mind']));
+  // picking a category removes the dividers and shows only its habits
+  await page.getByRole('navigation', { name: 'Habit categories' }).getByRole('button', { name: /^Fitness/ }).click();
+  await expect(groups).toHaveCount(0);
+});

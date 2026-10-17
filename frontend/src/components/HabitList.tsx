@@ -238,7 +238,16 @@ export function HabitList() {
     toggleEntry, setNumericEntry, openDetail, openEditor, reorderHabits, categoryFilter,
   } = useApp();
   const shown = visibleHabits(habits, categoryFilter);
-  const filtered = shown.length !== habits.length; // reordering needs the full list
+  // With no category picked and at least two in use, the grid is divided into labelled groups.
+  const grouped = !categoryFilter && new Set(habits.map((h) => h.category).filter(Boolean)).size >= 2;
+  const rows = useMemo(() => {
+    if (!grouped) return shown;
+    const order: string[] = [];
+    for (const h of shown) if (h.category && !order.includes(h.category)) order.push(h.category);
+    order.push(''); // habits without a category last
+    return order.flatMap((c) => shown.filter((h) => h.category === c));
+  }, [shown, grouped]);
+  const filtered = shown.length !== habits.length || grouped; // reordering needs the full, ungrouped list
 
   const [nameW, setNameW] = useState(() => {
     const v = parseInt(localStorage.getItem(NAME_W_KEY) ?? '', 10);
@@ -457,9 +466,16 @@ export function HabitList() {
             ))}
           </div>
 
-          {shown.map((habit, idx) => (
+          {rows.map((habit, idx) => (
+            <React.Fragment key={habit.id}>
+            {grouped && (idx === 0 || rows[idx - 1].category !== habit.category) && (
+              <div className="h-[22px] bg-forest-850/60 border-b border-line" role="presentation">
+                <span className="sticky left-0 inline-flex h-full items-center px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-soft">
+                  {habit.category || 'Other'}
+                </span>
+              </div>
+            )}
             <div
-              key={habit.id}
               className={`flex items-stretch border-b border-line last:border-b-0 transition-transform ${
                 drag?.id === habit.id ? 'opacity-40' : ''
               } ${drag && drag.id !== habit.id && drag.to === idx ? 'border-t-2 border-t-mint' : ''}`}
@@ -526,6 +542,7 @@ export function HabitList() {
                 />
               ))}
             </div>
+            </React.Fragment>
           ))}
         </div>
       </div>

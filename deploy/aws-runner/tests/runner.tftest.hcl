@@ -15,6 +15,12 @@ mock_provider "aws" {
   mock_resource "aws_secretsmanager_secret" {
     defaults = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:openhabit-runner/github-token-AbCdEf" }
   }
+  mock_data "aws_subnet" {
+    defaults = { availability_zone = "us-east-1b" }
+  }
+  mock_resource "aws_ebs_volume" {
+    defaults = { id = "vol-0123456789abcdef0" }
+  }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/openhabit-runner" }
   }
@@ -52,19 +58,32 @@ run "defaults" {
     error_message = "no token may be baked into user data"
   }
   assert {
-    condition     = length(aws_instance.runner.instance_market_options) == 0
-    error_message = "on-demand by default"
+    condition     = length(aws_instance.runner.instance_market_options) == 1 && aws_instance.runner.instance_market_options[0].spot_options[0].spot_instance_type == "persistent" && aws_instance.runner.instance_market_options[0].spot_options[0].instance_interruption_behavior == "stop"
+    error_message = "spot by default, persistent, and stopped (not terminated) when reclaimed"
+  }
+  assert {
+    condition     = length(aws_ebs_volume.data) == 1 && aws_ebs_volume.data[0].encrypted == true && length(aws_volume_attachment.data) == 1
+    error_message = "an encrypted data disk must be attached"
+  }
+  assert {
+    condition     = aws_ebs_volume.data[0].availability_zone == "us-east-1b"
+    error_message = "the data disk must be in the instance's availability zone"
+  }
+  assert {
+    condition     = strcontains(aws_instance.runner.user_data, "SERIAL=\"vol0123456789abcdef0\"") && strcontains(aws_instance.runner.user_data, "LABEL=ohdata")
+    error_message = "the boot script must find, format once and mount the data disk"
   }
 }
 
-run "spot" {
+run "on_demand_without_data_disk" {
   command = apply
   variables {
-    use_spot = true
+    use_spot       = false
+    data_volume_gb = 0
   }
   assert {
-    condition     = length(aws_instance.runner.instance_market_options) == 1
-    error_message = "use_spot must request a spot instance"
+    condition     = length(aws_instance.runner.instance_market_options) == 0 && length(aws_ebs_volume.data) == 0
+    error_message = "on-demand and no extra disk when asked"
   }
 }
 

@@ -719,6 +719,7 @@ scripts/test-init-sql.sh                # applies db/init.sql twice, proves it i
 scripts/test-migrations.sh              # psql and node runners agree; edited migrations are refused
 node db/build-init.js --check           # db/init.sql is up to date with db/migrations
 cd e2e && npm ci && npx playwright install chromium && npm test   # browser tests (build the frontend first)
+scripts/verify-all.sh [--live URL]      # everything above in one go, as a PASS/FAIL table
 node scripts/smoke-test.js              # all services, each as its own DB role, end to end
 node scripts/smoke-test.js --lambda     # the same flows through the AWS Lambda handlers
 (cd deploy/aws && tofu test)            # Terraform stack, offline with a mocked AWS provider

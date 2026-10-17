@@ -32,9 +32,15 @@ variable "instance_type" {
 }
 
 variable "use_spot" {
-  description = "Run on a spot instance (about 70% cheaper; the runner re-registers when it restarts)."
+  description = "Run on a persistent spot instance (about 70% cheaper). When AWS reclaims the capacity the instance is stopped, not terminated, and starts again when capacity returns; the data disk and the runner service survive, and the runner re-registers itself."
   type        = bool
-  default     = false
+  default     = true
+}
+
+variable "data_volume_gb" {
+  description = "Size of the separate data disk that keeps the npm cache, Playwright browsers and job workspaces across restarts and instance replacements. 0 = no data disk."
+  type        = number
+  default     = 40
 }
 
 variable "volume_gb" {

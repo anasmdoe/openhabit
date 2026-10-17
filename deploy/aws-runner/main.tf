@@ -106,10 +106,38 @@ resource "aws_security_group" "runner" {
   }
 }
 
+locals {
+  subnet_id = var.subnet_id != "" ? var.subnet_id : data.aws_subnets.default.ids[0]
+}
+
+data "aws_subnet" "runner" {
+  id = local.subnet_id
+}
+
+# A disk of its own for caches and workspaces. It outlives the instance (spot reclaim, replacement on a
+# user-data change, tofu destroy of only the instance), so a restart does not re-download Chromium and
+# every npm package. It is encrypted and formatted on first use by the boot script.
+resource "aws_ebs_volume" "data" {
+  count             = var.data_volume_gb > 0 ? 1 : 0
+  availability_zone = data.aws_subnet.runner.availability_zone
+  size              = var.data_volume_gb
+  type              = "gp3"
+  encrypted         = true
+  tags              = { Name = "${var.name}-data" }
+}
+
+resource "aws_volume_attachment" "data" {
+  count                          = var.data_volume_gb > 0 ? 1 : 0
+  device_name                    = "/dev/sdf"
+  volume_id                      = aws_ebs_volume.data[0].id
+  instance_id                    = aws_instance.runner.id
+  stop_instance_before_detaching = true
+}
+
 resource "aws_instance" "runner" {
   ami                    = data.aws_ssm_parameter.ubuntu.value
   instance_type          = var.instance_type
-  subnet_id              = var.subnet_id != "" ? var.subnet_id : data.aws_subnets.default.ids[0]
+  subnet_id              = local.subnet_id
   iam_instance_profile   = aws_iam_instance_profile.runner.name
   vpc_security_group_ids = [aws_security_group.runner.id]
 
@@ -144,6 +172,8 @@ resource "aws_instance" "runner" {
     secret_id      = aws_secretsmanager_secret.github_token.name
     region         = var.region
     runner_version = var.runner_version
+    # the data disk's serial as the NVMe device exposes it (the volume id without the dash)
+    data_volume_serial = var.data_volume_gb > 0 ? replace(aws_ebs_volume.data[0].id, "-", "") : ""
   })
   user_data_replace_on_change = true
 

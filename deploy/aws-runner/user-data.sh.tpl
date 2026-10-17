@@ -14,6 +14,24 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
 
 id runner >/dev/null 2>&1 || useradd -m -s /bin/bash runner
+
+# ---- the data disk: npm cache, Playwright browsers and job workspaces survive restarts ----
+SERIAL="${data_volume_serial}"
+DATA=/opt/runner-data
+if [ -n "$SERIAL" ]; then
+  DEV="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$SERIAL"
+  for i in $(seq 1 60); do [ -e "$DEV" ] && break; echo "waiting for the data disk ($i)"; sleep 5; done
+  if [ -e "$DEV" ]; then
+    blkid "$DEV" >/dev/null 2>&1 || mkfs.ext4 -L ohdata "$DEV"
+    mkdir -p "$DATA"
+    grep -q ' /opt/runner-data ' /etc/fstab || echo "LABEL=ohdata $DATA ext4 defaults,nofail 0 2" >> /etc/fstab
+    mount -a
+  else
+    echo "data disk did not appear; falling back to the root disk"
+  fi
+fi
+mkdir -p "$DATA/work" "$DATA/npm-cache" "$DATA/playwright"
+chown -R runner:runner "$DATA"
 install -d -o runner -g runner /opt/actions-runner
 cd /opt/actions-runner
 
@@ -44,7 +62,7 @@ while true; do
   if [ -z "$REG" ] || [ "$REG" = "null" ]; then echo "could not get a registration token; retrying in 60s"; sleep 60; continue; fi
   echo "openhabit-runner: registering an ephemeral runner" | tee /dev/console
   ./config.sh --unattended --ephemeral --replace --url "https://github.com/${repository}" --token "$REG" \
-    --name "$(hostname)-$(date +%s)" --labels '${labels}' --work _work
+    --name "$(hostname)-$(date +%s)" --labels '${labels}' --work /opt/runner-data/work
   ./run.sh   # returns after one job
 done
 LOOP
@@ -58,6 +76,8 @@ Wants=network-online.target
 
 [Service]
 User=runner
+Environment=npm_config_cache=/opt/runner-data/npm-cache
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/runner-data/playwright
 ExecStart=/usr/local/bin/openhabit-runner-loop
 Restart=always
 RestartSec=10
