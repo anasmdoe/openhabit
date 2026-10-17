@@ -35,9 +35,9 @@ export async function handler(event) {
     return { ok: true };
   }
 
-  // /api/<path> is what the browser calls; services serve /<path> (the
+  // /api/v1/<path> (stable) and /api/<path> (current) are what clients call; services serve /<path> (the
   // docker/k8s gateway strips /api the same way).
-  const path = event.rawPath.replace(/^\/api(?=\/|$)/, '') || '/';
+  const path = event.rawPath.replace(/^\/api(?:\/v1)?(?=\/|$)/, '') || '/';
   const headers = {};
   for (const [k, v] of Object.entries(event.headers ?? {})) if (!HOP.has(k)) headers[k] = v;
   if (event.cookies?.length) headers.cookie = event.cookies.join('; ');

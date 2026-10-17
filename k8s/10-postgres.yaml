@@ -413,6 +413,21 @@ data:
     INSERT INTO schema_migrations (version, name, checksum) VALUES ('0002', 'email_tokens', '1263e2545124844ec55604edfc1056cd2afe5e9522da0d074cc58b144f444520');
     COMMIT;
     \endif
+
+    -- ===== migration 0003 webhook_secret_version =====
+    SELECT COALESCE((SELECT checksum FROM schema_migrations WHERE version = '0003'), '') AS have \gset
+    SELECT (:'have' = '') AS fresh, (:'have' <> '' AND :'have' <> 'edeb5d0745dc23e3591425d1b13135478d83752c5849a17c5fde6d8a60ebe239') AS drift \gset
+    \if :drift
+      SELECT 'migration 0003 webhook_secret_version was edited after it was applied; add a new migration instead'::int;
+    \endif
+    \if :fresh
+    BEGIN;
+    -- Signed webhooks: each user's signing secret is derived from JWT_SECRET, the user id and this version.
+    -- Bumping the version (auth-service: POST /auth/webhook-secret/rotate) replaces the secret.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS webhook_secret_version INTEGER NOT NULL DEFAULT 1;
+    INSERT INTO schema_migrations (version, name, checksum) VALUES ('0003', 'webhook_secret_version', 'edeb5d0745dc23e3591425d1b13135478d83752c5849a17c5fde6d8a60ebe239');
+    COMMIT;
+    \endif
   set-db-passwords.sh: |
     #!/usr/bin/env bash
     # Sets the login password of each per-service database role (created by

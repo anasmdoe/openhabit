@@ -124,6 +124,12 @@ The per-habit mood link already lives in the Trend panel (needs 5 done and 5 mis
 4. **Playwright browser suite** (`e2e/`) and a **self-hosted GitHub Actions runner in AWS** (`deploy/aws-runner`), including axe-core accessibility scans.
 5. Contrast fixes found by the new scans: habit-coloured numbers on panels and the all-habits calendar heat cells.
 
+## Added in round 8
+
+1. **`/api/v1`**: a stable, versioned address for the API, served by the nginx gateway, the Kubernetes ingress and API Gateway; `/api` stays as an alias. The web app and the OpenAPI document use it.
+2. **Signed webhooks**: HMAC-SHA256 over `timestamp.body`, per-user secret that can be rotated, delivery ids for de-duplication, verification snippets in the README.
+3. **Scale-to-zero database option**: Aurora Serverless v2 (`db_engine = "aurora-serverless"`), plus an architecture decision record on why DynamoDB is deferred and what its data model would be.
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |

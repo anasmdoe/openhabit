@@ -39,6 +39,12 @@ mock_provider "aws" {
   mock_resource "aws_secretsmanager_secret" {
     defaults = { arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:openhabit/app-AbCdEf" }
   }
+  mock_resource "aws_rds_cluster" {
+    defaults = {
+      id       = "openhabit-aurora"
+      endpoint = "openhabit-aurora.cluster-abc123.us-east-1.rds.amazonaws.com"
+    }
+  }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/openhabit" }
   }
@@ -78,7 +84,11 @@ run "stack" {
   command = apply
 
   assert {
-    condition     = length(aws_lambda_function.svc) == 6 && length(aws_apigatewayv2_route.svc) == 17
+    condition     = contains(keys(aws_apigatewayv2_route.svc), "ANY /api/v1/habits/{proxy+}") && contains(keys(aws_apigatewayv2_route.svc), "ANY /api/habits/{proxy+}")
+    error_message = "every route is served under /api and the versioned /api/v1"
+  }
+  assert {
+    condition     = length(aws_lambda_function.svc) == 6 && length(aws_apigatewayv2_route.svc) == 34
     error_message = "expected 6 functions and 17 API routes"
   }
   assert {
@@ -291,6 +301,44 @@ run "mail_settings_reach_the_auth_function_only" {
     condition     = !contains(keys(aws_lambda_function.svc["habit"].environment[0].variables), "SMTP_URL")
     error_message = "other functions must not receive the SMTP credentials"
   }
+}
+
+run "aurora_serverless_scales_to_zero" {
+  command = apply
+
+  variables {
+    create_database            = true
+    db_engine                  = "aurora-serverless"
+    db_admin_password          = "admin-pw-0123456789abcdef"
+    aurora_pause_after_seconds = 900
+    use_managed_iam_policies   = true
+  }
+
+  assert {
+    condition     = length(aws_rds_cluster.aurora) == 1 && length(aws_db_instance.db) == 0
+    error_message = "aurora-serverless replaces the plain RDS instance"
+  }
+  assert {
+    condition     = aws_rds_cluster.aurora[0].serverlessv2_scaling_configuration[0].min_capacity == 0 && aws_rds_cluster.aurora[0].serverlessv2_scaling_configuration[0].seconds_until_auto_pause == 900
+    error_message = "the cluster must be able to pause at zero capacity"
+  }
+  assert {
+    condition     = aws_rds_cluster_instance.aurora[0].instance_class == "db.serverless"
+    error_message = "the instance class must be db.serverless"
+  }
+  assert {
+    condition     = strcontains(nonsensitive(aws_lambda_function.svc["habit"].environment[0].variables.DATABASE_URL), "@openhabit-aurora.cluster-abc123.us-east-1.rds.amazonaws.com:")
+    error_message = "services must connect to the cluster endpoint"
+  }
+}
+
+run "rejects_bad_aurora_pause" {
+  command = plan
+  variables {
+    db_engine                  = "aurora-serverless"
+    aurora_pause_after_seconds = 60
+  }
+  expect_failures = [var.aurora_pause_after_seconds]
 }
 
 run "rejects_weak_secrets" {

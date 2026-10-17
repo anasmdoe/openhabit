@@ -96,9 +96,12 @@ async function loadHandlers() {
 }
 
 /** One request to a service, as an HTTP call or as an API Gateway v2 Lambda event. */
+// Through the gateway / API Gateway / Lambda the suite uses the versioned /api/v1 address; the
+// unversioned /api alias is checked separately.
+let prefix = '/api/v1';
 async function request(svc, method, url, headers = {}, body) {
   if (REMOTE) {
-    const res = await fetch(`${REMOTE}/api${url}`, { method, headers, body });
+    const res = await fetch(`${REMOTE}${prefix}${url}`, { method, headers, body });
     return { status: res.status, text: await res.text() };
   }
   if (!LAMBDA) {
@@ -108,10 +111,10 @@ async function request(svc, method, url, headers = {}, body) {
   const [rawPath, rawQueryString = ''] = url.split('?');
   const out = await handlers[serviceDir(svc)]({
     version: '2.0',
-    rawPath: `/api${rawPath}`,
+    rawPath: `${prefix}${rawPath}`,
     rawQueryString,
     headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])),
-    requestContext: { http: { method, path: `/api${rawPath}`, sourceIp: '203.0.113.7' } },
+    requestContext: { http: { method, path: `${prefix}${rawPath}`, sourceIp: '203.0.113.7' } },
     body,
     isBase64Encoded: false,
   });
@@ -217,6 +220,22 @@ async function main() {
   const mailsTo = (addr) => mails.filter((m) => m.to === addr);
   const linkIn = (m, key) => decodeURIComponent((m?.text.match(new RegExp(`[?&]${key}=([\\w%-]+)`)) ?? [])[1] ?? '');
 
+  // Catches signed webhook deliveries.
+  const hooks = [];
+  const hookServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => { hooks.push({ headers: req.headers, body }); res.end('ok'); });
+  });
+  await new Promise((r) => hookServer.listen(0, r));
+  const hookUrl = `http://localhost:${hookServer.address().port}/hook`;
+  // what a receiver does (docs: README "Webhooks"), written independently of the service's own helper
+  const signatureOk = (secret, hook) => {
+    const parts = Object.fromEntries(hook.headers['x-openhabit-signature'].split(',').map((kv) => kv.split('=')));
+    const want = crypto.createHmac('sha256', secret).update(`${parts.t}.${hook.body}`).digest('hex');
+    return parts.v1 === want && Math.abs(Date.now() / 1000 - Number(parts.t)) < 300;
+  };
+
   let stopScheduler = () => {};
   if (REMOTE) {
     // nothing to start
@@ -290,6 +309,15 @@ async function main() {
     await call('auth', 'DELETE', '/auth/me', { token: (await call('auth', 'POST', '/auth/login', { body: { email: eve, password: 'a-fourth-password-4' } })).token, body: { password: 'a-fourth-password-4' }, expect: [200, 204] });
   }
 
+  if (REMOTE || LAMBDA) {
+    // the unversioned alias keeps working and answers exactly like /api/v1
+    const viaV1 = await request('auth', 'GET', '/auth/me', { Authorization: `Bearer ${A}` });
+    prefix = '/api';
+    const viaAlias = await request('auth', 'GET', '/auth/me', { Authorization: `Bearer ${A}` });
+    prefix = '/api/v1';
+    check(viaV1.status === 200 && viaAlias.status === 200 && viaV1.text === viaAlias.text, 'api: /api/v1 and the /api alias answer identically');
+  }
+
   // ---- habits ------------------------------------------------------------
   const h1 = await call('habit', 'POST', '/habits', {
     token: A, body: { name: 'Read', activeDays: [0, 1, 2, 3, 4, 5, 6] },
@@ -324,6 +352,27 @@ async function main() {
   await call('analytics', 'GET', `/analytics/habits/${h2.id}`, { token: A });
   const ins = await call('analytics', 'GET', '/analytics/insights', { token: A });
   check(Number.isInteger(ins.moodDays) && ins.moodDays >= 1, `analytics: insights report how many days have a mood (${ins.moodDays})`);
+
+  // ---- signed webhooks ---------------------------------------------------
+  if (!REMOTE) {
+    const sec = await call('auth', 'GET', '/auth/webhook-secret', { token: A });
+    check(/^whsec_[\w-]{40,}$/.test(sec.secret || '') && sec.version === 1, 'webhooks: the user has a signing secret');
+    await call('auth', 'GET', '/auth/webhook-secret', { token: T, expect: [403] });
+    const wh = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Signed', webhookUrl: hookUrl } });
+    await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: wh.id, date: today, value: 1 } });
+    check(await waitFor(() => hooks.length === 1), 'webhooks: completing the habit sends one delivery');
+    const d1 = hooks[0];
+    const payload = JSON.parse(d1.body);
+    check(payload.event === 'habit.completed' && payload.habit === 'Signed' && payload.id === d1.headers['x-openhabit-delivery']
+      && d1.headers['x-openhabit-event'] === 'habit.completed', 'webhooks: headers and body identify the event and delivery');
+    check(signatureOk(sec.secret, d1), 'webhooks: the signature verifies with the user\'s secret');
+    check(!signatureOk(sec.secret, { ...d1, body: d1.body.replace('Signed', 'Forged') }), 'webhooks: a tampered body fails verification');
+    const rot = await call('auth', 'POST', '/auth/webhook-secret/rotate', { token: A });
+    check(rot.version === 2 && rot.secret !== sec.secret, 'webhooks: rotating issues a new secret');
+    await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: wh.id, date: daysAgo(1), value: 1 } });
+    check(await waitFor(() => hooks.length === 2), 'webhooks: a second delivery arrives');
+    check(signatureOk(rot.secret, hooks[1]) && !signatureOk(sec.secret, hooks[1]), 'webhooks: after rotation only the new secret verifies');
+  }
 
   // ---- categories, quit habits, pause --------------------------------------
   const quitH = await call('habit', 'POST', '/habits', {
@@ -507,6 +556,7 @@ async function main() {
 
   stopScheduler();
   ntfy.close();
+  hookServer.close();
   mailServer.close();
   pushService.close();
 }

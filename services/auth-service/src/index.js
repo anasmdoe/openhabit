@@ -271,6 +271,25 @@ app.post('/auth/verify/send', auth, requireSession, asyncH(async (req, res) => {
   res.json({ ok: true, verified: false });
 }));
 
+// ---- webhook signing secret ---------------------------------------------
+// The secret is derived (HMAC of JWT_SECRET, user id and a version), so nothing secret is stored.
+// tracking-service derives the same value to sign deliveries; rotating bumps the version.
+const webhookSecret = (userId, version) =>
+  `whsec_${crypto.createHmac('sha256', JWT_SECRET).update(`webhook:${userId}:${version}`).digest('base64url')}`;
+
+app.get('/auth/webhook-secret', auth, requireSession, asyncH(async (req, res) => {
+  const { rows } = await pool.query('SELECT webhook_secret_version AS v FROM users WHERE id = $1', [req.userId]);
+  if (!rows.length) return res.status(401).json({ error: 'unauthorized' });
+  res.json({ secret: webhookSecret(req.userId, rows[0].v), version: rows[0].v });
+}));
+
+app.post('/auth/webhook-secret/rotate', auth, requireSession, asyncH(async (req, res) => {
+  const { rows } = await pool.query(
+    'UPDATE users SET webhook_secret_version = webhook_secret_version + 1 WHERE id = $1 RETURNING webhook_secret_version AS v', [req.userId]);
+  if (!rows.length) return res.status(401).json({ error: 'unauthorized' });
+  res.json({ secret: webhookSecret(req.userId, rows[0].v), version: rows[0].v });
+}));
+
 // ---- personal API tokens ------------------------------------------------
 const MAX_TOKENS_PER_USER = 20;
 

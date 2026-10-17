@@ -47,7 +47,7 @@ export interface DataAdapter {
 }
 
 // ---------------------------------------------------------------- api mode
-export const API = '/api';
+export const API = '/api/v1';
 const TOKEN_KEY = 'openhabit.token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
@@ -112,6 +112,8 @@ export const authApi = {
     req<{ ok: true }>('/auth/reset', { method: 'POST', body: JSON.stringify({ token, password }) }),
   verifyEmail: (token: string) => req<{ ok: true }>('/auth/verify', { method: 'POST', body: JSON.stringify({ token }) }),
   sendVerification: () => req<{ ok: true; verified: boolean }>('/auth/verify/send', { method: 'POST' }),
+  webhookSecret: () => req<{ secret: string; version: number }>('/auth/webhook-secret'),
+  rotateWebhookSecret: () => req<{ secret: string; version: number }>('/auth/webhook-secret/rotate', { method: 'POST' }),
   feedUrl: () => req<{ query: string }>('/habits/feed-url'),
   revokeToken: (id: string) => req<void>(`/auth/tokens/${id}`, { method: 'DELETE' }),
   changePassword: (currentPassword: string, newPassword: string) =>

@@ -44,6 +44,34 @@ variable "nat_mode" {
   }
 }
 
+variable "db_engine" {
+  description = "With create_database: \"rds\" (a small always-on RDS Postgres instance, about $13/month) or \"aurora-serverless\" (Aurora PostgreSQL Serverless v2 that pauses to zero capacity when idle: you pay for storage only until the next request, which then waits about 15 seconds for the resume)."
+  type        = string
+  default     = "rds"
+
+  validation {
+    condition     = contains(["rds", "aurora-serverless"], var.db_engine)
+    error_message = "db_engine must be rds or aurora-serverless."
+  }
+}
+
+variable "aurora_max_acu" {
+  description = "Aurora Serverless v2 ceiling in capacity units (1 ACU is about 2 GiB of RAM)."
+  type        = number
+  default     = 2
+}
+
+variable "aurora_pause_after_seconds" {
+  description = "Idle time before Aurora pauses (300 to 86400). Anything that queries the database keeps it awake, including the reminder check: with reminder_interval_minutes below this it never pauses."
+  type        = number
+  default     = 600
+
+  validation {
+    condition     = var.aurora_pause_after_seconds >= 300 && var.aurora_pause_after_seconds <= 86400
+    error_message = "aurora_pause_after_seconds must be between 300 and 86400."
+  }
+}
+
 variable "db_instance_class" {
   type    = string
   default = "db.t4g.micro"

@@ -443,6 +443,11 @@ removes everything except your database.
   functions' role may read only that secret. (Sandboxes that cannot attach inline policies get the
   broader AWS-managed `SecretsManagerReadWrite` instead.) The values are still in Terraform state: keep
   it private.
+- Database that sleeps: `db_engine = "aurora-serverless"` (with `create_database`) uses Aurora PostgreSQL
+  Serverless v2, which pauses to zero capacity when idle, so you pay for storage only until the next
+  request (which waits ~15 s). Trade-offs, why not DynamoDB, and what a DynamoDB model would look like are in
+  [docs/adr/0001-database-for-scale-to-zero.md](docs/adr/0001-database-for-scale-to-zero.md). Offline-tested
+  only: the KodeKloud sandbox denies the instance class.
 - Email: set `mail` (see *Email* below) and, behind a custom domain, `public_url`.
 - SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
 - Next step on the roadmap: a DynamoDB storage backend, which removes the
@@ -591,6 +596,63 @@ and k8s Prometheus: service down, DB unreachable (per service), reminder loop
 stalled (>5 min without a tick), reminder tick errors, 5xx rate >5%, p95
 latency >1s, and pg pool saturation. Point Alertmanager (or Grafana alerting)
 at them to get notified — an ntfy receiver works nicely here too.
+
+## API versioning
+
+The stable address of the API is **`/api/v1`**: `GET /api/v1/habits`. The web app and the docs use it.
+`/api/...` without a version is an alias of the current version, handy for quick scripts; pin `/api/v1`
+for anything long-lived. Breaking changes will only ever appear under a new prefix (`/api/v2`) and the
+previous one stays available for at least six months. Additions (new fields, new endpoints) are not
+breaking and arrive in v1. Every layer serves both prefixes: the nginx gateway, the Kubernetes ingress
+and API Gateway on AWS. The full reference is `/openapi.yaml`.
+
+## Webhooks
+
+Set a webhook URL on a habit and OpenHabit sends it a `POST` when the habit is completed:
+
+```json
+{ "id": "6f1c...", "event": "habit.completed", "created": "2026-10-17T07:41:03.000Z",
+  "habitId": "…", "habit": "Reading", "date": "2026-10-17", "value": 12,
+  "message": "Reading completed (2026-10-17)" }
+```
+
+Every delivery is **signed** so the receiver can tell it from a forged request:
+
+| Header | Value |
+|---|---|
+| `X-OpenHabit-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">` |
+| `X-OpenHabit-Event` | `habit.completed` |
+| `X-OpenHabit-Delivery` | the same uuid as `id` in the body; use it to drop duplicates |
+
+The key is your signing secret (`whsec_…`): Account menu > Webhook signing, or `GET /api/v1/auth/webhook-secret`.
+Rotating it (`POST /api/v1/auth/webhook-secret/rotate`) replaces it for all your habits at once. Verify
+against the **raw bytes** you received, compare in constant time, and reject timestamps more than five
+minutes old (replays):
+
+```js
+// Node
+import crypto from 'node:crypto';
+function verify(secret, rawBody, header) {
+  const p = Object.fromEntries(header.split(',').map((kv) => kv.split('=')));
+  if (Math.abs(Date.now() / 1000 - Number(p.t)) > 300) return false;
+  const want = crypto.createHmac('sha256', secret).update(`${p.t}.${rawBody}`).digest('hex');
+  return p.v1.length === want.length && crypto.timingSafeEqual(Buffer.from(p.v1), Buffer.from(want));
+}
+```
+
+```python
+# Python
+import hmac, hashlib, time
+def verify(secret: str, raw_body: bytes, header: str) -> bool:
+    p = dict(kv.split("=", 1) for kv in header.split(","))
+    if abs(time.time() - int(p["t"])) > 300:
+        return False
+    want = hmac.new(secret.encode(), p["t"].encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(p["v1"], want)
+```
+
+A delivery is attempted once with a 3-second timeout (no retries); answer quickly and do slow work after
+responding. Services such as ntfy that just want a URL keep working: they ignore the extra headers.
 
 ## Email: password reset and address verification
 

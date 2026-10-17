@@ -4,8 +4,11 @@ info:
   version: 1.0.0
   summary: REST API of the self-hosted OpenHabit habit tracker.
   description: |
-    Every route is served under `/api` by the gateway (nginx, the Kubernetes ingress, or API Gateway on AWS),
-    for example `GET /api/habits`.
+    Every route is served under `/api/v1` by the gateway (nginx, the Kubernetes ingress, or API Gateway on AWS),
+    for example `GET /api/v1/habits`. `/api/habits` is an alias of the current version. Breaking changes will
+    only ever appear under a new prefix (`/api/v2`) and the previous one stays available for at least six months.
+
+    **Webhooks.** A habit's webhook URL receives a signed `POST` when the habit is completed (see the README, "Webhooks").
 
     **Authentication.** Send `Authorization: Bearer <token>`. The token is either a session token from
     `/auth/login` (or `/auth/register`) or a long-lived **personal API token** created under
@@ -22,7 +25,10 @@ info:
     name: AGPL-3.0-or-later
     identifier: AGPL-3.0-or-later
 servers:
+  - url: /api/v1
+    description: Versioned and stable. Breaking changes will only ever appear under a new prefix (/api/v2), with the old one kept for at least six months.
   - url: /api
+    description: Alias of the current version (same as /api/v1 today). Convenient for quick scripts; pin /api/v1 for anything long-lived.
 tags:
   - name: Auth
     description: Accounts, sessions, personal API tokens and Web Push devices.
@@ -178,6 +184,42 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
         '501': { description: 'Email is not set up on this server.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /auth/webhook-secret:
+    get:
+      operationId: getWebhookSecret
+      tags: [Auth]
+      summary: Get the secret that signs your habit webhooks
+      description: Needs a signed-in session, not an API token. The secret is derived, so the same value is returned until it is rotated.
+      responses:
+        '200':
+          description: The signing secret and its version.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string, example: 'whsec_Zm9v...' }
+                  version: { type: integer, example: 1 }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /auth/webhook-secret/rotate:
+    post:
+      operationId: rotateWebhookSecret
+      tags: [Auth]
+      summary: Replace the webhook signing secret
+      description: Deliveries after this call are signed with the new secret; receivers must be updated.
+      responses:
+        '200':
+          description: The new secret and version.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  version: { type: integer }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /auth/oidc/login:
     get:
       operationId: startSso

@@ -122,7 +122,7 @@ export function AccountMenu() {
   const [verifySent, setVerifySent] = useState(false);
   const { authConfig, user, logout, changePassword, deleteAccount, updateName, openArchived } = useApp();
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens' | 'calendar'>('menu');
+  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens' | 'calendar' | 'webhooks'>('menu');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
@@ -222,6 +222,10 @@ export function AccountMenu() {
                   onClick={() => setView('calendar')}>
                   Calendar feed
                 </MenuBtn>
+                <MenuBtn icon={<path d="M9 12l2 2 4-4m5 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" strokeLinecap="round" strokeLinejoin="round" />}
+                  onClick={() => setView('webhooks')}>
+                  Webhook signing
+                </MenuBtn>
                 <MenuBtn icon={<path d="M4 8h16M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" />}
                   onClick={() => { close(); openArchived(); }}>
                   Archived habits
@@ -262,6 +266,7 @@ export function AccountMenu() {
 
             {view === 'tokens' && <TokensView onBack={() => setView('menu')} />}
             {view === 'calendar' && <CalendarFeedView onBack={() => setView('menu')} />}
+            {view === 'webhooks' && <WebhookSecretView onBack={() => setView('menu')} />}
 
             {view === 'profile' && (
               <>
@@ -618,6 +623,50 @@ export function ResetPassword({ token, onDone }: { token: string; onDone: () => 
           </>
         )}
       </form>
+    </div>
+  );
+}
+
+function WebhookSecretView({ onBack }: { onBack: () => void }) {
+  const [secret, setSecret] = useState('');
+  const [shown, setShown] = useState(false);
+  const [err, setErr] = useState('');
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    authApi.webhookSecret().then((r) => setSecret(r.secret)).catch((e) => setErr(e instanceof Error ? e.message : 'failed'));
+  }, []);
+  const rotate = async () => {
+    if (!confirm('Replace the signing secret? Receivers still using the old one will reject new deliveries until you update them.')) return;
+    try { setSecret((await authApi.rotateWebhookSecret()).secret); setShown(true); } catch (e) { setErr(e instanceof Error ? e.message : 'failed'); }
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[12px] font-semibold flex items-center gap-2">
+        <button onClick={onBack} className="text-ink-soft hover:text-ink" aria-label="Back">‹</button>
+        Webhook signing
+      </div>
+      <p className="text-[11px] text-ink-soft leading-snug">
+        Webhooks you set on a habit are signed with this secret in an <code>X-OpenHabit-Signature</code> header, so
+        the receiving service can tell a real delivery from a forged one. Treat it like a password.
+        The README shows how to verify it.
+      </p>
+      {secret ? (
+        <>
+          <code className="num text-[10.5px] break-all select-all bg-forest-900 rounded-md p-2" aria-label="Signing secret">
+            {shown ? secret : `${secret.slice(0, 9)}${'•'.repeat(24)}`}
+          </code>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={() => setShown((v) => !v)} className="text-[11px] font-semibold border border-line rounded-lg px-2.5 py-1.5 hover:bg-forest-850">
+              {shown ? 'Hide' : 'Reveal'}
+            </button>
+            <button onClick={() => { navigator.clipboard?.writeText(secret); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="text-[11px] font-semibold bg-mint text-forest-950 rounded-lg px-2.5 py-1.5">
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+            <button onClick={rotate} className="text-[11px] text-ink-soft hover:text-red-400 px-1.5">Rotate…</button>
+          </div>
+        </>
+      ) : err ? <p className="text-[11px] text-red-400">{err}</p> : <p className="text-[11px] text-ink-soft">Loading…</p>}
     </div>
   );
 }

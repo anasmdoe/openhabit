@@ -6,7 +6,7 @@ async function stubApi(page: Page, opts: { mail: boolean }) {
   const calls: { path: string; body: unknown }[] = [];
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
-    const path = url.pathname.replace(/^\/api/, '');
+    const path = url.pathname.replace(/^\/api(?:\/v1)?/, '');
     const body = route.request().postData() ? JSON.parse(route.request().postData()!) : undefined;
     const json = (status: number, data: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
     if (path === '/auth/config') return json(200, { registration: true, mail: opts.mail, oidc: { enabled: false } });

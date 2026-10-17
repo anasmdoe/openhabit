@@ -102,7 +102,7 @@ resource "aws_db_subnet_group" "db" {
 }
 
 resource "aws_db_instance" "db" {
-  count = var.create_database ? 1 : 0
+  count = var.create_database && var.db_engine == "rds" ? 1 : 0
 
   identifier              = "${var.name}-db"
   engine                  = "postgres"
@@ -128,6 +128,57 @@ resource "aws_db_instance" "db" {
       error_message = "create_database needs db_admin_password (16+ characters)."
     }
   }
+}
+
+# ---- Aurora PostgreSQL Serverless v2 (db_engine = "aurora-serverless") --------------
+# Scales to zero capacity after aurora_pause_after_seconds without connections, so an idle
+# deployment costs only storage (about $0.10 per GB-month). The first request after a pause waits
+# ~15 s while the database resumes: Lambda timeouts of 30 s absorb that, the 10 s sandbox limit does
+# not (the request fails once and the retry works).
+
+locals {
+  aurora = var.create_database && var.db_engine == "aurora-serverless"
+}
+
+resource "aws_rds_cluster" "aurora" {
+  count = local.aurora ? 1 : 0
+
+  cluster_identifier      = "${var.name}-aurora"
+  engine                  = "aurora-postgresql"
+  engine_version          = "16"
+  database_name           = var.db_name
+  master_username         = "openhabit_admin"
+  master_password         = var.db_admin_password
+  db_subnet_group_name    = aws_db_subnet_group.db[0].name
+  vpc_security_group_ids  = [aws_security_group.db[0].id]
+  storage_encrypted       = true
+  backup_retention_period = 1 # Aurora's minimum
+  skip_final_snapshot     = true
+  deletion_protection     = false
+  apply_immediately       = true
+
+  serverlessv2_scaling_configuration {
+    min_capacity             = 0
+    max_capacity             = var.aurora_max_acu
+    seconds_until_auto_pause = var.aurora_pause_after_seconds
+  }
+
+  lifecycle {
+    precondition {
+      condition     = length(var.db_admin_password) >= 16
+      error_message = "create_database needs db_admin_password (16+ characters)."
+    }
+  }
+}
+
+resource "aws_rds_cluster_instance" "aurora" {
+  count = local.aurora ? 1 : 0
+
+  identifier         = "${var.name}-aurora-1"
+  cluster_identifier = aws_rds_cluster.aurora[0].id
+  engine             = aws_rds_cluster.aurora[0].engine
+  engine_version     = aws_rds_cluster.aurora[0].engine_version
+  instance_class     = "db.serverless"
 }
 
 # ---- optional internet egress (nat_mode) -----------------------------------------
@@ -320,5 +371,5 @@ resource "aws_lambda_invocation" "migrate" {
     secrets   = var.use_secrets_manager ? aws_secretsmanager_secret_version.app[0].version_id : ""
   }
 
-  depends_on = [aws_db_instance.db]
+  depends_on = [aws_db_instance.db, aws_rds_cluster_instance.aurora]
 }

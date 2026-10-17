@@ -2,6 +2,7 @@ import express from 'express';
 import pg from 'pg';
 import { metricsMiddleware, metricsHandler } from './metrics.js';
 import { verifyAction } from './actions.js';
+import { signingSecret, signBody } from './webhook.js';
 import crypto from 'node:crypto';
 
 const PORT = process.env.PORT || 3002;
@@ -129,13 +130,20 @@ app.get('/entries', asyncH(async (req, res) => {
 // Completion webhook (3s cap). Point it at anything that accepts a POST — an
 // ntfy topic URL gives instant push notifications. Logs the outcome (habit id
 // and status; never the URL). Returns a promise that never rejects.
-function fireWebhook(habitId, url, payload) {
+function fireWebhook(habitId, url, payload, secret) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 3000);
+  const body = JSON.stringify(payload);
   return fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'OpenHabit-Webhook/1',
+      'X-OpenHabit-Event': payload.event,
+      'X-OpenHabit-Delivery': payload.id,
+      'X-OpenHabit-Signature': signBody(secret, body),
+    },
+    body,
     signal: ctrl.signal,
   })
     .then((r) => console.log(`webhook habit=${habitId} status=${r.status}`))
@@ -150,7 +158,8 @@ const AWAIT_WEBHOOKS = process.env.OPENHABIT_RUNTIME === 'lambda';
 async function completionWebhook(habitId, userId, date, value) {
   if (value === -1) return;
   const { rows } = await pool.query(
-    `SELECT name, type, target::float AS target, target_type AS "targetType", webhook_url AS url
+    `SELECT name, type, target::float AS target, target_type AS "targetType", webhook_url AS url,
+            (SELECT webhook_secret_version FROM users WHERE id = $2) AS "secretVersion"
      FROM habits WHERE id = $1 AND user_id = $2 AND webhook_url <> '' AND kind = 'build'`,
     [habitId, userId]
   );
@@ -161,9 +170,10 @@ async function completionWebhook(habitId, userId, date, value) {
     : h.targetType === 'at_most' ? value <= h.target : value >= h.target;
   if (!completed) return;
   const sent = fireWebhook(habitId, h.url, {
-    event: 'habit.completed', habit: h.name, date, value,
+    id: crypto.randomUUID(), event: 'habit.completed', created: new Date().toISOString(),
+    habitId, habit: h.name, date, value,
     message: `${h.name} completed (${date})`,
-  });
+  }, signingSecret(JWT_SECRET, userId, h.secretVersion ?? 1));
   if (AWAIT_WEBHOOKS) await sent;
 }
 

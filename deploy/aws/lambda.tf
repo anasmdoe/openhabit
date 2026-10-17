@@ -21,7 +21,9 @@ locals {
     : var.enable_cdn ? "https://${aws_cloudfront_distribution.app[0].domain_name}"
   : aws_apigatewayv2_api.api.api_endpoint)
 
-  db_host = var.create_database ? aws_db_instance.db[0].address : var.db_host
+  db_host = (var.create_database
+    ? (var.db_engine == "aurora-serverless" ? aws_rds_cluster.aurora[0].endpoint : aws_db_instance.db[0].address)
+  : var.db_host)
 
   service_env = {
     auth = {
