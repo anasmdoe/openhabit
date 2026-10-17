@@ -711,17 +711,17 @@ paths:
                   overall:
                     type: object
                     properties:
-                      pct: { type: integer, nullable: true }
+                      pct: { type: [integer, 'null'] }
                       done: { type: integer }
                       goal: { type: integer }
-                      prevPct: { type: integer, nullable: true }
-                      delta: { type: integer, nullable: true }
+                      prevPct: { type: [integer, 'null'] }
+                      delta: { type: [integer, 'null'] }
                   habits:
                     type: array
                     items: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, done: { type: integer }, goal: { type: integer }, pct: { type: integer } } }
-                  best: { type: object, nullable: true, properties: { name: { type: string }, done: { type: integer }, goal: { type: integer } } }
-                  attention: { type: object, nullable: true, properties: { name: { type: string }, done: { type: integer }, goal: { type: integer } } }
-                  streak: { type: object, nullable: true, properties: { name: { type: string }, length: { type: integer } } }
+                  best: { type: [object, 'null'], properties: { name: { type: string }, done: { type: integer }, goal: { type: integer } } }
+                  attention: { type: [object, 'null'], properties: { name: { type: string }, done: { type: integer }, goal: { type: integer } } }
+                  streak: { type: [object, 'null'], properties: { name: { type: string }, length: { type: integer } } }
                   freezesUsed: { type: integer }
                   perfectDays: { type: integer }
                   message: { type: object, properties: { subject: { type: string }, text: { type: string } } }
