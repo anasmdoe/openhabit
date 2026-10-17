@@ -62,7 +62,7 @@ function GoalRow({ g, onEdit }: { g: GoalView; onEdit: () => void }) {
         <span className="text-[13.5px] font-semibold text-ink truncate">{g.title}</span>
         <span className={`text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
       </div>
-      <div className="relative h-2 rounded-full bg-line overflow-hidden" role="progressbar" aria-valuenow={g.pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className="relative h-2 rounded-full bg-line overflow-hidden" role="progressbar" aria-label={`${g.title} progress`} aria-valuenow={g.pct} aria-valuemin={0} aria-valuemax={100}>
         <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, g.pct)}%`, background: g.habit.color }} />
         {g.status !== 'done' && g.elapsedPct > 0 && g.elapsedPct < 100 && (
           <div className="absolute inset-y-0 w-0.5 bg-ink/60" style={{ left: `${g.elapsedPct}%` }} title="Where you should be by now" />
