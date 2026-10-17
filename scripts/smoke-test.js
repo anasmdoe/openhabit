@@ -39,7 +39,10 @@ const PUSH_ENV = {
 };
 
 // Email: the auth-service posts every message to a local receiver (filled in by main())
-const MAIL_ENV = { MAIL_TRANSPORT: 'webhook', MAIL_WEBHOOK_URL: '', MAIL_FROM: 'OpenHabit <smoke@openhabit.test>' };
+const MAIL_ENV = {
+  MAIL_TRANSPORT: 'webhook', MAIL_WEBHOOK_URL: '', MAIL_FROM: 'OpenHabit <smoke@openhabit.test>',
+  OPENHABIT_TEST_CLOCK: '2026-10-18T19:00:00Z', // a Sunday evening: the weekly review is due (reminder-service reads it)
+};
 
 const SERVICES = {
   auth: 3911, habit: 3912, tracking: 3913, analytics: 3914, social: 3915, reminder: 3916,
@@ -372,6 +375,37 @@ async function main() {
     await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: wh.id, date: daysAgo(1), value: 1 } });
     check(await waitFor(() => hooks.length === 2), 'webhooks: a second delivery arrives');
     check(signatureOk(rot.secret, hooks[1]) && !signatureOk(sec.secret, hooks[1]), 'webhooks: after rotation only the new secret verifies');
+  }
+
+  // ---- weekly review ------------------------------------------------------------
+  {
+    const wr = `wr-${tag}@smoke.test`;
+    const w = await call('auth', 'POST', '/auth/register', { body: { email: wr, password: 'smoke-password-1', name: 'Wren' } });
+    const W = w.token;
+    await call('auth', 'PUT', '/auth/me', { token: W, body: { weeklyReview: 'yes' }, expect: [400] });
+    const me0 = await call('auth', 'GET', '/auth/me', { token: W });
+    check(me0.weeklyReview === false, 'weekly review: off until the user opts in');
+    const wh = await call('habit', 'POST', '/habits', { token: W, body: { name: 'Digest habit', activeDays: [0, 1, 2, 3, 4, 5, 6] } });
+    // Mon 12 .. Sat 17 Oct 2026 done except Wednesday (a streak freeze covers it); Sunday 18th is "today"
+    await call('tracking', 'POST', '/entries/bulk', { token: W, body: { entries: ['2026-10-12', '2026-10-13', '2026-10-15', '2026-10-16', '2026-10-17'].map((date) => ({ habitId: wh.id, date, value: 1 })) } });
+    const prev = await call('analytics', 'GET', '/analytics/weekly-review?week=2026-10-14&today=2026-10-18', { token: W });
+    check(prev.weekStart === '2026-10-12' && prev.overall.goal === 6 && prev.overall.done === 5 && prev.overall.pct === 83 && prev.freezesUsed === 1
+      && prev.streak?.length === 5 && /Digest habit/.test(prev.message.text), `weekly review: the preview digest is right (${prev.overall?.pct}%, streak ${prev.streak?.length}, freezes ${prev.freezesUsed})`);
+    await call('analytics', 'GET', '/analytics/weekly-review?week=nonsense', { token: W, expect: [400] });
+    // opt in, with an ntfy topic and email: the Sunday tick sends exactly one digest to each, however many replicas run
+    await call('auth', 'PUT', '/auth/me', { token: W, body: { weeklyReview: true, ntfyUrl: `${ntfyUrl}-review`, timezone: 'UTC' } });
+    if (!REMOTE) {
+      check(await waitFor(() => pushes.some((p) => p.title?.startsWith('Your week') && p.body.includes('Digest')) , 12000) || await waitFor(() => pushes.some((p) => p.title?.startsWith('Your week')), 6000),
+        'weekly review: the Sunday digest reaches the ntfy topic');
+      check(await waitFor(() => mailsTo(wr).some((m) => m.subject.startsWith('Your week')), 8000), 'weekly review: and the email');
+      await sleep(1500); // give a second replica time to (not) send it again
+      check(pushes.filter((p) => p.title?.startsWith('Your week')).length === 1 && mailsTo(wr).filter((m) => m.subject.startsWith('Your week')).length === 1,
+        'weekly review: sent exactly once across replicas');
+      const m = mailsTo(wr).find((x) => x.subject.startsWith('Your week'));
+      check(/83%/.test(m?.text ?? '') && /streak freeze saved a day/.test(m?.text ?? '') && /Longest run: Digest habit, 5 days/.test(m?.text ?? ''),
+        'weekly review: the email reports the week, the freeze and the streak');
+    }
+    await call('auth', 'PUT', '/auth/me', { token: W, body: { weeklyReview: false } });
   }
 
   // ---- categories, quit habits, pause --------------------------------------

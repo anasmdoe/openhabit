@@ -88,7 +88,7 @@ interface AppState {
   logout(): void;
   changePassword(current: string, next: string): Promise<void>;
   updateName(name: string): Promise<void>;
-  updateProfile(patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string }): Promise<void>;
+  updateProfile(patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string; weeklyReview?: boolean }): Promise<void>;
   deleteAccount(password: string): Promise<void>;
   init(): Promise<void>;
   openArchived(): Promise<void>;

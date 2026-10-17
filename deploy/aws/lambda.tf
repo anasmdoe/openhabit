@@ -50,6 +50,11 @@ locals {
       VAPID_PUBLIC_KEY          = var.vapid.public_key
       VAPID_PRIVATE_KEY         = var.vapid.private_key
       VAPID_SUBJECT             = var.vapid.subject
+      # the weekly review email (same settings as the auth function)
+      MAIL_TRANSPORT   = var.mail.transport
+      MAIL_FROM        = var.mail.from
+      MAIL_WEBHOOK_URL = var.mail.webhook_url
+      SMTP_URL         = var.mail.smtp_url
     }
   }
 

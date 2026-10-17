@@ -135,7 +135,7 @@ setInterval(() => {
 
 const PUBLIC_USER = `id, email, name, ntfy_url AS "ntfyUrl", timezone,
   quiet_start AS "quietStart", quiet_end AS "quietEnd", created_at AS "createdAt",
-  (email_verified_at IS NOT NULL) AS "emailVerified"`;
+  (email_verified_at IS NOT NULL) AS "emailVerified", weekly_review AS "weeklyReview"`;
 const VALID_TZ = new Set([...Intl.supportedValuesOf('timeZone'), 'UTC']);
 const validHm = (v) => typeof v === 'string' && (v === '' || /^([01]\d|2[0-3]):[0-5]\d$/.test(v));
 const validNtfy = (v) => typeof v === 'string' && v.length <= 300 && (v === '' || /^https?:\/\//.test(v));
@@ -475,6 +475,11 @@ app.put('/auth/me', auth, requireSession, asyncH(async (req, res) => {
     if (typeof timezone !== 'string' || !VALID_TZ.has(timezone))
       return res.status(400).json({ error: 'unknown timezone' });
     await pool.query('UPDATE users SET timezone = $1 WHERE id = $2', [timezone, req.userId]);
+  }
+  const { weeklyReview } = req.body;
+  if (weeklyReview !== undefined) {
+    if (typeof weeklyReview !== 'boolean') return res.status(400).json({ error: 'weeklyReview must be true or false' });
+    await pool.query('UPDATE users SET weekly_review = $1 WHERE id = $2', [weeklyReview, req.userId]);
   }
   const { quietStart, quietEnd } = req.body;
   if (quietStart !== undefined || quietEnd !== undefined) {

@@ -52,6 +52,14 @@ it standalone.
   get a confirmation link (optionally required before first sign-in). Needs an outgoing-mail setting,
   see *Email* below; without one the app works as before and hides these options
 - **Themes** — Auto (follows the phone's light/dark setting), dark, pitch black (OLED), light
+- **Streak protection** — a daily habit can forgive a few missed days a month: a miss straight after a
+  completed day is "frozen" and the streak carries on (never two in a row; Off, 1, 2 or 3 a month per
+  habit, set in the habit editor, default 1). Frozen days show as a snowflake in the calendar, and the
+  habit window says how many freezes are left. Skips, Take a break and flexible "N per week" habits work as before
+- **Weekly review** — opt in under Account > Weekly review and every Sunday at 18:00 (your time) you get
+  one digest by notification, ntfy and, when the server has email set up, email: overall completion and the
+  change on the week before, the strongest habit, the one with most room, perfect days, your longest run
+  and any streak freezes used. Quiet weeks say so instead of inventing numbers
 - **Habit window** — tap a habit for a summary (tracking since, 7/30/90-day and all-time rates,
   next milestone), trend and best-weekday sentences, an editable 3-month calendar (tap a day to
   tick, skip, clear, set a value or add a note), a notes timeline, average/best/total for
@@ -596,6 +604,23 @@ and k8s Prometheus: service down, DB unreachable (per service), reminder loop
 stalled (>5 min without a tick), reminder tick errors, 5xx rate >5%, p95
 latency >1s, and pg pool saturation. Point Alertmanager (or Grafana alerting)
 at them to get notified — an ntfy receiver works nicely here too.
+
+## Streak protection and the weekly review
+
+**Streaks.** Each daily habit has a *streak protection* setting (0 to 3 freezes a month, default 1). Walking
+the scheduled days in order, a missed day is *frozen* when the day before it was completed and the habit
+still has a freeze left in that calendar month; two misses in a row always end the streak (a freeze covers a
+sick day, not a week off: use Skip or Take a break for that). Nothing is stored: freezes are derived from the
+entries, so fixing a past day always gives a consistent answer, and the browser, `analytics-service` and the
+weekly review all run the same rule (`frontend/src/lib/streaks.ts`, `services/_shared/streaks.js`). Quit
+habits and flexible weekly habits are not affected.
+
+**The review.** `reminder-service` checks each opted-in user (`users.weekly_review`); on Sunday between 18:00
+and 22:00 in the user's timezone it claims the week in `weekly_reviews_sent` (so replicas and retries never
+double-send) and sends the digest to their Web Push subscriptions, their ntfy topic and, if email is
+configured (see *Email* below; the reminder service takes the same `MAIL_*` settings), their account address.
+`GET /api/v1/analytics/weekly-review` returns the same digest for the in-app preview. For tests only,
+`OPENHABIT_TEST_CLOCK=2026-10-18T19:00:00Z` pins the clock the review uses.
 
 ## API versioning
 

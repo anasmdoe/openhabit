@@ -409,3 +409,26 @@ ALTER TABLE habits ADD COLUMN IF NOT EXISTS streak_freezes SMALLINT NOT NULL DEF
 INSERT INTO schema_migrations (version, name, checksum) VALUES ('0004', 'streak_freezes', 'af99a30af4abaee5f25f17aa1bf7c28b46f196999e4072765e8a5ec66938cf2b');
 COMMIT;
 \endif
+
+-- ===== migration 0005 weekly_review =====
+SELECT COALESCE((SELECT checksum FROM schema_migrations WHERE version = '0005'), '') AS have \gset
+SELECT (:'have' = '') AS fresh, (:'have' <> '' AND :'have' <> '242def212d11f46f71cad1f42ea30d8f421a9bf8c60d6adcee2d3a67851ebd3e') AS drift \gset
+\if :drift
+  SELECT 'migration 0005 weekly_review was edited after it was applied; add a new migration instead'::int;
+\endif
+\if :fresh
+BEGIN;
+-- Weekly review: an opt-in Sunday-evening digest (push, ntfy and email).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_review BOOLEAN NOT NULL DEFAULT false;
+
+-- One row per user and reviewed week, claimed before sending so replicas and retries never send it twice.
+CREATE TABLE IF NOT EXISTS weekly_reviews_sent (
+  user_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  week_start DATE NOT NULL,
+  sent_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, week_start)
+);
+GRANT SELECT, INSERT, DELETE ON weekly_reviews_sent TO reminder_svc;
+INSERT INTO schema_migrations (version, name, checksum) VALUES ('0005', 'weekly_review', '242def212d11f46f71cad1f42ea30d8f421a9bf8c60d6adcee2d3a67851ebd3e');
+COMMIT;
+\endif

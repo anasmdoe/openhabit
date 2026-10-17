@@ -66,7 +66,7 @@ jobs:
         run: |
           cmp ../_shared/metrics.js src/metrics.js
           cmp ../_shared/lambda.js src/lambda.js
-          [ ! -f src/actions.js ] || cmp ../_shared/actions.js src/actions.js
+          for f in actions.js streaks.js digest.js mailer.js; do [ ! -f src/$f ] || cmp ../_shared/$f src/$f; done
 
   database:
     runs-on: ubuntu-24.04

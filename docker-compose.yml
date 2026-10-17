@@ -82,6 +82,11 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # weekly review email (off until MAIL_TRANSPORT and PUBLIC_URL are set)
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_WEBHOOK_URL: ${MAIL_WEBHOOK_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

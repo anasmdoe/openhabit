@@ -2,6 +2,8 @@ import express from 'express';
 import pg from 'pg';
 import { metricsMiddleware, metricsHandler } from './metrics.js';
 import crypto from 'node:crypto';
+import { freezeDays, freezesEnabled } from './streaks.js';
+import { buildDigest, defaultWeek, digestMessage } from './digest.js';
 
 const PORT = process.env.PORT || 3003;
 const pool = new pg.Pool({
@@ -110,33 +112,6 @@ const isScheduled = (habit, dateStr) =>
 
 // prorated weekly quota for a segment of `segDays` days
 const quotaFor = (freq, segDays) => Math.max(1, Math.round((freq * segDays) / 7));
-
-// ---- streak protection (freezes): keep in step with frontend/src/lib/streaks.ts -----------------
-// A daily build habit with streakFreezes > 0 may have up to that many missed days per calendar month
-// forgiven when the miss comes straight after a completed day (never two in a row).
-const freezesEnabled = (h) => isFixedDay(h) && h.kind !== 'quit' && (h.streakFreezes ?? 0) > 0;
-function freezeDays(habit, valueAt, from, today, habitStart = habit.createdDate) {
-  const frozen = new Set();
-  const used = new Map();
-  if (!freezesEnabled(habit)) return { frozen, used };
-  let prev = null;
-  for (let d = from; d <= today; d = addDays(d, 1)) {
-    if (d < habitStart || !habit.activeDays.includes(dow(d))) continue;
-    const v = valueAt(d);
-    if (isSkip(v)) continue;
-    if (isCompleted(habit, v)) { prev = 'done'; continue; }
-    if (d === today) continue; // still open
-    const month = d.slice(0, 7);
-    if (prev === 'done' && (used.get(month) ?? 0) < habit.streakFreezes) {
-      frozen.add(d);
-      used.set(month, (used.get(month) ?? 0) + 1);
-      prev = 'frozen';
-    } else {
-      prev = 'miss';
-    }
-  }
-  return { frozen, used };
-}
 
 async function loadHabits(userId) {
   const { rows } = await pool.query(
@@ -429,6 +404,26 @@ app.get('/analytics/overview', asyncH(async (req, res) => {
       .map(({ id, name, color, pct }) => ({ id, name, color, pct })),
     wellness: wellnessRows.rows,
   });
+}));
+
+// ==========================================================================
+// GET /analytics/weekly-review[?week=YYYY-MM-DD][&today=YYYY-MM-DD]
+// The same digest the Sunday notification sends, for the in-app preview. `week` is any date in
+// the week to review (default: the week that is ending on a Sunday, else the last complete week);
+// `today` is the caller's local date (default: the server's UTC date).
+// ==========================================================================
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+app.get('/analytics/weekly-review', asyncH(async (req, res) => {
+  const today = req.query.today ?? todayISO();
+  if (!DATE_RE.test(today) || (req.query.week !== undefined && !DATE_RE.test(String(req.query.week)))) {
+    return res.status(400).json({ error: 'week and today must be YYYY-MM-DD' });
+  }
+  const week = req.query.week ? addDays(String(req.query.week), -((dow(String(req.query.week)) + 6) % 7)) : defaultWeek(today);
+  const habits = await loadHabits(req.userId);
+  const byHabit = await loadEntries(req.userId, addDays(week, -130), today);
+  const digest = buildDigest({ habits, valuesByHabit: byHabit, weekStart: week, today });
+  const { subject, text } = digestMessage(digest);
+  res.json({ ...digest, message: { subject, text } });
 }));
 
 // ==========================================================================

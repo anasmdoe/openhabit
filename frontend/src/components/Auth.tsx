@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useApp } from '../store';
 import { exportCSV, exportJSON, importJSON, importLoopCSV } from '../lib/exportImport';
 import { API, authApi } from '../api';
+import type { WeeklyReview } from '../api';
+import { today as todayLocal } from '../store';
+import { Snowflake } from '../lib/icons';
 import { pushSupported, needsHomeScreen, currentSubscription, enablePush, disablePush } from '../lib/push';
 import { useModalOpen } from '../lib/modal';
 
@@ -122,7 +125,7 @@ export function AccountMenu() {
   const [verifySent, setVerifySent] = useState(false);
   const { authConfig, user, logout, changePassword, deleteAccount, updateName, openArchived } = useApp();
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens' | 'calendar' | 'webhooks'>('menu');
+  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens' | 'calendar' | 'webhooks' | 'weekly'>('menu');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
@@ -218,6 +221,10 @@ export function AccountMenu() {
                   onClick={() => setView('tokens')}>
                   API tokens
                 </MenuBtn>
+                <MenuBtn icon={<path d="M4 19V9m6 10V5m6 14v-7m4 7H3" strokeLinecap="round" strokeLinejoin="round" />}
+                  onClick={() => setView('weekly')}>
+                  Weekly review
+                </MenuBtn>
                 <MenuBtn icon={<path d="M7 3v3m10-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" strokeLinecap="round" strokeLinejoin="round" />}
                   onClick={() => setView('calendar')}>
                   Calendar feed
@@ -267,6 +274,7 @@ export function AccountMenu() {
             {view === 'tokens' && <TokensView onBack={() => setView('menu')} />}
             {view === 'calendar' && <CalendarFeedView onBack={() => setView('menu')} />}
             {view === 'webhooks' && <WebhookSecretView onBack={() => setView('menu')} />}
+            {view === 'weekly' && <WeeklyReviewView onBack={() => setView('menu')} />}
 
             {view === 'profile' && (
               <>
@@ -667,6 +675,63 @@ function WebhookSecretView({ onBack }: { onBack: () => void }) {
           </div>
         </>
       ) : err ? <p className="text-[11px] text-red-400">{err}</p> : <p className="text-[11px] text-ink-soft">Loading…</p>}
+    </div>
+  );
+}
+
+function WeeklyReviewView({ onBack }: { onBack: () => void }) {
+  const { user, authConfig, updateProfile } = useApp();
+  const [review, setReview] = useState<WeeklyReview | null>(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    authApi.weeklyReview(todayLocal()).then(setReview).catch((e) => setErr(e instanceof Error ? e.message : 'failed'));
+  }, []);
+  const on = !!user?.weeklyReview;
+  const toggle = async () => {
+    setBusy(true); setErr('');
+    try { await updateProfile({ weeklyReview: !on }); } catch (e) { setErr(e instanceof Error ? e.message : 'failed'); } finally { setBusy(false); }
+  };
+  const channels = ['a notification on your devices and ntfy topic', ...(authConfig?.mail ? ['an email'] : [])].join(' and ');
+  const d = review;
+  const fmt = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[12px] font-semibold flex items-center gap-2">
+        <button onClick={onBack} className="text-ink-soft hover:text-ink" aria-label="Back">‹</button>
+        Weekly review
+      </div>
+      <label className="flex items-start gap-2.5 text-[12px] leading-snug cursor-pointer">
+        <input type="checkbox" checked={on} onChange={toggle} disabled={busy} className="mt-0.5 w-4 h-4 accent-[rgb(var(--mint))]" />
+        <span>Send me a review on Sunday evenings
+          <span className="block text-[11px] text-ink-soft">At 18:00 your time: {channels}. Strongest habit, the one with most room, perfect days, your longest run.</span>
+        </span>
+      </label>
+      {err && <p className="text-[11px] text-red-400">{err}</p>}
+      <div className="rounded-xl border border-line p-3 flex flex-col gap-2" aria-live="polite">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-ink-soft">
+          {d ? `Preview: ${fmt(d.weekStart)} to ${fmt(d.weekEnd)}` : 'Preview'}
+        </div>
+        {!d ? <p className="text-[11px] text-ink-soft">Loading…</p> : !d.enough ? (
+          <p className="text-[12px] text-ink-soft">A quiet week. Log a few more days and the review will have more to say.</p>
+        ) : (
+          <>
+            <div className="flex items-baseline gap-2">
+              <span className="num text-2xl font-bold">{d.overall.pct}%</span>
+              {d.overall.delta !== null && d.overall.delta !== 0 && (
+                <span className="num text-[11px] text-ink-soft">{d.overall.delta > 0 ? `up ${d.overall.delta}` : `${-d.overall.delta} below`} on the week before</span>
+              )}
+            </div>
+            <ul className="text-[12px] leading-snug flex flex-col gap-1">
+              {d.best && <li>Strongest: <b>{d.best.name}</b> <span className="text-ink-soft">({d.best.done} of {d.best.goal})</span></li>}
+              {d.attention && <li>Most room: <b>{d.attention.name}</b> <span className="text-ink-soft">({d.attention.done} of {d.attention.goal})</span></li>}
+              {d.perfectDays > 0 && <li>{d.perfectDays} perfect day{d.perfectDays === 1 ? '' : 's'}</li>}
+              {d.streak && <li>Longest run: <b>{d.streak.name}</b>, {d.streak.length} days</li>}
+              {d.freezesUsed > 0 && <li className="inline-flex items-center gap-1 text-[rgb(var(--ice))]"><Snowflake />A streak freeze saved {d.freezesUsed === 1 ? 'a day' : `${d.freezesUsed} days`}</li>}
+            </ul>
+          </>
+        )}
+      </div>
     </div>
   );
 }

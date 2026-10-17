@@ -268,6 +268,7 @@ paths:
                 ntfyUrl: { type: string, description: 'ntfy topic URL, http(s), or empty to turn off.' }
                 timezone: { type: string, example: Asia/Kolkata }
                 quietStart: { type: string, example: '22:00', description: 'HH:MM; send with quietEnd, or both empty.' }
+                weeklyReview: { type: boolean, description: 'Opt in or out of the Sunday-evening weekly review.' }
                 quietEnd: { type: string, example: '07:00' }
                 currentPassword: { type: string }
                 newPassword: { type: string, minLength: 8 }
@@ -684,6 +685,48 @@ paths:
           description: Goals, completion per day/week/habit, and wellness for the month.
           content: { application/json: { schema: { $ref: '#/components/schemas/Overview' } } }
         '400': { $ref: '#/components/responses/Error' }
+  /analytics/weekly-review:
+    get:
+      operationId: getWeeklyReview
+      tags: [Analytics]
+      summary: The weekly review digest (what the Sunday notification sends)
+      description: >-
+        One week boiled down: overall completion and the change on the week before, the strongest habit,
+        the one with most room, perfect days, the longest current run and the streak freezes used.
+        `enough` is false when there is too little data to say anything honest.
+      parameters:
+        - { name: week, in: query, description: 'Any date in the week to review. Default: the week ending today if it is Sunday, otherwise the last complete week.', schema: { type: string, format: date } }
+        - { name: today, in: query, description: "The caller's local date (default: the server's UTC date).", schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: The digest, plus the notification and email text built from it.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  weekStart: { type: string, format: date }
+                  weekEnd: { type: string, format: date }
+                  enough: { type: boolean }
+                  overall:
+                    type: object
+                    properties:
+                      pct: { type: integer, nullable: true }
+                      done: { type: integer }
+                      goal: { type: integer }
+                      prevPct: { type: integer, nullable: true }
+                      delta: { type: integer, nullable: true }
+                  habits:
+                    type: array
+                    items: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, done: { type: integer }, goal: { type: integer }, pct: { type: integer } } }
+                  best: { type: object, nullable: true, properties: { name: { type: string }, done: { type: integer }, goal: { type: integer } } }
+                  attention: { type: object, nullable: true, properties: { name: { type: string }, done: { type: integer }, goal: { type: integer } } }
+                  streak: { type: object, nullable: true, properties: { name: { type: string }, length: { type: integer } } }
+                  freezesUsed: { type: integer }
+                  perfectDays: { type: integer }
+                  message: { type: object, properties: { subject: { type: string }, text: { type: string } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
   /analytics/habits/{id}:
     get:
       operationId: getHabitDetail
@@ -1082,6 +1125,7 @@ components:
         quietEnd: { type: string }
         createdAt: { type: string, format: date-time }
         emailVerified: { type: boolean }
+        weeklyReview: { type: boolean, description: 'Opted in to the Sunday-evening weekly review.' }
     ApiToken:
       type: object
       properties:

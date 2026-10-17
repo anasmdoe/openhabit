@@ -9,6 +9,8 @@ import pg from 'pg';
 import { metricsHandler, registerCustom } from './metrics.js';
 import { isDue, inQuietHours, signSnooze, verifySnooze, signDone, notificationActions, SNOOZE_CHOICES } from './reminders.js';
 import { sendPush } from './webpush.js';
+import { mailEnabled, sendMail, PUBLIC_URL as MAIL_PUBLIC_URL } from './mailer.js';
+import { buildDigest, defaultWeek, digestMessage } from './digest.js';
 
 const PORT = process.env.PORT || 3006;
 const TICK_MS = parseInt(process.env.TICK_MS, 10) || 60_000;
@@ -83,13 +85,13 @@ const lastTickGauge = registerCustom('openhabit_reminder_last_tick_timestamp', '
 // One log line per push (habit id and outcome only; topic URLs and push
 // endpoints stay out of logs): the way to see delivery problems where /metrics
 // isn't scraped (AWS).
-function notifyNtfy(habitId, url, title, message, actions) {
+function notifyNtfy(habitId, url, title, message, actions, tags = 'alarm_clock') {
   remindersSent.inc();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 4000);
   return fetch(url, {
     method: 'POST',
-    headers: { Title: title, Priority: 'default', Tags: 'alarm_clock', ...(actions ? { Actions: actions } : {}) },
+    headers: { Title: title, Priority: 'default', Tags: tags, ...(actions ? { Actions: actions } : {}) },
     body: message,
     signal: ctrl.signal,
   })
@@ -174,8 +176,77 @@ async function pendingMessage(h, now) {
     : `Don't break the chain — ${h.name} isn't logged yet.`;
 }
 
+
+// ---- weekly review -----------------------------------------------------------
+// Opt-in (users.weekly_review). On Sunday evening, local time (18:00 to 22:00, so a missed tick
+// still sends), each opted-in user gets one digest of the week that is ending: Web Push, ntfy and email.
+// The send is claimed in weekly_reviews_sent first, so replicas and retries never double-send.
+const REVIEW_FROM = '18:00';
+const REVIEW_UNTIL = '22:00';
+const CLOCK = process.env.OPENHABIT_TEST_CLOCK; // tests only: a fixed UTC "now" for the review, e.g. 2026-10-18T19:00:00Z
+
+function reviewNow(timeZone) {
+  if (!CLOCK) return localNow(timeZone);
+  const d = new Date(CLOCK);
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(d).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, hm: `${p.hour}:${p.minute}`, dow: DOW[p.weekday] ?? 0 };
+}
+
+async function loadDigest(userId, weekStart, today) {
+  const { rows: habits } = await pool.query(
+    `SELECT h.id, h.name, h.type, h.target::float AS target, h.target_type AS "targetType",
+            h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays", h.kind,
+            h.streak_freezes AS "streakFreezes",
+            to_char(LEAST(h.created_at::date, COALESCE((SELECT MIN(e.date) FROM entries e WHERE e.habit_id = h.id), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
+     FROM habits h WHERE h.user_id = $1 AND NOT h.archived`, [userId]);
+  const from = addDaysISO(weekStart, -130);
+  const { rows: ents } = await pool.query(
+    `SELECT e.habit_id AS "habitId", to_char(e.date, 'YYYY-MM-DD') AS date, e.value::float AS value
+     FROM entries e JOIN habits h ON h.id = e.habit_id
+     WHERE h.user_id = $1 AND e.date BETWEEN $2 AND $3`, [userId, from, today]);
+  const valuesByHabit = new Map();
+  for (const e of ents) {
+    if (!valuesByHabit.has(e.habitId)) valuesByHabit.set(e.habitId, new Map());
+    valuesByHabit.get(e.habitId).set(e.date, e.value);
+  }
+  return buildDigest({ habits, valuesByHabit, weekStart, today });
+}
+
+export async function weeklyReviews() {
+  const { rows: users } = await pool.query(
+    'SELECT id, email, name, timezone, ntfy_url, quiet_start, quiet_end FROM users WHERE weekly_review');
+  for (const u of users) {
+    const now = reviewNow(u.timezone);
+    if (now.dow !== 0 || now.hm < REVIEW_FROM || now.hm > REVIEW_UNTIL) continue;
+    if (inQuietHours(now.hm, u.quiet_start, u.quiet_end)) continue;
+    const weekStartDate = defaultWeek(now.date);
+    const claim = await pool.query(
+      'INSERT INTO weekly_reviews_sent (user_id, week_start) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING 1', [u.id, weekStartDate]);
+    if (!claim.rowCount) continue;
+    try {
+      const msg = digestMessage(await loadDigest(u.id, weekStartDate, now.date), { name: u.name, appUrl: MAIL_PUBLIC_URL || PUBLIC_URL });
+      const sends = [];
+      if (u.ntfy_url) sends.push(notifyNtfy('weekly-review', u.ntfy_url, msg.pushTitle, msg.pushBody, undefined, 'chart_with_upwards_trend'));
+      if (VAPID) {
+        const { rows: subs } = await pool.query('SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1', [u.id]);
+        for (const sub of subs) sends.push(notifyWebPush('weekly-review', sub, { title: msg.pushTitle, body: msg.pushBody, tag: 'weekly-review', url: '/', actions: [] }));
+      }
+      if (mailEnabled && u.email) {
+        sends.push(sendMail({ to: u.email, subject: msg.subject, text: msg.text })
+          .then(() => console.log('weekly review email sent'))
+          .catch((e) => console.warn(`weekly review email failed: ${e.message}`)));
+      }
+      await Promise.all(sends);
+    } catch (e) {
+      console.error(`weekly review failed: ${e.message}`);
+    }
+  }
+}
 // ---- the tick --------------------------------------------------------------
 export async function tick() {
+  await weeklyReviews().catch((e) => console.error('weekly reviews failed:', e.message));
   const { rows } = await pool.query(
     `SELECT h.id, h.user_id, h.name, h.type, h.unit, h.target::float AS target, h.target_type,
             h.schedule_type, h.frequency, h.active_days, h.reminder_time, h.cue,

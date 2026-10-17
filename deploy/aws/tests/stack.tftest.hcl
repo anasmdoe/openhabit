@@ -280,7 +280,7 @@ run "default_keeps_secrets_in_the_environment" {
   }
 }
 
-run "mail_settings_reach_the_auth_function_only" {
+run "mail_settings_reach_the_functions_that_send_mail" {
   command = apply
 
   variables {
@@ -300,6 +300,10 @@ run "mail_settings_reach_the_auth_function_only" {
   assert {
     condition     = !contains(keys(aws_lambda_function.svc["habit"].environment[0].variables), "SMTP_URL")
     error_message = "other functions must not receive the SMTP credentials"
+  }
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.MAIL_TRANSPORT) == "smtp" && nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.SMTP_URL) == "smtp://user:pw@smtp.example.com:587"
+    error_message = "the reminder function sends the weekly review email, so it gets the mail settings too"
   }
 }
 

@@ -57,6 +57,20 @@ export const setToken = (t: string | null) =>
 
 export class AuthError extends Error {}
 
+export interface WeeklyReview {
+  weekStart: string;
+  weekEnd: string;
+  enough: boolean;
+  overall: { pct: number | null; done: number; goal: number; prevPct: number | null; delta: number | null };
+  habits: { id: string; name: string; done: number; goal: number; pct: number }[];
+  best: { name: string; done: number; goal: number } | null;
+  attention: { name: string; done: number; goal: number } | null;
+  streak: { name: string; length: number } | null;
+  freezesUsed: number;
+  perfectDays: number;
+  message: { subject: string; text: string };
+}
+
 export interface User {
   id: string;
   email: string;
@@ -67,6 +81,7 @@ export interface User {
   quietEnd: string;
   createdAt?: string; // ISO time the account was created
   emailVerified?: boolean;
+  weeklyReview?: boolean;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -115,13 +130,15 @@ export const authApi = {
   sendVerification: () => req<{ ok: true; verified: boolean }>('/auth/verify/send', { method: 'POST' }),
   webhookSecret: () => req<{ secret: string; version: number }>('/auth/webhook-secret'),
   rotateWebhookSecret: () => req<{ secret: string; version: number }>('/auth/webhook-secret/rotate', { method: 'POST' }),
+  weeklyReview: (today: string, week?: string) =>
+    req<WeeklyReview>(`/analytics/weekly-review?today=${today}${week ? `&week=${week}` : ''}`),
   feedUrl: () => req<{ query: string }>('/habits/feed-url'),
   revokeToken: (id: string) => req<void>(`/auth/tokens/${id}`, { method: 'DELETE' }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
   updateName: (name: string) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ name }) }),
-  updateProfile: (patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string }) =>
+  updateProfile: (patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string; weeklyReview?: boolean }) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify(patch) }),
   deleteAccount: (password: string) =>
     req<void>('/auth/me', { method: 'DELETE', body: JSON.stringify({ password }) }),

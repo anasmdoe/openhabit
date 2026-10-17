@@ -137,6 +137,11 @@ The per-habit mood link already lives in the Trend panel (needs 5 done and 5 mis
 3. **`db/seed.js`** now creates categories, reminder times, cues and a real quit habit, and can bring an existing demo account up to date.
 4. **`scripts/verify-all.sh`**: every check in one PASS/FAIL table, with an optional live-stack pass.
 
+## Added in round 10
+
+1. **Streak protection**: per-habit monthly freezes for daily habits, derived from the entries (nothing stored), shown as snowflakes in the calendar, in the habit overview and on Today.
+2. **Weekly review**: an opt-in Sunday-evening digest by push, ntfy and email, with an in-app preview. Shared pure code (`services/_shared/digest.js`, `streaks.js`) so the preview and the notification agree.
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |
