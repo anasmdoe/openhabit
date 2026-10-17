@@ -26,6 +26,11 @@ data "aws_subnets" "default" {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
   }
+  # the VPC's own public subnets, not private ones other stacks (nat_mode) may have added
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
 }
 
 data "aws_ssm_parameter" "ubuntu" {
@@ -70,9 +75,16 @@ data "aws_iam_policy_document" "read_token" {
 }
 
 resource "aws_iam_role_policy" "read_token" {
+  count  = var.use_managed_iam_policies ? 0 : 1
   name   = "read-github-token"
   role   = aws_iam_role.runner.id
   policy = data.aws_iam_policy_document.read_token.json
+}
+
+resource "aws_iam_role_policy_attachment" "read_token_managed" {
+  count      = var.use_managed_iam_policies ? 1 : 0
+  role       = aws_iam_role.runner.name
+  policy_arn = "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
 }
 
 resource "aws_iam_instance_profile" "runner" {
@@ -100,6 +112,9 @@ resource "aws_instance" "runner" {
   subnet_id              = var.subnet_id != "" ? var.subnet_id : data.aws_subnets.default.ids[0]
   iam_instance_profile   = aws_iam_instance_profile.runner.name
   vpc_security_group_ids = [aws_security_group.runner.id]
+
+  # outbound-only: a public address for reaching GitHub and npm, with no inbound rule at all
+  associate_public_ip_address = true
 
   metadata_options {
     http_tokens                 = "required" # IMDSv2 only

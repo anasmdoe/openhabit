@@ -253,7 +253,7 @@ variable "cloudfront_price_class" {
 # ---- email (password reset, address verification) --------------------------------
 
 variable "mail" {
-  description = "Outgoing email for password-reset and verification links. transport: smtp (Amazon SES SMTP, Mailgun, ...), webhook, log or empty (= off). Links use the app's public URL (set public_url when it is not the default)."
+  description = "Outgoing email for password-reset and verification links. transport: ses (Amazon SES API, no credentials to manage), smtp (Mailgun, SES SMTP, ...), webhook, log or empty (= off). Links use the app's public URL (set public_url when it is not the default)."
   type = object({
     transport   = string
     from        = string
@@ -280,6 +280,12 @@ variable "use_secrets_manager" {
 
 variable "secret_name" {
   description = "Name of the Secrets Manager secret (use_secrets_manager)."
+  type        = string
+  default     = ""
+}
+
+variable "ses_identity" {
+  description = "With mail.transport = \"ses\": the email address or domain SES may send from (it is verified for you: an address gets a confirmation link, a domain needs DKIM DNS records, see the ses_dkim_records output). mail.from must belong to it."
   type        = string
   default     = ""
 }

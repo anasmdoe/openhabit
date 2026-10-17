@@ -341,6 +341,29 @@ run "rejects_bad_aurora_pause" {
   expect_failures = [var.aurora_pause_after_seconds]
 }
 
+run "ses_sends_with_the_function_role" {
+  command = apply
+
+  variables {
+    public_url   = "https://habits.example.com"
+    ses_identity = "no-reply@example.com"
+    mail         = { transport = "ses", from = "OpenHabit <no-reply@example.com>", smtp_url = "", webhook_url = "" }
+  }
+
+  assert {
+    condition     = length(aws_sesv2_email_identity.from) == 1
+    error_message = "the sender identity must be created for verification"
+  }
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.MAIL_TRANSPORT) == "ses"
+    error_message = "the auth function must use the SES transport"
+  }
+  assert {
+    condition     = length(aws_iam_role_policy.lambda_ses) + length(aws_iam_role_policy_attachment.lambda_ses_managed) == 1
+    error_message = "the function role must be allowed to send"
+  }
+}
+
 run "rejects_weak_secrets" {
   command = plan
 

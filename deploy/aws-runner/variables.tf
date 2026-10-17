@@ -59,3 +59,9 @@ variable "secret_name" {
   type        = string
   default     = ""
 }
+
+variable "use_managed_iam_policies" {
+  description = "For sandboxes that deny inline role policies (iam:PutRolePolicy): attach the broader AWS-managed SecretsManagerReadWrite instead of a policy limited to the one secret."
+  type        = bool
+  default     = false
+}

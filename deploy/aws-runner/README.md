@@ -24,6 +24,11 @@ Then give the instance a GitHub token (it stays in Secrets Manager; Terraform ne
 To point the nightly "live" run at your stack, set the repository **variable** `E2E_BASE_URL`
 (Settings > Secrets and variables > Actions > Variables) to the app URL, or type it into a manual run.
 
+In a sandbox that denies inline IAM policies add `-var use_managed_iam_policies=true` (the instance role then
+gets the broader `SecretsManagerReadWrite`; use the default in a real account). The boot log is also written to the
+serial console: `aws ec2 get-console-output --instance-id <id> --latest` shows how far it got and
+"waiting for a GitHub token" until you store one.
+
 ## How it behaves
 
 - **Ephemeral.** The runner takes one job, deregisters, and a fresh one registers. A job cannot leave

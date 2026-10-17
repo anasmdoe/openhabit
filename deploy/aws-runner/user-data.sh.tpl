@@ -1,7 +1,9 @@
 #!/bin/bash
 # Boots a self-hosted GitHub Actions runner that takes one job at a time (ephemeral).
 set -euo pipefail
-exec > >(tee -a /var/log/openhabit-runner-setup.log) 2>&1
+# also to the serial console, so `aws ec2 get-console-output` shows how far the boot got
+exec > >(tee -a /var/log/openhabit-runner-setup.log /dev/console) 2>&1
+echo "openhabit-runner: bootstrap started"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -34,12 +36,13 @@ cd /opt/actions-runner
 while true; do
   PAT=$(aws secretsmanager get-secret-value --region ${region} --secret-id '${secret_id}' --query SecretString --output text 2>/dev/null || true)
   if [ -z "$PAT" ] || [ "$PAT" = "None" ]; then
-    echo "no GitHub token in secret ${secret_id} yet; retrying in 60s"; sleep 60; continue
+    echo "no GitHub token in secret ${secret_id} yet; retrying in 60s" | tee /dev/console; sleep 60; continue
   fi
   REG=$(curl -fsS -X POST -H "Authorization: Bearer $PAT" -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/${repository}/actions/runners/registration-token" | jq -r .token) || REG=""
   unset PAT
   if [ -z "$REG" ] || [ "$REG" = "null" ]; then echo "could not get a registration token; retrying in 60s"; sleep 60; continue; fi
+  echo "openhabit-runner: registering an ephemeral runner" | tee /dev/console
   ./config.sh --unattended --ephemeral --replace --url "https://github.com/${repository}" --token "$REG" \
     --name "$(hostname)-$(date +%s)" --labels '${labels}' --work _work
   ./run.sh   # returns after one job
@@ -64,3 +67,4 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now openhabit-runner.service
+echo "openhabit-runner: bootstrap finished; waiting for a GitHub token in ${secret_id}"

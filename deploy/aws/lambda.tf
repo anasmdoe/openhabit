@@ -145,5 +145,5 @@ resource "aws_lambda_function" "svc" {
     )
   }
 
-  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed, aws_iam_role_policy.lambda_secrets, aws_iam_role_policy_attachment.lambda_secrets_managed]
+  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed, aws_iam_role_policy.lambda_secrets, aws_iam_role_policy_attachment.lambda_secrets_managed, aws_iam_role_policy.lambda_ses, aws_iam_role_policy_attachment.lambda_ses_managed]
 }

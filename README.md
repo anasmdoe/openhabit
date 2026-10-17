@@ -661,10 +661,15 @@ Set these on the auth-service (Docker: in `.env`; Kubernetes: keys in `app-secre
 | Setting | Meaning |
 |---|---|
 | `PUBLIC_URL` | The https address users open the app at. Links in emails point here and **only** here: it is never taken from a request, which would let anyone aim a victim's reset link at their own server |
-| `MAIL_TRANSPORT` | `smtp` (Amazon SES SMTP, Mailgun, a Gmail app password, your own server), `webhook` (POSTs `{to, subject, text}` to `MAIL_WEBHOOK_URL`: Home Assistant, n8n, a script) or `log` (prints links to the service log: development only) |
+| `MAIL_TRANSPORT` | `ses` (AWS Lambda only: the Amazon SES API with the function's IAM role, so no SMTP credentials; set `mail.transport = "ses"` and `ses_identity` in `terraform.tfvars`), `smtp` (Amazon SES SMTP, Mailgun, a Gmail app password, your own server), `webhook` (POSTs `{to, subject, text}` to `MAIL_WEBHOOK_URL`: Home Assistant, n8n, a script) or `log` (prints links to the service log: development only) |
 | `SMTP_URL` | `smtp://user:password@host:587` or `smtps://…:465` |
 | `MAIL_FROM` | e.g. `OpenHabit <no-reply@example.com>` |
 | `REQUIRE_EMAIL_VERIFICATION` | `true`: refuse sign-in until the address is confirmed |
+
+**Amazon SES on AWS:** `ses_identity` is verified for you. For an email address, SES mails it a
+confirmation link to click once; for a domain, add the three DKIM CNAME records from the `ses_dkim_records`
+output to its DNS. A new SES account is in *sandbox* mode (200 mails a day, only to verified addresses): ask for
+production access in the SES console before inviting real users. `mail.from` must belong to the identity.
 
 Reset links last one hour, verification links 24 hours, both work once, and a newer request voids older
 ones. "Forgot password" answers the same whether or not the address has an account and is rate limited

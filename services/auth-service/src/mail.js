@@ -1,5 +1,7 @@
 // Outgoing email for verification and password-reset links.
-//   MAIL_TRANSPORT = smtp | webhook | log   (unset = email is off)
+//   MAIL_TRANSPORT = ses | smtp | webhook | log   (unset = email is off)
+//   ses            = the Amazon SES API, using the function's IAM role (AWS Lambda only: the SDK comes with the
+//                    Lambda runtime). MAIL_FROM must be a verified SES identity.
 //   MAIL_FROM      = "OpenHabit <no-reply@example.com>"
 //   SMTP_URL       = smtp://user:pass@host:587  or  smtps://user:pass@host:465
 //                    (Amazon SES, Mailgun, Gmail app passwords... all speak SMTP)
@@ -14,7 +16,7 @@ const TRANSPORT = (process.env.MAIL_TRANSPORT || '').toLowerCase();
 const FROM = process.env.MAIL_FROM || 'OpenHabit <no-reply@localhost>';
 export const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
 
-export const mailEnabled = ['smtp', 'webhook', 'log'].includes(TRANSPORT) && /^https?:\/\/[^/]+/.test(PUBLIC_URL)
+export const mailEnabled = ['ses', 'smtp', 'webhook', 'log'].includes(TRANSPORT) && /^https?:\/\/[^/]+/.test(PUBLIC_URL)
   && (TRANSPORT !== 'smtp' || !!process.env.SMTP_URL)
   && (TRANSPORT !== 'webhook' || /^https?:\/\//.test(process.env.MAIL_WEBHOOK_URL || ''));
 
@@ -23,9 +25,18 @@ if (TRANSPORT && !mailEnabled) {
 }
 
 let smtp;
+let sesClient;
 export async function sendMail({ to, subject, text }) {
   if (!mailEnabled) throw new Error('email is not configured');
-  if (TRANSPORT === 'smtp') {
+  if (TRANSPORT === 'ses') {
+    const { SESv2Client, SendEmailCommand } = await import('@aws-sdk/client-sesv2');
+    sesClient ||= new SESv2Client({});
+    await sesClient.send(new SendEmailCommand({
+      FromEmailAddress: FROM,
+      Destination: { ToAddresses: [to] },
+      Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Text: { Data: text, Charset: 'UTF-8' } } } },
+    }));
+  } else if (TRANSPORT === 'smtp') {
     smtp ||= nodemailer.createTransport(process.env.SMTP_URL);
     await smtp.sendMail({ from: FROM, to, subject, text });
   } else if (TRANSPORT === 'webhook') {
