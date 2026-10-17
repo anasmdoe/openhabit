@@ -634,6 +634,34 @@ paths:
         '200': { description: 'Habit marked done.', content: { text/plain: { schema: { type: string } } } }
         '403': { description: 'Invalid or expired link.', content: { text/plain: { schema: { type: string } } } }
         '404': { description: 'Habit not found (or not a yes/no habit).', content: { text/plain: { schema: { type: string } } } }
+  /wellness/bulk:
+    post:
+      operationId: bulkPutWellness
+      tags: [Tracking]
+      summary: Log mood and sleep for many days in one request
+      description: Up to 400 days; the same upsert rules as `PUT /wellness` (a null keeps what is stored). One request instead of one per day keeps imports within per-function invocation budgets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days]
+              properties:
+                days:
+                  type: array
+                  maxItems: 400
+                  items:
+                    type: object
+                    required: [date]
+                    properties:
+                      date: { type: string, format: date }
+                      mood: { type: [integer, 'null'], minimum: 1, maximum: 5 }
+                      sleepHours: { type: [number, 'null'], minimum: 0, maximum: 24 }
+      responses:
+        '200': { description: 'Days stored.', content: { application/json: { schema: { type: object, properties: { imported: { type: integer } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
   /wellness:
     get:
       operationId: listWellness

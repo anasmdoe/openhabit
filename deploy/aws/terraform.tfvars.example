@@ -33,5 +33,7 @@ db_name = "openhabit"
 #   provider_name = "Cognito"
 # }
 
-# KodeKloud playground: its compliance sweep deletes any Lambda named "*-tracking" within minutes.
-# function_names = { tracking = "openhabit-entries" }
+# KodeKloud playground: a Lambda function that is invoked more than 300 times in an hour is flagged and
+# deleted by the lab's compliance sweep. Keep test runs small (one smoke test is about 45 calls to the
+# busiest function, tracking) and avoid scripts that make one request per day of history (use /wellness/bulk).
+# function_names = { tracking = "openhabit-entries" }   # only if an account's policies reject a particular name

@@ -346,6 +346,10 @@ async function main() {
   await call('tracking', 'DELETE', `/entries/${h2.id}/${today}`, { token: A });
   await call('tracking', 'PUT', '/wellness', { token: A, body: { date: today, mood: 4, sleepHours: 7.5 } });
   await call('tracking', 'GET', `/wellness?from=${daysAgo(30)}&to=${today}`, { token: A });
+  const wb = await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: [{ date: daysAgo(5), mood: 3, sleepHours: 7 }, { date: daysAgo(6), mood: 4 }, { date: daysAgo(7), sleepHours: 6.5 }] } });
+  check(wb.imported === 3, 'wellness: a whole history goes in with one bulk request');
+  await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: [{ date: daysAgo(5), mood: 9 }] }, expect: [400] });
+  await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: 'nope' }, expect: [400] });
   await call('tracking', 'PUT', '/entries', { token: B, body: { habitId: h1.id, date: today, value: 1 }, expect: [404] });
 
   // ---- analytics ---------------------------------------------------------
@@ -594,7 +598,10 @@ async function main() {
     const ticks = metric('openhabit_reminder_ticks_total');
     const tickErrors = metric('openhabit_reminder_tick_errors_total');
     if (LAMBDA) check(schedulerErrors === 0, `reminder: scheduled invocations without errors (errors=${schedulerErrors})`);
-    else check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
+    else {
+      check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
+      if (tickErrors) console.log(`  reminder log: ${(logs.reminder.match(/.*tick failed.*/g) || []).slice(0, 3).join(' | ')}`);
+    }
     check(metric('openhabit_reminder_snoozes_total') === 1, 'reminder: snooze counted in metrics');
   }
 

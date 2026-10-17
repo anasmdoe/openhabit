@@ -90,15 +90,18 @@ async function main() {
     console.log(`  ${def.name}: ${entries.length} entries`);
   }
 
+  // one request for the whole history (a request per day would burn a per-function invocation budget)
+  const wellness = [];
   for (let i = DAYS; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    await req('/wellness', 'PUT', {
+    wellness.push({
       date: iso(d),
       mood: Math.min(5, Math.max(1, Math.round(3 + (rand() - 0.45) * 3))),
       sleepHours: Math.round((6 + rand() * 2.5) * 2) / 2,
     });
   }
+  await req('/wellness/bulk', 'POST', { days: wellness });
   console.log('  wellness: mood + sleep for every day');
   console.log(`Done. Sign in as ${EMAIL} / ${PASSWORD} and enjoy.`);
 }

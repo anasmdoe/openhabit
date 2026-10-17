@@ -156,12 +156,11 @@ export async function importJSON(adapter: DataAdapter, file: File): Promise<Impo
   }
 
   // wellness upserts (COALESCE on the server keeps whichever side has data)
-  let wellnessN = 0;
-  for (const w of data.wellness ?? []) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(w.date)) continue;
-    await adapter.putWellness({ date: w.date, mood: w.mood ?? null, sleepHours: w.sleepHours ?? null });
-    wellnessN += 1;
-  }
+  // (in batches: a request per day would be hundreds of calls for a year of history)
+  const days = (data.wellness ?? [])
+    .filter((w) => /^\d{4}-\d{2}-\d{2}$/.test(w.date))
+    .map((w) => ({ date: w.date, mood: w.mood ?? null, sleepHours: w.sleepHours ?? null }));
+  const wellnessN = await adapter.bulkPutWellness(days);
 
   return { habits: created, entries: imported, wellness: wellnessN, skippedHabits: merged };
 }

@@ -249,6 +249,30 @@ app.get('/wellness', asyncH(async (req, res) => {
   res.json(rows);
 }));
 
+// POST /wellness/bulk  body: { days: [{ date, mood?, sleepHours? }] }  (up to 400; same upsert rules as PUT)
+// One request instead of one per day: imports and seeding stay within per-function invocation budgets.
+app.post('/wellness/bulk', asyncH(async (req, res) => {
+  const { days } = req.body;
+  if (!Array.isArray(days) || days.length > 400) return res.status(400).json({ error: 'days array required (at most 400)' });
+  const ok = (d) => d && isDate(d.date)
+    && (d.mood == null || (Number.isInteger(d.mood) && d.mood >= 1 && d.mood <= 5))
+    && (d.sleepHours == null || (typeof d.sleepHours === 'number' && d.sleepHours >= 0 && d.sleepHours <= 24));
+  const good = days.filter(ok);
+  if (good.length !== days.length) return res.status(400).json({ error: 'every day needs a date, mood 1-5 and sleepHours 0-24 (or null)' });
+  if (good.length) {
+    await pool.query(
+      `INSERT INTO wellness (user_id, date, mood, sleep_hours)
+       SELECT $1, d.date::date, d.mood, d.sleep
+       FROM jsonb_to_recordset($2::jsonb) AS d(date text, mood int, sleep numeric)
+       ON CONFLICT (user_id, date) DO UPDATE SET
+         mood = COALESCE(EXCLUDED.mood, wellness.mood),
+         sleep_hours = COALESCE(EXCLUDED.sleep_hours, wellness.sleep_hours)`,
+      [req.userId, JSON.stringify(good.map((d) => ({ date: d.date, mood: d.mood ?? null, sleep: d.sleepHours ?? null })))]
+    );
+  }
+  res.json({ imported: good.length });
+}));
+
 // PUT /wellness  body: { date, mood?, sleepHours? } (upsert; null clears)
 app.put('/wellness', asyncH(async (req, res) => {
   const { date, mood, sleepHours } = req.body;

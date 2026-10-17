@@ -45,6 +45,7 @@ export interface DataAdapter {
   getHabitDetail(id: string): Promise<HabitDetail>;
   getInsights(days?: number): Promise<Insights>;
   bulkPutEntries(entries: Entry[]): Promise<number>;
+  bulkPutWellness(days: { date: string; mood?: number | null; sleepHours?: number | null }[]): Promise<number>;
 }
 
 // ---------------------------------------------------------------- api mode
@@ -271,6 +272,15 @@ const apiAdapter: DataAdapter = {
     });
     return r.imported ?? entries.length;
   },
+  bulkPutWellness: async (days) => {
+    let n = 0;
+    for (let i = 0; i < days.length; i += 400) {
+      const chunk = days.slice(i, i + 400);
+      const r = await req<{ imported: number }>('/wellness/bulk', { method: 'POST', body: JSON.stringify({ days: chunk }) });
+      n += r.imported ?? chunk.length;
+    }
+    return n;
+  },
 };
 
 // -------------------------------------------------------------- local mode
@@ -479,6 +489,10 @@ const localAdapter: DataAdapter = {
     }
     saveDB(db);
     return entries.length;
+  },
+  async bulkPutWellness(days) {
+    for (const day of days) await localAdapter.putWellness(day);
+    return days.length;
   },
 };
 
