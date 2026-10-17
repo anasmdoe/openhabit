@@ -473,7 +473,9 @@ export async function detectAdapter(): Promise<DataAdapter> {
       headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
     });
     clearTimeout(t);
-    if (res.ok || res.status === 401) return apiAdapter;
+    // a static host that answers every path with index.html is not a backend
+    const json = (res.headers.get('content-type') ?? '').includes('json');
+    if ((res.ok && json) || res.status === 401) return apiAdapter;
   } catch {
     /* backend not reachable */
   }
