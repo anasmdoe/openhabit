@@ -112,14 +112,14 @@ resource "aws_iam_role_policy_attachment" "lambda_managed" {
 
 resource "aws_cloudwatch_log_group" "fn" {
   for_each          = toset(local.functions)
-  name              = "/aws/lambda/${var.name}-${each.key}"
+  name              = "/aws/lambda/${var.name}-${each.key}" # kept when a function is renamed (log groups cannot be deleted in some sandboxes)
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_lambda_function" "svc" {
   for_each = local.services
 
-  function_name    = "${var.name}-${each.key}"
+  function_name    = lookup(var.function_names, each.key, "${var.name}-${each.key}")
   role             = aws_iam_role.lambda.arn
   runtime          = "nodejs22.x"
   architectures    = [var.lambda_architecture]

@@ -289,3 +289,9 @@ variable "ses_identity" {
   type        = string
   default     = ""
 }
+
+variable "function_names" {
+  description = "Override the Lambda function name of a service (key: auth, habit, tracking, analytics, social, reminder, web, migrate; default \"<name>-<key>\"). Only needed when an account's policies reject a particular name."
+  type        = map(string)
+  default     = {}
+}
