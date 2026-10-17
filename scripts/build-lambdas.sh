@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Packages everything AWS Lambda runs into deploy/aws/build/:
 #   <svc>.zip    each service: src/ (without tests) + production node_modules
-#   migrate.zip  db/migrate-lambda + db/init.sql (run by Terraform on apply)
+#   migrate.zip  db/migrate-lambda + db/migrate.mjs + db/migrations (run by Terraform on apply)
 #   web.zip      the built frontend, served by Lambda when CloudFront is off
 # Zips are reproducible (sorted entries, fixed timestamps), so Terraform only
 # redeploys what changed.
@@ -40,7 +40,8 @@ done
 
 dir="$work/migrate"
 mkdir -p "$dir"
-cp db/migrate-lambda/index.mjs db/migrate-lambda/package.json db/migrate-lambda/package-lock.json db/init.sql "$dir/"
+cp db/migrate-lambda/index.mjs db/migrate-lambda/package.json db/migrate-lambda/package-lock.json db/migrate.mjs "$dir/"
+mkdir -p "$dir/migrations" && cp db/migrations/*.sql "$dir/migrations/"
 (cd "$dir" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
 rm -f "$dir/package-lock.json" "$dir/node_modules/.package-lock.json"
 zipdir "$dir" migrate

@@ -221,3 +221,37 @@ variable "cloudfront_price_class" {
   type        = string
   default     = "PriceClass_200"
 }
+
+# ---- email (password reset, address verification) --------------------------------
+
+variable "mail" {
+  description = "Outgoing email for password-reset and verification links. transport: smtp (Amazon SES SMTP, Mailgun, ...), webhook, log or empty (= off). Links use the app's public URL (set public_url when it is not the default)."
+  type = object({
+    transport   = string
+    from        = string
+    smtp_url    = string # smtp://user:pass@host:587 (a secret)
+    webhook_url = string
+  })
+  default   = { transport = "", from = "", smtp_url = "", webhook_url = "" }
+  sensitive = true
+}
+
+variable "require_email_verification" {
+  description = "Refuse sign-in until the address is confirmed (needs mail)."
+  type        = bool
+  default     = false
+}
+
+# ---- secrets ----------------------------------------------------------------------
+
+variable "use_secrets_manager" {
+  description = "Keep JWT_SECRET, database URLs/passwords, VAPID private key, OIDC client secret and SMTP URL in one AWS Secrets Manager secret that the functions read at start-up, instead of in their plain-text environment. The functions' role gets read access to that secret only. Costs about $0.40 per month. Not available in sandboxes that deny secretsmanager:*."
+  type        = bool
+  default     = false
+}
+
+variable "secret_name" {
+  description = "Name of the Secrets Manager secret (use_secrets_manager)."
+  type        = string
+  default     = ""
+}

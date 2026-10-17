@@ -60,7 +60,7 @@ interface AppState {
   setNote(habit: Habit, date: string, notes: string): Promise<void>;
   user: User | null;
   authRequired: boolean;
-  authConfig: { registration: boolean; oidc: { enabled: boolean; name?: string } } | null;
+  authConfig: { registration: boolean; mail?: boolean; oidc: { enabled: boolean; name?: string } } | null;
   ssoError: string | null;
   loginWithSSO(): void;
   gridYear: number;
@@ -83,7 +83,8 @@ interface AppState {
   reorderHabits(ids: string[]): Promise<void>;
 
   login(email: string, password: string): Promise<void>;
-  register(email: string, password: string, name: string): Promise<void>;
+  /** Resolves true when the server wants the email confirmed before the first sign-in. */
+  register(email: string, password: string, name: string): Promise<boolean>;
   logout(): void;
   changePassword(current: string, next: string): Promise<void>;
   updateName(name: string): Promise<void>;
@@ -347,11 +348,13 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async register(email, password, name) {
-    const { token, user } = await authApi.register(email, password, name);
+    const { token, user, verificationRequired } = await authApi.register(email, password, name);
+    if (verificationRequired || !token) return true;
     setToken(token);
     set({ user, authRequired: false });
     syncTimezone(user);
     await get().refresh();
+    return false;
   },
 
   logout() {

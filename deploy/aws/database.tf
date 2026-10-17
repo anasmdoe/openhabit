@@ -292,7 +292,9 @@ resource "aws_lambda_function" "migrate" {
   }
 
   environment {
-    variables = merge(local.common_env, {
+    variables = var.use_secrets_manager ? merge(local.common_env, {
+      SECRETS_ARN = aws_secretsmanager_secret.app[0].arn
+      }) : merge(local.common_env, {
       ADMIN_DATABASE_URL    = local.admin_url
       AUTH_DB_PASSWORD      = var.db_passwords["auth"]
       HABIT_DB_PASSWORD     = var.db_passwords["habit"]
@@ -303,7 +305,7 @@ resource "aws_lambda_function" "migrate" {
     })
   }
 
-  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed]
+  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed, aws_iam_role_policy.lambda_secrets, aws_iam_role_policy_attachment.lambda_secrets_managed]
 }
 
 resource "aws_lambda_invocation" "migrate" {
@@ -315,6 +317,7 @@ resource "aws_lambda_invocation" "migrate" {
   triggers = {
     code      = aws_lambda_function.migrate.source_code_hash
     passwords = sha256(jsonencode(var.db_passwords))
+    secrets   = var.use_secrets_manager ? aws_secretsmanager_secret_version.app[0].version_id : ""
   }
 
   depends_on = [aws_db_instance.db]

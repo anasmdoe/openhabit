@@ -36,6 +36,9 @@ mock_provider "aws" {
       bucket_regional_domain_name = "openhabit-web-123456789012.s3.ap-south-1.amazonaws.com"
     }
   }
+  mock_resource "aws_secretsmanager_secret" {
+    defaults = { arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:openhabit/app-AbCdEf" }
+  }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/openhabit" }
   }
@@ -212,6 +215,81 @@ run "long_interval_widens_catch_up" {
   assert {
     condition     = nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.REMINDER_CATCH_UP_MINUTES) == "20"
     error_message = "the catch-up window must outlast the scheduler interval"
+  }
+}
+
+run "secrets_manager_keeps_secrets_out_of_the_environment" {
+  command = apply
+
+  variables {
+    use_secrets_manager = true
+    vapid               = { public_key = "pub", private_key = "priv-key-value", subject = "mailto:me@example.com" }
+    mail                = { transport = "smtp", from = "OpenHabit <no-reply@example.com>", smtp_url = "smtp://user:pw@smtp.example.com:587", webhook_url = "" }
+  }
+
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.SECRETS_ARN) == "arn:aws:secretsmanager:ap-south-1:123456789012:secret:openhabit/app-AbCdEf"
+    error_message = "functions must be told which secret to read"
+  }
+  assert {
+    condition     = alltrue([for k, f in aws_lambda_function.svc : !contains(keys(f.environment[0].variables), "JWT_SECRET") && !contains(keys(f.environment[0].variables), "DATABASE_URL")])
+    error_message = "JWT_SECRET and DATABASE_URL must not be in any function's plain-text environment"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.svc["reminder"].environment[0].variables), "VAPID_PRIVATE_KEY") && !contains(keys(aws_lambda_function.svc["auth"].environment[0].variables), "SMTP_URL")
+    error_message = "the VAPID private key and SMTP URL belong in the secret"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.migrate.environment[0].variables), "ADMIN_DATABASE_URL") && !contains(keys(aws_lambda_function.migrate.environment[0].variables), "AUTH_DB_PASSWORD")
+    error_message = "the migrate function must read its passwords from the secret"
+  }
+  assert {
+    condition     = length(aws_iam_role_policy.lambda_secrets) + length(aws_iam_role_policy_attachment.lambda_secrets_managed) == 1
+    error_message = "the role needs read access to the secret"
+  }
+  assert {
+    condition     = nonsensitive(jsondecode(aws_secretsmanager_secret_version.app[0].secret_string).auth.SMTP_URL) == "smtp://user:pw@smtp.example.com:587" && nonsensitive(jsondecode(aws_secretsmanager_secret_version.app[0].secret_string).reminder.VAPID_PRIVATE_KEY) == "priv-key-value"
+    error_message = "per-service secrets must be in the secret"
+  }
+  assert {
+    condition     = nonsensitive(jsondecode(aws_secretsmanager_secret_version.app[0].secret_string).habit.DATABASE_URL) == "postgres://habit_svc:habit-pw%2Fneeds%2Bescaping@ep-test-pooler.example.neon.tech:5432/openhabit?sslmode=verify-full"
+    error_message = "each service gets its own least-privilege database URL in the secret"
+  }
+}
+
+run "default_keeps_secrets_in_the_environment" {
+  command = apply
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.app) == 0 && length(aws_iam_role_policy.lambda_secrets) == 0
+    error_message = "Secrets Manager is opt-in"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.svc["auth"].environment[0].variables), "SECRETS_ARN")
+    error_message = "no SECRETS_ARN without Secrets Manager"
+  }
+}
+
+run "mail_settings_reach_the_auth_function_only" {
+  command = apply
+
+  variables {
+    public_url                 = "https://habits.example.com"
+    require_email_verification = true
+    mail                       = { transport = "smtp", from = "OpenHabit <no-reply@example.com>", smtp_url = "smtp://user:pw@smtp.example.com:587", webhook_url = "" }
+  }
+
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.MAIL_TRANSPORT) == "smtp" && nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.PUBLIC_URL) == "https://habits.example.com"
+    error_message = "the auth function sends the emails and links to the public URL"
+  }
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.REQUIRE_EMAIL_VERIFICATION) == "true"
+    error_message = "require_email_verification must reach auth"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.svc["habit"].environment[0].variables), "SMTP_URL")
+    error_message = "other functions must not receive the SMTP credentials"
   }
 }
 

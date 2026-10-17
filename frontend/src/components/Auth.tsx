@@ -8,7 +8,8 @@ import { useModalOpen } from '../lib/modal';
 // Full-screen gate shown in API mode until a valid session exists.
 export function AuthGate() {
   const { login, register, loginWithSSO, authConfig, ssoError } = useApp();
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [info, setInfo] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -20,8 +21,13 @@ export function AuthGate() {
     setError('');
     setBusy(true);
     try {
-      if (mode === 'login') await login(email.trim(), password);
-      else await register(email.trim(), password, name);
+      if (mode === 'forgot') {
+        await authApi.forgotPassword(email.trim());
+        setInfo('If that address has an account, a reset link is on its way. It works for one hour.');
+      } else if (mode === 'login') await login(email.trim(), password);
+      else if (await register(email.trim(), password, name)) {
+        setMode('login'); setInfo('Account created. Open the link we emailed you to confirm your address, then sign in.');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'something went wrong');
     } finally {
@@ -39,7 +45,7 @@ export function AuthGate() {
                 strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
-          <h1 className="text-lg font-bold">{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+          <h1 className="text-lg font-bold">{mode === 'login' ? 'Welcome back' : mode === 'forgot' ? 'Reset your password' : 'Create your account'}</h1>
           <p className="text-[12px] text-ink-soft">Your habits, self-hosted.</p>
         </div>
 
@@ -55,13 +61,18 @@ export function AuthGate() {
           <input className="input" type="email" required value={email}
             onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="you@home.lab" />
         </label>
-        <label className="flex flex-col gap-1">
+        {mode !== 'forgot' && <label className="flex flex-col gap-1">
           <span className="text-[11px] text-ink-soft">Password</span>
           <input className="input" type="password" required minLength={8} value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
             placeholder={mode === 'register' ? 'at least 8 characters' : '••••••••'} />
-        </label>
+        </label>}
+        {mode === 'login' && authConfig?.mail && (
+          <button type="button" onClick={() => { setMode('forgot'); setError(''); setInfo(''); }}
+            className="self-end -mt-2 text-[12px] text-ink-soft hover:text-ink">Forgot password?</button>
+        )}
+        {info && <p role="status" className="text-[12px] text-mint">{info}</p>}
 
         {(error || ssoError) && <p className="text-[12px] text-red-400">{error || `SSO: ${ssoError}`}</p>}
 
@@ -70,10 +81,10 @@ export function AuthGate() {
           disabled={busy}
           className="bg-mint text-forest-950 font-semibold text-sm rounded-lg py-2.5 disabled:opacity-50"
         >
-          {busy ? '…' : mode === 'login' ? 'Sign in' : 'Create account'}
+          {busy ? '…' : mode === 'login' ? 'Sign in' : mode === 'forgot' ? 'Email me a reset link' : 'Create account'}
         </button>
 
-        {authConfig?.oidc.enabled && (
+        {mode !== 'forgot' && authConfig?.oidc.enabled && (
           <>
             <div className="flex items-center gap-3 text-[11px] text-ink-soft">
               <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
@@ -88,10 +99,14 @@ export function AuthGate() {
           </>
         )}
 
-        {(authConfig?.registration ?? true) && (
+        {mode === 'forgot' && (
+          <button type="button" onClick={() => { setMode('login'); setError(''); setInfo(''); }}
+            className="text-[12px] text-ink-soft hover:text-ink">Back to sign in</button>
+        )}
+        {mode !== 'forgot' && (authConfig?.registration ?? true) && (
           <button
             type="button"
-            onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}
+            onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setInfo(''); }}
             className="text-[12px] text-ink-soft hover:text-ink"
           >
             {mode === 'login' ? "No account yet? Register" : 'Already registered? Sign in'}
@@ -104,7 +119,8 @@ export function AuthGate() {
 
 // Toolbar avatar with a small account menu.
 export function AccountMenu() {
-  const { user, logout, changePassword, deleteAccount, updateName, openArchived } = useApp();
+  const [verifySent, setVerifySent] = useState(false);
+  const { authConfig, user, logout, changePassword, deleteAccount, updateName, openArchived } = useApp();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens' | 'calendar'>('menu');
   const [current, setCurrent] = useState('');
@@ -176,6 +192,15 @@ export function AccountMenu() {
                     <div className="text-[11px] text-ink-soft truncate">{user.email}</div>
                   </div>
                 </div>
+                {authConfig?.mail && user.emailVerified === false && (
+                  <div className="rounded-lg border border-line px-2.5 py-2 text-[11px] leading-snug">
+                    Your email isn't confirmed yet.{' '}
+                    <button className="font-semibold text-mint hover:underline" disabled={verifySent}
+                      onClick={() => authApi.sendVerification().then(() => setVerifySent(true)).catch((e) => setMsg(e instanceof Error ? e.message : 'failed'))}>
+                      {verifySent ? 'Link sent: check your inbox' : 'Send me the link'}
+                    </button>
+                  </div>
+                )}
                 <MenuBtn icon={<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0" strokeLinecap="round" />}
                   onClick={() => { setNameDraft(user.name); setNtfyDraft(user.ntfyUrl ?? ''); setQuietStart(user.quietStart ?? ''); setQuietEnd(user.quietEnd ?? ''); setView('profile'); }}
                   data-menu-profile>
@@ -542,6 +567,57 @@ function CalendarFeedView({ onBack }: { onBack: () => void }) {
           </div>
         </>
       ) : err ? <p className="text-[11px] text-red-400">{err}</p> : <p className="text-[11px] text-ink-soft">Loading…</p>}
+    </div>
+  );
+}
+
+// Opened from the link in the reset email (/?reset=TOKEN): works signed in or out.
+export function ResetPassword({ token, onDone }: { token: string; onDone: () => void }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password !== confirm) { setError('The two passwords do not match.'); return; }
+    setBusy(true); setError('');
+    try {
+      await authApi.resetPassword(token, password);
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'something went wrong');
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="min-h-full grid place-items-center p-4">
+      <form onSubmit={submit} className="panel w-full max-w-sm p-6 flex flex-col gap-4">
+        <h1 className="text-lg font-bold">Choose a new password</h1>
+        {done ? (
+          <>
+            <p role="status" className="text-[13px] text-mint">Password changed. You can sign in with it now.</p>
+            <button type="button" onClick={onDone} className="bg-mint text-forest-950 font-semibold text-sm rounded-lg py-2.5">Continue to sign in</button>
+          </>
+        ) : (
+          <>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-ink-soft">New password</span>
+              <input className="input" type="password" required minLength={8} value={password} autoComplete="new-password"
+                onChange={(e) => setPassword(e.target.value)} placeholder="at least 8 characters" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-ink-soft">Repeat it</span>
+              <input className="input" type="password" required minLength={8} value={confirm} autoComplete="new-password"
+                onChange={(e) => setConfirm(e.target.value)} />
+            </label>
+            {error && <p role="alert" className="text-[12px] text-red-400">{error}</p>}
+            <button type="submit" disabled={busy} className="bg-mint text-forest-950 font-semibold text-sm rounded-lg py-2.5 disabled:opacity-50">
+              {busy ? '…' : 'Save new password'}
+            </button>
+            <button type="button" onClick={onDone} className="text-[12px] text-ink-soft hover:text-ink">Cancel</button>
+          </>
+        )}
+      </form>
     </div>
   );
 }

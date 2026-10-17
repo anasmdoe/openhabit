@@ -38,6 +38,9 @@ const PUSH_ENV = {
   PUSH_ENDPOINT_HOSTS: 'localhost',
 };
 
+// Email: the auth-service posts every message to a local receiver (filled in by main())
+const MAIL_ENV = { MAIL_TRANSPORT: 'webhook', MAIL_WEBHOOK_URL: '', MAIL_FROM: 'OpenHabit <smoke@openhabit.test>' };
+
 const SERVICES = {
   auth: 3911, habit: 3912, tracking: 3913, analytics: 3914, social: 3915, reminder: 3916,
   reminder2: 3917, // a second reminder-service replica: sends must still happen once
@@ -66,7 +69,7 @@ function start(name) {
     cwd: path.join(root, 'services', `${serviceDir(name)}-service`),
     env: {
       ...process.env, PORT: String(SERVICES[name]), DATABASE_URL: dbUrl(name), JWT_SECRET, TICK_MS: '300',
-      PUBLIC_URL: 'https://habits.smoke.test', ...PUSH_ENV,
+      PUBLIC_URL: 'https://habits.smoke.test', ...PUSH_ENV, ...MAIL_ENV,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -82,7 +85,7 @@ async function loadHandlers() {
   console.error = (...a) => { logs.lambda += `${a.join(' ')}\n`; origError(...a); };
   for (const name of Object.keys(SERVICES).filter((n) => n === serviceDir(n))) {
     Object.assign(process.env, {
-      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2', ...PUSH_ENV,
+      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2', ...PUSH_ENV, ...MAIL_ENV,
     });
     // SMOKE_LAMBDA_DIR=<dir> runs the unpacked deploy zips (<dir>/<svc>/src/lambda.js)
     const file = process.env.SMOKE_LAMBDA_DIR
@@ -202,6 +205,18 @@ async function main() {
   await new Promise((r) => pushService.listen(0, r));
   const pushBase = `http://localhost:${pushService.address().port}`;
 
+  // Catches outgoing email (verification and reset links).
+  const mails = [];
+  const mailServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => { mails.push(JSON.parse(body)); res.end('ok'); });
+  });
+  await new Promise((r) => mailServer.listen(0, r));
+  MAIL_ENV.MAIL_WEBHOOK_URL = `http://localhost:${mailServer.address().port}/mail`;
+  const mailsTo = (addr) => mails.filter((m) => m.to === addr);
+  const linkIn = (m, key) => decodeURIComponent((m?.text.match(new RegExp(`[?&]${key}=([\\w%-]+)`)) ?? [])[1] ?? '');
+
   let stopScheduler = () => {};
   if (REMOTE) {
     // nothing to start
@@ -231,6 +246,49 @@ async function main() {
   await call('auth', 'GET', '/auth/tokens', { token: A });
   await call('auth', 'GET', '/auth/me', { token: T });
   await call('auth', 'POST', '/auth/tokens', { token: T, body: { name: 'nope' }, expect: [403] });
+
+  // ---- email verification and password reset --------------------------------
+  if (!REMOTE) {
+    const cfg = await call('auth', 'GET', '/auth/config');
+    check(cfg.mail === true, 'auth: config says email is available');
+    const eve = `eve-${tag}@smoke.test`;
+    const e = await call('auth', 'POST', '/auth/register', { body: { email: eve, password: 'smoke-password-1', name: 'Eve' } });
+    check(e.user?.emailVerified === false, 'auth: a new account starts unverified');
+    check(await waitFor(() => mailsTo(eve).length === 1), 'auth: registering sends one verification email');
+    const vtoken = linkIn(mailsTo(eve)[0], 'verify');
+    check(mailsTo(eve)[0]?.text.includes('https://habits.smoke.test/?verify=') && vtoken.length > 20, 'auth: the verification link points at PUBLIC_URL');
+    await call('auth', 'POST', '/auth/verify', { body: { token: 'not-a-real-token-not-a-real-token' }, expect: [400] });
+    await call('auth', 'POST', '/auth/verify', { body: { token: vtoken } });
+    check((await call('auth', 'GET', '/auth/me', { token: e.token })).emailVerified === true, 'auth: the link verifies the address');
+    await call('auth', 'POST', '/auth/verify', { body: { token: vtoken }, expect: [400] });
+    const again = await call('auth', 'POST', '/auth/verify/send', { token: e.token });
+    check(again.verified === true && mailsTo(eve).length === 1, 'auth: an already verified account is not emailed again');
+
+    await call('auth', 'POST', '/auth/forgot', { body: { email: `nobody-${tag}@smoke.test` } });
+    const before = mails.length;
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve } });
+    check(await waitFor(() => mails.length === before + 1), 'auth: forgot sends a reset email only to a real account');
+    check(!mails.some((m) => m.to.startsWith('nobody-')), 'auth: forgot for an unknown address sends nothing but still answers 200');
+    const rtoken = linkIn(mailsTo(eve).at(-1), 'reset');
+    check(mailsTo(eve).at(-1)?.subject.includes('Reset') && rtoken.length > 20, 'auth: the reset link is in the email');
+    await call('auth', 'POST', '/auth/reset', { body: { token: rtoken, password: 'short' }, expect: [400] });
+    await call('auth', 'POST', '/auth/reset', { body: { token: 'garbage-garbage-garbage-garbage', password: 'a-new-password-2' }, expect: [400] });
+    await call('auth', 'POST', '/auth/reset', { body: { token: rtoken, password: 'a-new-password-2' } });
+    await call('auth', 'POST', '/auth/login', { body: { email: eve, password: 'smoke-password-1' }, expect: [401] });
+    await call('auth', 'POST', '/auth/login', { body: { email: eve, password: 'a-new-password-2' } });
+    await call('auth', 'POST', '/auth/reset', { body: { token: rtoken, password: 'a-third-password-3' }, expect: [400] });
+    // a newer request voids the older link
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve } });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve } });
+    await waitFor(() => mailsTo(eve).filter((m) => m.subject.includes('Reset')).length === 3);
+    const [r1, r2] = mailsTo(eve).filter((m) => m.subject.includes('Reset')).slice(1).map((m) => linkIn(m, 'reset'));
+    await call('auth', 'POST', '/auth/reset', { body: { token: r1, password: 'a-fourth-password-4' }, expect: [400] });
+    await call('auth', 'POST', '/auth/reset', { body: { token: r2, password: 'a-fourth-password-4' } });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve }, expect: [429] });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve }, expect: [429] });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve }, expect: [429] });
+    await call('auth', 'DELETE', '/auth/me', { token: (await call('auth', 'POST', '/auth/login', { body: { email: eve, password: 'a-fourth-password-4' } })).token, body: { password: 'a-fourth-password-4' }, expect: [200, 204] });
+  }
 
   // ---- habits ------------------------------------------------------------
   const h1 = await call('habit', 'POST', '/habits', {
@@ -449,6 +507,7 @@ async function main() {
 
   stopScheduler();
   ntfy.close();
+  mailServer.close();
   pushService.close();
 }
 

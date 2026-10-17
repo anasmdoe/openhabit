@@ -33,6 +33,13 @@ locals {
       OIDC_REDIRECT_URI   = var.oidc.issuer == "" ? "" : "${local.public_url}/api/auth/oidc/callback"
       OIDC_POST_LOGIN_URI = "${local.public_url}/"
       VAPID_PUBLIC_KEY    = var.vapid.public_key
+      # email links point at the app's own address (never taken from a request)
+      PUBLIC_URL                 = local.public_url
+      MAIL_TRANSPORT             = var.mail.transport
+      MAIL_FROM                  = var.mail.from
+      MAIL_WEBHOOK_URL           = var.mail.webhook_url
+      SMTP_URL                   = var.mail.smtp_url
+      REQUIRE_EMAIL_VERIFICATION = tostring(var.require_email_verification)
     }
     reminder = {
       PUBLIC_URL = local.public_url
@@ -42,6 +49,20 @@ locals {
       VAPID_PRIVATE_KEY         = var.vapid.private_key
       VAPID_SUBJECT             = var.vapid.subject
     }
+  }
+
+  # the full environment of each service function, before any secret moves to Secrets Manager
+  service_fn_env = {
+    for svc, _ in local.services : svc => merge(
+      local.common_env,
+      {
+        DATABASE_URL = format("postgres://%s_svc:%s@%s:%d/%s?sslmode=%s",
+        svc, urlencode(var.db_passwords[svc]), local.db_host, var.db_port, var.db_name, var.db_sslmode)
+        JWT_SECRET  = var.jwt_secret
+        PG_POOL_MAX = "2" # one container serves one request at a time
+      },
+      lookup(local.service_env, svc, {}),
+    )
   }
 
   # Lambda's Node runtimes don't trust the Amazon RDS CAs unless pointed at them.
@@ -116,16 +137,11 @@ resource "aws_lambda_function" "svc" {
 
   environment {
     variables = merge(
-      local.common_env,
-      {
-        DATABASE_URL = format("postgres://%s_svc:%s@%s:%d/%s?sslmode=%s",
-        each.key, urlencode(var.db_passwords[each.key]), local.db_host, var.db_port, var.db_name, var.db_sslmode)
-        JWT_SECRET  = var.jwt_secret
-        PG_POOL_MAX = "2" # one container serves one request at a time
-      },
-      lookup(local.service_env, each.key, {}),
+      # with Secrets Manager the secret values are dropped from the plain-text environment
+      { for k, v in local.service_fn_env[each.key] : k => v if !(var.use_secrets_manager && contains(local.secret_env_keys, k)) },
+      var.use_secrets_manager ? { SECRETS_ARN = aws_secretsmanager_secret.app[0].arn, OPENHABIT_SERVICE = each.key } : {},
     )
   }
 
-  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed]
+  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed, aws_iam_role_policy.lambda_secrets, aws_iam_role_policy_attachment.lambda_secrets_managed]
 }

@@ -54,6 +54,7 @@ paths:
                 type: object
                 properties:
                   registration: { type: boolean }
+                  mail: { type: boolean, description: 'Email is set up: password reset and verification are available.' }
                   oidc:
                     type: object
                     properties:
@@ -103,6 +104,80 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
+  /auth/forgot:
+    post:
+      operationId: forgotPassword
+      tags: [Auth]
+      summary: Email a password-reset link
+      security: []
+      description: >-
+        Always answers 200 for a well-formed address, whether or not an account exists. The link
+        expires in one hour; a newer request voids older links. Limited to 3 requests per address per 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { description: 'Accepted.', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '501': { description: 'Email is not set up on this server.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /auth/reset:
+    post:
+      operationId: resetPassword
+      tags: [Auth]
+      summary: Set a new password with a reset link's token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string, description: 'From the emailed link (`?reset=`).' }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200': { description: 'Password changed; the token is spent.', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/verify:
+    post:
+      operationId: verifyEmail
+      tags: [Auth]
+      summary: Confirm an email address with a verification link's token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, description: 'From the emailed link (`?verify=`).' }
+      responses:
+        '200': { description: 'Address confirmed.', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/verify/send:
+    post:
+      operationId: sendVerification
+      tags: [Auth]
+      summary: Send (or resend) the verification email
+      description: Needs a signed-in session, not an API token. Limited to 3 requests per 15 minutes.
+      responses:
+        '200': { description: 'Sent, or already verified.', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, verified: { type: boolean } } } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '501': { description: 'Email is not set up on this server.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /auth/oidc/login:
     get:
       operationId: startSso
@@ -964,6 +1039,7 @@ components:
         quietStart: { type: string }
         quietEnd: { type: string }
         createdAt: { type: string, format: date-time }
+        emailVerified: { type: boolean }
     ApiToken:
       type: object
       properties:

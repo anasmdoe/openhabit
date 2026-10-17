@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useApp, isPhone, VIEW_ORDER } from './store';
 import type { AppView } from './store';
 import { TabBar } from './components/TabBar';
@@ -10,7 +10,8 @@ import {
 } from './components/StatsPanels';
 import { HabitEditor } from './components/HabitEditor';
 import { HabitDetail } from './components/HabitDetail';
-import { AuthGate } from './components/Auth';
+import { AuthGate, ResetPassword } from './components/Auth';
+import { authApi } from './api';
 import { CommandPalette } from './components/CommandPalette';
 import { TodayFocus } from './components/TodayFocus';
 import { InsightsPanel } from './components/InsightsPanel';
@@ -23,7 +24,13 @@ import { Tooltips } from './components/Tooltips';
 import { Toast } from './components/Toast';
 import { StatsView } from './components/StatsView';
 
+// links from emails: /?reset=TOKEN and /?verify=TOKEN
+const MAIL_PARAMS = new URLSearchParams(window.location.search);
+const RESET_TOKEN = MAIL_PARAMS.get('reset');
+const VERIFY_TOKEN = MAIL_PARAMS.get('verify');
+
 export default function App() {
+  const [resetToken, setResetToken] = useState(RESET_TOKEN);
   const { init, ready, editorHabit, authRequired, view, viewDir, goView, adapter } = useApp();
   const modalOpen = useAnyModalOpen();
   const editorKey = editorHabit === 'new' ? 'new' : editorHabit ? editorHabit.id : 'closed';
@@ -46,6 +53,19 @@ export default function App() {
     if (action === 'pause') useApp.getState().setPauseOpen(true);
   }, [ready, authRequired]);
 
+  // confirm the address when the verification link is opened
+  useEffect(() => {
+    if (!ready || !VERIFY_TOKEN || adapter?.mode !== 'api') return;
+    window.history.replaceState(null, '', window.location.pathname);
+    const { showToast } = useApp.getState();
+    authApi.verifyEmail(VERIFY_TOKEN)
+      .then(async () => {
+        showToast('Email confirmed. Thank you!');
+        if (!useApp.getState().authRequired) useApp.setState({ user: await authApi.me() });
+      })
+      .catch((e) => showToast(e instanceof Error ? e.message : 'Could not confirm the email'));
+  }, [ready, adapter]);
+
   if (!ready) {
     return (
       <div className="h-full grid place-items-center">
@@ -54,7 +74,10 @@ export default function App() {
     );
   }
 
-  if (authRequired) return <AuthGate />;
+  if (resetToken && adapter?.mode === 'api') {
+    return <><ResetPassword token={resetToken} onDone={() => { window.history.replaceState(null, '', window.location.pathname); setResetToken(null); }} /><Toast /></>;
+  }
+  if (authRequired) return <><AuthGate /><Toast /></>;
 
   // On phones the bottom tab bar picks one part of the page; wider screens show all of it.
   const show = (v: AppView) => (view === v ? (viewDir > 0 ? 'tab-in-r' : 'tab-in-l') : 'max-sm:hidden');

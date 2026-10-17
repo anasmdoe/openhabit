@@ -8,6 +8,18 @@
 import { once } from 'node:events';
 
 process.env.OPENHABIT_RUNTIME = 'lambda'; // index.js: no listen(), no timers
+
+// Secrets Manager mode (SECRETS_ARN set by the Terraform stack): the secret is a JSON object with a
+// "shared" section and one section per service. Values land in process.env before the service loads,
+// so no password or key sits in the function's configuration. An env var set directly always wins.
+if (process.env.SECRETS_ARN) {
+  const { SecretsManagerClient, GetSecretValueCommand } = await import('@aws-sdk/client-secrets-manager'); // bundled in the Lambda runtime
+  const res = await new SecretsManagerClient({}).send(new GetSecretValueCommand({ SecretId: process.env.SECRETS_ARN }));
+  const all = JSON.parse(res.SecretString ?? '{}');
+  for (const [k, v] of Object.entries({ ...all.shared, ...all[process.env.OPENHABIT_SERVICE ?? ''] })) {
+    if (process.env[k] === undefined) process.env[k] = String(v);
+  }
+}
 const service = await import('./index.js');
 const server = service.app.listen(0, '127.0.0.1');
 await once(server, 'listening');

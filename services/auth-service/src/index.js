@@ -2,6 +2,7 @@ import express from 'express';
 import pg from 'pg';
 import { metricsMiddleware, metricsHandler } from './metrics.js';
 import crypto from 'node:crypto';
+import { mailEnabled, sendMail, verifyMessage, resetMessage } from './mail.js';
 import { oidcEnabled, oidcInfo, authorizeUrl, handleCallback, postLoginUri } from './oidc.js';
 
 const PORT = process.env.PORT || 3004;
@@ -12,6 +13,8 @@ if (!JWT_SECRET || JWT_SECRET.length < 32 || /change-me/i.test(JWT_SECRET)) {
 }
 const TOKEN_TTL_S = 60 * 60 * 24 * 30; // 30 days
 const ALLOW_REGISTRATION = process.env.ALLOW_REGISTRATION !== 'false';
+// with email on, optionally refuse sign-in until the address is confirmed
+const REQUIRE_VERIFIED = process.env.REQUIRE_EMAIL_VERIFICATION === 'true' && mailEnabled;
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://openhabit:openhabit@localhost:5432/openhabit',
@@ -115,7 +118,7 @@ const attempts = new Map(); // key -> { count, resetAt }
 const RATE_MAX = 10;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 
-function rateLimited(key) {
+function rateLimited(key, max = RATE_MAX) {
   const now = Date.now();
   const rec = attempts.get(key);
   if (!rec || rec.resetAt < now) {
@@ -123,7 +126,7 @@ function rateLimited(key) {
     return false;
   }
   rec.count += 1;
-  return rec.count > RATE_MAX;
+  return rec.count > max;
 }
 setInterval(() => {
   const now = Date.now();
@@ -131,12 +134,42 @@ setInterval(() => {
 }, 60_000).unref();
 
 const PUBLIC_USER = `id, email, name, ntfy_url AS "ntfyUrl", timezone,
-  quiet_start AS "quietStart", quiet_end AS "quietEnd", created_at AS "createdAt"`;
+  quiet_start AS "quietStart", quiet_end AS "quietEnd", created_at AS "createdAt",
+  (email_verified_at IS NOT NULL) AS "emailVerified"`;
 const VALID_TZ = new Set([...Intl.supportedValuesOf('timeZone'), 'UTC']);
 const validHm = (v) => typeof v === 'string' && (v === '' || /^([01]\d|2[0-3]):[0-5]\d$/.test(v));
 const validNtfy = (v) => typeof v === 'string' && v.length <= 300 && (v === '' || /^https?:\/\//.test(v));
 const validEmail = (e) => typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 254;
 const validPassword = (p) => typeof p === 'string' && p.length >= 8 && p.length <= 128;
+
+
+// ---- one-time email links (verify / reset) ------------------------------
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const LINK_TTL = { verify: 24 * 3600, reset: 3600 }; // seconds
+
+/** Issues a link token (invalidating earlier unused ones of the same kind) and emails it. */
+async function issueEmailToken(user, kind) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  await pool.query(`UPDATE email_tokens SET used_at = now() WHERE user_id = $1 AND kind = $2 AND used_at IS NULL`, [user.id, kind]);
+  await pool.query(
+    `INSERT INTO email_tokens (user_id, kind, email, token_hash, expires_at) VALUES ($1, $2, $3, $4, now() + ($5 || ' seconds')::interval)`,
+    [user.id, kind, user.email, sha256(token), String(LINK_TTL[kind])]
+  );
+  const msg = (kind === 'verify' ? verifyMessage : resetMessage)(user.name, token);
+  await sendMail({ to: user.email, ...msg });
+}
+
+/** Consumes a link token atomically; returns its row, or null when unknown, used or expired. */
+async function consumeEmailToken(token, kind) {
+  if (typeof token !== 'string' || token.length < 20 || token.length > 100) return null;
+  const { rows } = await pool.query(
+    `UPDATE email_tokens SET used_at = now()
+     WHERE token_hash = $1 AND kind = $2 AND used_at IS NULL AND expires_at > now()
+     RETURNING user_id, email`,
+    [sha256(token), kind]
+  );
+  return rows[0] ?? null;
+}
 
 // ---- routes -------------------------------------------------------------
 app.get('/metrics', await metricsHandler(pool, 'auth-service'));
@@ -157,6 +190,8 @@ app.post('/auth/register', asyncH(async (req, res) => {
       `INSERT INTO users (email, name, password_hash) VALUES (lower($1), $2, $3) RETURNING ${PUBLIC_USER}`,
       [email.trim(), typeof name === 'string' ? name.trim().slice(0, 100) : '', passwordHash]
     );
+    if (mailEnabled) await issueEmailToken(rows[0], 'verify').catch((e) => console.error('verification email failed:', e.message));
+    if (REQUIRE_VERIFIED) return res.status(201).json({ verificationRequired: true, user: rows[0] });
     res.status(201).json({ token: signToken(rows[0]), user: rows[0] });
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'an account with this email already exists' });
@@ -180,7 +215,43 @@ app.post('/auth/login', asyncH(async (req, res) => {
   const ok = await verifyPassword(password, rows[0].password_hash);
   if (!ok) return invalid();
   const { password_hash, ...user } = rows[0];
+  if (REQUIRE_VERIFIED && !user.emailVerified)
+    return res.status(403).json({ error: 'confirm your email address first: check your inbox for the link', code: 'email_unverified' });
   res.json({ token: signToken(user), user });
+}));
+
+// ---- password reset and email verification ------------------------------
+// Always answers 200 so the endpoint cannot be used to find out which emails have accounts.
+app.post('/auth/forgot', asyncH(async (req, res) => {
+  if (!mailEnabled) return res.status(501).json({ error: 'email is not set up on this server; ask its administrator to reset your password' });
+  const { email } = req.body;
+  if (!validEmail(email)) return res.status(400).json({ error: 'valid email required' });
+  const addr = email.trim().toLowerCase();
+  if (rateLimited(`forgot|${req.ip}`) || rateLimited(`forgot|${addr}`, 3)) return res.status(429).json({ error: 'too many requests: try again in a few minutes' });
+  const { rows } = await pool.query(`SELECT id, email, name FROM users WHERE email = $1 AND password_hash IS NOT NULL`, [addr]);
+  if (rows.length) await issueEmailToken(rows[0], 'reset').catch((e) => console.error('reset email failed:', e.message));
+  res.json({ ok: true });
+}));
+
+app.post('/auth/reset', asyncH(async (req, res) => {
+  const { token, password } = req.body;
+  if (!validPassword(password)) return res.status(400).json({ error: 'password must be at least 8 characters' });
+  if (rateLimited(`reset|${req.ip}`)) return res.status(429).json({ error: 'too many attempts: try again in a few minutes' });
+  const row = await consumeEmailToken(token, 'reset');
+  if (!row) return res.status(400).json({ error: 'this link is invalid or has expired: request a new one' });
+  const hash = await hashPassword(password);
+  // choosing a password through the emailed link also proves the inbox is theirs
+  await pool.query(`UPDATE users SET password_hash = $1, email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $2 AND email = $3`, [hash, row.user_id, row.email]);
+  await pool.query(`UPDATE email_tokens SET used_at = now() WHERE user_id = $1 AND kind = 'reset' AND used_at IS NULL`, [row.user_id]);
+  res.json({ ok: true });
+}));
+
+app.post('/auth/verify', asyncH(async (req, res) => {
+  if (rateLimited(`verify|${req.ip}`)) return res.status(429).json({ error: 'too many attempts: try again in a few minutes' });
+  const row = await consumeEmailToken(req.body.token, 'verify');
+  if (!row) return res.status(400).json({ error: 'this link is invalid or has expired: request a new one from your account menu' });
+  await pool.query(`UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $1 AND email = $2`, [row.user_id, row.email]);
+  res.json({ ok: true });
 }));
 
 // control-plane routes require a real session, not an API token — a leaked
@@ -189,6 +260,16 @@ const requireSession = (req, res, next) =>
   req.authMethod === 'token'
     ? res.status(403).json({ error: 'this action requires signing in (API tokens cannot manage the account)' })
     : next();
+
+app.post('/auth/verify/send', auth, requireSession, asyncH(async (req, res) => {
+  if (!mailEnabled) return res.status(501).json({ error: 'email is not set up on this server' });
+  if (rateLimited(`verify-send|${req.userId}`, 3)) return res.status(429).json({ error: 'too many requests: try again in a few minutes' });
+  const { rows } = await pool.query(`SELECT id, email, name, email_verified_at FROM users WHERE id = $1`, [req.userId]);
+  if (!rows.length) return res.status(401).json({ error: 'unauthorized' });
+  if (rows[0].email_verified_at) return res.json({ ok: true, verified: true });
+  await issueEmailToken(rows[0], 'verify');
+  res.json({ ok: true, verified: false });
+}));
 
 // ---- personal API tokens ------------------------------------------------
 const MAX_TOKENS_PER_USER = 20;
@@ -288,6 +369,7 @@ app.delete('/auth/push/subscriptions', auth, requireSession, asyncH(async (req, 
 app.get('/auth/config', (_req, res) => {
   res.json({
     registration: ALLOW_REGISTRATION,
+    mail: mailEnabled,
     oidc: oidcInfo.enabled ? { enabled: true, name: oidcInfo.name } : { enabled: false },
   });
 });
@@ -336,7 +418,7 @@ app.get('/auth/oidc/callback', asyncH(async (req, res) => {
     } else {
       if (!ALLOW_REGISTRATION) return fail('registration is disabled');
       const ins = await pool.query(
-        `INSERT INTO users (email, name, oidc_iss, oidc_sub) VALUES (lower($1), $2, $3, $4) RETURNING ${PUBLIC_USER}`,
+        `INSERT INTO users (email, name, oidc_iss, oidc_sub, email_verified_at) VALUES (lower($1), $2, $3, $4, now()) RETURNING ${PUBLIC_USER}`,
         [claims.email, claims.name.slice(0, 100), claims.iss, claims.sub]
       );
       user = ins.rows[0];

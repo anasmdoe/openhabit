@@ -65,6 +65,7 @@ export interface User {
   quietStart: string; // 'HH:MM' local, '' = no quiet hours
   quietEnd: string;
   createdAt?: string; // ISO time the account was created
+  emailVerified?: boolean;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -92,7 +93,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 // ---- auth endpoints (api mode only) ------------------------------------
 export const authApi = {
   register: (email: string, password: string, name: string) =>
-    req<{ token: string; user: User }>('/auth/register', {
+    req<{ token?: string; user: User; verificationRequired?: boolean }>('/auth/register', {
       method: 'POST', body: JSON.stringify({ email, password, name }),
     }),
   login: (email: string, password: string) =>
@@ -100,12 +101,17 @@ export const authApi = {
       method: 'POST', body: JSON.stringify({ email, password }),
     }),
   me: () => req<User>('/auth/me'),
-  config: () => req<{ registration: boolean; oidc: { enabled: boolean; name?: string } }>('/auth/config'),
+  config: () => req<{ registration: boolean; mail?: boolean; oidc: { enabled: boolean; name?: string } }>('/auth/config'),
   listTokens: () => req<{ id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }[]>('/auth/tokens'),
   createToken: (name: string) =>
     req<{ id: string; name: string; prefix: string; token: string }>('/auth/tokens', {
       method: 'POST', body: JSON.stringify({ name }),
     }),
+  forgotPassword: (email: string) => req<{ ok: true }>('/auth/forgot', { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string) =>
+    req<{ ok: true }>('/auth/reset', { method: 'POST', body: JSON.stringify({ token, password }) }),
+  verifyEmail: (token: string) => req<{ ok: true }>('/auth/verify', { method: 'POST', body: JSON.stringify({ token }) }),
+  sendVerification: () => req<{ ok: true; verified: boolean }>('/auth/verify/send', { method: 'POST' }),
   feedUrl: () => req<{ query: string }>('/habits/feed-url'),
   revokeToken: (id: string) => req<void>(`/auth/tokens/${id}`, { method: 'DELETE' }),
   changePassword: (currentPassword: string, newPassword: string) =>

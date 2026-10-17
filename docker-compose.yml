@@ -38,6 +38,13 @@ services:
       OIDC_POST_LOGIN_URI: ${OIDC_POST_LOGIN_URI:-/}
       OIDC_PROVIDER_NAME: ${OIDC_PROVIDER_NAME:-SSO}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      # email for password reset and address verification (off until MAIL_TRANSPORT + PUBLIC_URL are set)
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_WEBHOOK_URL: ${MAIL_WEBHOOK_URL:-}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
     depends_on:
       postgres:
         condition: service_healthy
