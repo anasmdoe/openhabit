@@ -56,6 +56,18 @@ it standalone.
   completed day is "frozen" and the streak carries on (never two in a row; Off, 1, 2 or 3 a month per
   habit, set in the habit editor, default 1). Frozen days show as a snowflake in the calendar, and the
   habit window says how many freezes are left. Skips, Take a break and flexible "N per week" habits work as before
+- **Goals with deadlines** — "Read 1,200 pages by December", "Run 100 Km by June": pick a habit, a target and a
+  deadline. Stats > Goals shows a progress bar with a marker for where you should be by now, the pace you need per
+  day, and an honest status (ahead, on track, behind, missed, done). Numeric habits add up their values; yes/no
+  habits count days done. Needs about three days before it will call you behind
+- **Habit stacking** — "after Wake up, do Meditation": set *Stack after* in the habit editor. The habit moves to sit
+  right behind its anchor on Today (and under its time section), says "After Wake up", and its reminder says so too.
+  Loops, quit habits and other people's habits are refused
+- **Patterns** — Stats > Patterns reports things like "On days you do Gym you sleep 40 minutes longer" or "On days you
+  do Meditation you also do Reading 14/18 times, vs 6/20 otherwise". It only speaks when both groups have 8+ days and the
+  gap is clear (|t| or |z| of at least 2, at least 15 minutes or 15 points); otherwise it says what data is missing
+- **Android widget** — a small native app in [`android/`](android/README.md) puts today's habits on the home screen with
+  tap-to-complete (written, not yet compiled; CI builds it)
 - **Weekly review** — opt in under Account > Weekly review and every Sunday at 18:00 (your time) you get
   one digest by notification, ntfy and, when the server has email set up, email: overall completion and the
   change on the week before, the strongest habit, the one with most room, perfect days, your longest run
@@ -621,6 +633,26 @@ double-send) and sends the digest to their Web Push subscriptions, their ntfy to
 configured (see *Email* below; the reminder service takes the same `MAIL_*` settings), their account address.
 `GET /api/v1/analytics/weekly-review` returns the same digest for the in-app preview. For tests only,
 `OPENHABIT_TEST_CLOCK=2026-10-18T19:00:00Z` pins the clock the review uses.
+
+## Goals, stacking and patterns
+
+**Goals** live in the `goals` table (`habit-service`: `GET/POST /habits/goals`, `PUT/DELETE /habits/goals/:id`, at most 50
+each). Progress is never stored: `GET /analytics/goals` derives it from the habit's entries between the start date and the
+deadline (`services/analytics-service/src/goals.js`, mirrored by `frontend/src/lib/goals.ts` for demo mode). The status
+compares your pace over the last 14 days with what the deadline needs: `ahead` at 115% or more of the target projected,
+`on_track` at 100% or more, otherwise `behind`; the first three days are always `on_track`, a deadline that has passed
+is `missed`, and marking a goal done by hand wins.
+
+**Stacking** is one nullable column, `habits.after_habit_id` (migration `0006`). `habit-service` checks that the anchor is
+yours, not the habit itself, not a quit habit, and that following the chain never returns to the habit; deleting the
+anchor un-stacks its followers (`ON DELETE SET NULL`).
+
+**Patterns** (`GET /analytics/correlations`, `services/analytics-service/src/correlations.js`, mirrored in
+`frontend/src/lib/correlations.ts`): for each habit, sleep on days done versus missed (Welch t-test), and for each pair of
+habits, how often B is done when A is versus when it is not (two-proportion z-test). Today is left out, skipped and
+unscheduled days are left out, and the strongest 8 results are returned with the sample sizes. These are patterns, not causes.
+
+**Widget feed.** `GET /analytics/today` returns the habits due on the caller's date with state, value and streak in one call.
 
 ## API versioning
 

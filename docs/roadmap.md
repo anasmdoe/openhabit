@@ -142,6 +142,13 @@ The per-habit mood link already lives in the Trend panel (needs 5 done and 5 mis
 1. **Streak protection**: per-habit monthly freezes for daily habits, derived from the entries (nothing stored), shown as snowflakes in the calendar, in the habit overview and on Today.
 2. **Weekly review**: an opt-in Sunday-evening digest by push, ntfy and email, with an in-app preview. Shared pure code (`services/_shared/digest.js`, `streaks.js`) so the preview and the notification agree.
 
+## Added in round 11
+
+1. **Goals with deadlines**: target plus deadline per habit, pace, projection and status; Stats panel and demo mode.
+2. **Habit stacking**: "after X, do Y", with cycle checks, Today ordering and reminder wording.
+3. **Patterns**: sleep and habit-to-habit correlations with sample-size and significance rules.
+4. **Android home-screen widget** (`android/`), fed by the new `GET /analytics/today`. Written but not yet compiled.
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |

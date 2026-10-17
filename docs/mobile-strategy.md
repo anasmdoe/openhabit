@@ -48,3 +48,11 @@ capabilities listed under *Triggers*.
 - **Fully offline-first** use with background sync of everything, not just a queue.
 - Reminders that must fire **without any server** (local scheduling).
 - iPhone users who need reliable action buttons and won't install ntfy.
+
+
+## Update: a home-screen widget (October 2026)
+
+One of the triggers above, home-screen widgets, is now covered by a small native app in [`android/`](../android/README.md).
+It is deliberately just a widget plus a settings screen (about 400 lines, no dependencies): the rest of the mobile experience
+stays the PWA, Web Push and ntfy. The widget reads `GET /api/v1/analytics/today` and writes with the ordinary entries API using a personal API token.
+It is written but has not been compiled yet, so treat the first CI build as the real test.
