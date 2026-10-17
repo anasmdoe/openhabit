@@ -32,3 +32,6 @@ db_name = "openhabit"
 #   client_secret = "xxxxxxxx"
 #   provider_name = "Cognito"
 # }
+
+# KodeKloud playground: its compliance sweep deletes any Lambda named "*-tracking" within minutes.
+# function_names = { tracking = "openhabit-entries" }
