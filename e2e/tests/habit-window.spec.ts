@@ -9,6 +9,26 @@ test('summary and numbers show for a measurable habit', async ({ page }) => {
   expect(text).toMatch(/average/);
 });
 
+test('daily habits show streak protection and it can be changed in the editor', async ({ page }) => {
+  await openApp(page);
+  const dlg = await openHabit(page, 'Reading');
+  await expect(dlg).toContainText(/Streak protection/);
+  await expect(dlg).toContainText(/1 a month/);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: /habit$/ });
+  const select = editor.getByLabel('Streak protection');
+  await expect(select).toHaveValue('1');
+  await select.selectOption('3');
+  await editor.locator('button', { hasText: /^save|update/i }).first().click();
+  await expect(dlg).toContainText(/3 a month/);
+});
+
+test('quit habits have no streak protection', async ({ page }) => {
+  await openApp(page);
+  const dlg = await openHabit(page, 'Social m');
+  await expect(dlg).not.toContainText(/Streak protection/);
+});
+
 test('tap a calendar day to skip it, add a note, and pause just this habit', async ({ page }) => {
   await openApp(page);
   const dlg = await openHabit(page, 'Reading');

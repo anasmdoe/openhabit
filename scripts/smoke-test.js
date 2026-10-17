@@ -401,6 +401,25 @@ async function main() {
   check(typeof ics === 'string' && !ics.includes('SUMMARY:Smoking'), 'calendar: quit habits are left out of the feed');
   await call('habit', 'GET', `/habits/feed.ics?${fu.query.replace(/.$/, (c) => (c === 'a' ? 'b' : 'a'))}`, { expect: [404] });
   await call('habit', 'GET', '/habits/feed.ics', { expect: [404] });
+  // ---- streak protection (freezes) -----------------------------------------
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', streakFreezes: 4 }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', streakFreezes: 1.5 }, expect: [400] });
+  const fz = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Frozen', activeDays: [0, 1, 2, 3, 4, 5, 6] } });
+  check(fz.streakFreezes === 1, 'habits: streak protection defaults to one freeze a month');
+  const fz0 = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Unprotected', activeDays: [0, 1, 2, 3, 4, 5, 6], streakFreezes: 0 } });
+  for (const h of [fz, fz0]) {
+    // done today, yesterday, the day before, then missed three days ago, done for three days before that
+    await call('tracking', 'POST', '/entries/bulk', { token: A, body: { entries: [0, 1, 2, 4, 5, 6].map((n) => ({ habitId: h.id, date: daysAgo(n), value: 1 })) } });
+  }
+  const fzd = await call('analytics', 'GET', `/analytics/habits/${fz.id}`, { token: A });
+  check(fzd.currentStreak === 6 && JSON.stringify(fzd.frozenDates) === JSON.stringify([daysAgo(3)]),
+    `analytics: an isolated miss is frozen and the streak survives (streak ${fzd.currentStreak}, frozen ${fzd.frozenDates})`);
+  check([0, 1].includes(fzd.freezesLeft), 'analytics: the detail reports the freezes left');
+  const fz0d = await call('analytics', 'GET', `/analytics/habits/${fz0.id}`, { token: A });
+  check(fz0d.currentStreak === 3 && fz0d.frozenDates.length === 0, `analytics: protection off means the miss ends the streak (streak ${fz0d.currentStreak})`);
+  const ov = await call('analytics', 'GET', '/analytics/overview', { token: A });
+  check(Array.isArray(ov.habits), 'analytics: overview still loads with protected habits');
+
   await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: quitH.id, date: daysAgo(2), value: 1 } });
   const qd = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
   check(qd.currentStreak === 2 && qd.history.reduce((n, m) => n + m.completions, 0) === 1,

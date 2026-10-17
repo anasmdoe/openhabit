@@ -76,7 +76,7 @@ async function auth(req, res, next) {
 const HABIT_COLS = `id, name, question, type, unit, target::float AS target,
   target_type AS "targetType", color, icon, schedule_type AS "scheduleType",
   frequency, webhook_url AS "webhookUrl", reminder_time AS "reminderTime", active_days AS "activeDays",
-  position, archived, category, kind, cue, savings_per_day::float AS "savingsPerDay", savings_unit AS "savingsUnit",
+  position, archived, category, kind, cue, savings_per_day::float AS "savingsPerDay", savings_unit AS "savingsUnit", streak_freezes AS "streakFreezes",
   created_at AS "createdAt"`;
 
 const asyncH = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -105,6 +105,7 @@ function validateHabit(body, partial = false) {
     cue: (v) => typeof v === 'string' && v.trim().length <= 120,
     savingsPerDay: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1_000_000,
     savingsUnit: (v) => typeof v === 'string' && v.trim().length <= 12,
+    streakFreezes: (v) => Number.isInteger(v) && v >= 0 && v <= 3,
     activeDays: (v) => Array.isArray(v) && v.length > 0 && v.every((d) => Number.isInteger(d) && d >= 0 && d <= 6),
     position: (v) => Number.isInteger(v),
     archived: (v) => typeof v === 'boolean',
@@ -226,9 +227,9 @@ app.post('/habits', asyncH(async (req, res) => {
   const { rows } = await pool.query(
     `INSERT INTO habits (user_id, name, question, type, unit, target, target_type, color, icon,
        schedule_type, frequency, webhook_url, reminder_time, active_days, position, category, kind, cue,
-       savings_per_day, savings_unit)
+       savings_per_day, savings_unit, streak_freezes)
      VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $11, $12, $13, $14, $15, $8,
-       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)), $16, $17, $18, $19, $20)
+       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)), $16, $17, $18, $19, $20, $21)
      RETURNING ${HABIT_COLS}`,
     [
       out.name.trim(),
@@ -251,6 +252,7 @@ app.post('/habits', asyncH(async (req, res) => {
       out.cue ?? '',
       out.savingsPerDay ?? 0,
       out.savingsUnit ?? '',
+      out.streakFreezes ?? 1,
     ]
   );
   res.status(201).json(rows[0]);
@@ -284,7 +286,7 @@ app.put('/habits/:id', asyncH(async (req, res) => {
     targetType: 'target_type', color: 'color', icon: 'icon', activeDays: 'active_days',
     scheduleType: 'schedule_type', frequency: 'frequency', webhookUrl: 'webhook_url',
     reminderTime: 'reminder_time',
-    position: 'position', archived: 'archived', category: 'category', kind: 'kind', cue: 'cue', savingsPerDay: 'savings_per_day', savingsUnit: 'savings_unit',
+    position: 'position', archived: 'archived', category: 'category', kind: 'kind', cue: 'cue', savingsPerDay: 'savings_per_day', savingsUnit: 'savings_unit', streakFreezes: 'streak_freezes',
   };
   const sets = [];
   const vals = [];

@@ -6,6 +6,8 @@ import { quickCurrentStreak } from '../lib/periods';
 import type { Habit } from '../lib/types';
 import { haptic, playDone } from '../lib/feedback';
 import { fmtValue, isDuration, stepFor } from '../lib/format';
+import { freezeDays } from '../lib/streaks';
+import { Snowflake } from '../lib/icons';
 
 // What's due today: a progress ring plus one big tap target per habit
 // (full-width rows on phones, wrapping chips on wider screens).
@@ -64,6 +66,8 @@ export function TodayFocus() {
           const missedYesterday = !isQuit(h) && isFixedDay(h) && h.activeDays.includes(dow(yesterday))
             && yesterday >= h.createdAt.slice(0, 10)
             && !isCompleted(h, valueOf(h, yesterday)) && !isSkip(valueOf(h, yesterday));
+          const frozenYesterday = missedYesterday
+            && freezeDays(h, (d) => valueOf(h, d), addDays(t, -120), t).frozen.has(yesterday);
           let weekCount = 0;
           if (!isFixedDay(h)) {
             for (let d = weekKey(t); d <= t; d = addDays(d, 1)) if (isCompleted(h, valueOf(h, d))) weekCount += 1;
@@ -85,6 +89,7 @@ export function TodayFocus() {
                 value={v}
                 streak={quickCurrentStreak(h, lookup)}
                 missedYesterday={missedYesterday}
+                frozenYesterday={frozenYesterday}
                 weekCount={weekCount}
                 onToggle={() => toggleEntry(h, t)}
                 onSetValue={(val) => setNumericEntry(h, t, val)}
@@ -274,11 +279,12 @@ function ProgressRing({ done, total }: { done: number; total: number }) {
   );
 }
 
-function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle, onSetValue }: {
+function TodayItem({ habit, value, streak, missedYesterday, frozenYesterday, weekCount, onToggle, onSetValue }: {
   habit: Habit;
   value: number | undefined;
   streak: number;
   missedYesterday: boolean;
+  frozenYesterday: boolean;
   weekCount: number;
   onToggle: () => void;
   onSetValue: (v: number | null) => void;
@@ -343,7 +349,11 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
       {habit.icon && <HabitIcon name={habit.icon} color={habit.color} size={15} className="shrink-0" />}
       <span className="min-w-0 flex flex-col leading-tight">
         <span className={`truncate sm:max-w-[170px] ${skipped ? 'text-ink-soft' : ''}`}>{habit.name}</span>
-        {nudge ? (
+        {nudge && frozenYesterday ? (
+          <span className="truncate inline-flex items-center gap-1 text-[10.5px] font-semibold text-[rgb(var(--ice))]" title="Yesterday was covered by a streak freeze; another miss would end the streak">
+            <Snowflake className="w-2.5 h-2.5" />Freeze used yesterday
+          </span>
+        ) : nudge ? (
           <span className="truncate text-[10.5px] font-semibold text-amber-400" title="Missing once is fine; missing twice starts a new pattern">
             Don't miss twice
           </span>

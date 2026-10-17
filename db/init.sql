@@ -392,3 +392,20 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS webhook_secret_version INTEGER NOT NU
 INSERT INTO schema_migrations (version, name, checksum) VALUES ('0003', 'webhook_secret_version', 'edeb5d0745dc23e3591425d1b13135478d83752c5849a17c5fde6d8a60ebe239');
 COMMIT;
 \endif
+
+-- ===== migration 0004 streak_freezes =====
+SELECT COALESCE((SELECT checksum FROM schema_migrations WHERE version = '0004'), '') AS have \gset
+SELECT (:'have' = '') AS fresh, (:'have' <> '' AND :'have' <> 'af99a30af4abaee5f25f17aa1bf7c28b46f196999e4072765e8a5ec66938cf2b') AS drift \gset
+\if :drift
+  SELECT 'migration 0004 streak_freezes was edited after it was applied; add a new migration instead'::int;
+\endif
+\if :fresh
+BEGIN;
+-- Streak protection: how many missed days per calendar month may be "frozen" (kept out of the streak)
+-- for a daily habit. 0 turns it off. The freezes themselves are not stored: they are derived from the
+-- entries, so editing a past day always gives a consistent answer.
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS streak_freezes SMALLINT NOT NULL DEFAULT 1
+  CHECK (streak_freezes BETWEEN 0 AND 3);
+INSERT INTO schema_migrations (version, name, checksum) VALUES ('0004', 'streak_freezes', 'af99a30af4abaee5f25f17aa1bf7c28b46f196999e4072765e8a5ec66938cf2b');
+COMMIT;
+\endif

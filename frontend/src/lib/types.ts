@@ -23,7 +23,9 @@ export interface Habit {
   category: string; // '' = none
   cue: string; // when/where: "After my morning coffee, at my desk"
   savingsPerDay: number; // quit habits: what a clean day is worth (0 = not tracked)
-  savingsUnit: string;   // ...in this unit ("$", "min", "cigarettes")
+  savingsUnit: string;
+  /** Missed days per month that keep a daily streak alive (0 = off). */
+  streakFreezes: number;   // ...in this unit ("$", "min", "cigarettes")
   kind: HabitKind;
   createdAt: string;
 }
@@ -110,6 +112,10 @@ export interface HabitDetail {
   history: { month: string; completions: number; sum: number }[];
   scoreSeries: { date: string; score: number }[];
   entries: { date: string; value: number }[];
+  /** Missed days a freeze kept out of the streak (daily build habits). */
+  frozenDates: string[];
+  /** Freezes still unused this month (0 when protection is off). */
+  freezesLeft: number;
 }
 
 export const MONTH_NAMES = [

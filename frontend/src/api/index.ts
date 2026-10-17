@@ -25,6 +25,7 @@ export interface HabitInput {
   cue?: string;
   savingsPerDay?: number;
   savingsUnit?: string;
+  streakFreezes?: number;
 }
 
 export interface DataAdapter {
@@ -289,7 +290,7 @@ function seedDemo(): LocalDB {
   ): Habit => ({
     id: uuid(), name, question, type, unit, target, targetType: 'at_least',
     color, icon, scheduleType, frequency, webhookUrl: '', reminderTime: '', activeDays, position, archived: false,
-    category: '', kind: 'build', cue: '', savingsPerDay: 0, savingsUnit: '',
+    category: '', kind: 'build', cue: '', savingsPerDay: 0, savingsUnit: '', streakFreezes: 1,
     createdAt: `${addDays(today, -120)}T00:00:00Z`,
   });
 
@@ -381,6 +382,7 @@ const localAdapter: DataAdapter = {
       cue: (input.cue ?? '').trim(),
       savingsPerDay: input.savingsPerDay ?? 0,
       savingsUnit: (input.savingsUnit ?? '').trim(),
+      streakFreezes: input.streakFreezes ?? 1,
       createdAt: new Date().toISOString(),
     };
     db.habits.push(habit);

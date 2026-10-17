@@ -137,6 +137,7 @@ export async function importJSON(adapter: DataAdapter, file: File): Promise<Impo
       cue: h.cue ?? '',
       savingsPerDay: h.savingsPerDay ?? 0,
       savingsUnit: h.savingsUnit ?? '',
+      streakFreezes: h.streakFreezes ?? 1,
       kind: h.kind === 'quit' ? 'quit' : 'build',
     });
     idMap.set(h.id, fresh.id);

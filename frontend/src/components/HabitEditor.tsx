@@ -45,6 +45,7 @@ export function HabitEditor() {
   const reminderTime = [...new Set(times.filter(Boolean))].sort().join(',');
   const [kind, setKind] = useState<HabitKind>(existing?.kind ?? 'build');
   const [category, setCategory] = useState(existing?.category ?? '');
+  const [freezes, setFreezes] = useState(existing?.streakFreezes ?? 1);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!editorHabit) return null;
@@ -85,6 +86,7 @@ export function HabitEditor() {
         savingsPerDay: quit && parseFloat(savings) > 0 ? parseFloat(savings) : 0,
         savingsUnit: quit && parseFloat(savings) > 0 ? savingsUnit.trim() : '',
         category: category.trim(),
+        streakFreezes: freezes,
         kind,
       },
       existing?.id
@@ -163,6 +165,17 @@ export function HabitEditor() {
               className="input"
             />
           </Field>
+
+          {!quit && scheduleType === 'weekdays' && (
+            <Field label="Streak protection" hint="a missed day right after a completed one won't reset the streak">
+              <select value={freezes} onChange={(e) => setFreezes(Number(e.target.value))} className="input" aria-label="Streak protection">
+                <option value={0}>Off</option>
+                <option value={1}>1 freeze a month</option>
+                <option value={2}>2 freezes a month</option>
+                <option value={3}>3 freezes a month</option>
+              </select>
+            </Field>
+          )}
 
           {quit && (
             <Field label="What a clean day is worth" hint="optional — shows a running total in the habit window">

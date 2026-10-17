@@ -1113,6 +1113,7 @@ components:
         category: { type: string, maxLength: 40 }
         savingsPerDay: { type: number, minimum: 0, description: 'Quit habits: what a clean day is worth (e.g. 4), shown as a running total.' }
         savingsUnit: { type: string, maxLength: 12, description: 'Unit of savingsPerDay, e.g. "$", "min" or "cigarettes".' }
+        streakFreezes: { type: integer, minimum: 0, maximum: 3, default: 1, description: 'Streak protection for a daily build habit: how many missed days a month are forgiven when the miss comes straight after a completed day (never two in a row). 0 = off. Quit and flexible weekly habits ignore it.' }
         kind:
           type: string
           enum: [build, quit]
@@ -1222,6 +1223,11 @@ components:
         entries:
           type: array
           items: { type: object, properties: { date: { type: string }, value: { type: number } } }
+        frozenDates:
+          type: array
+          description: Missed days that a streak freeze kept out of the streak.
+          items: { type: string, format: date }
+        freezesLeft: { type: integer, description: 'Freezes unused this month (0 when protection is off).' }
     Insights:
       type: object
       properties:

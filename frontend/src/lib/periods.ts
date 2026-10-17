@@ -2,6 +2,7 @@
 // target progress and the compact calendars.
 import type { Habit, HabitDetail } from './types';
 import { addDays, dow, fromISO, iso, todayISO, isCompleted, isQuit, isSkip, isFixedDay, weekKey as wkKey } from './stats';
+import { freezeDays, freezesEnabled } from './streaks';
 
 export type Period = 'day' | 'week' | 'month' | 'quarter' | 'year';
 export const PERIODS: { id: Period; label: string }[] = [
@@ -102,13 +103,14 @@ export function targetProgress(detail: HabitDetail) {
 export interface CalendarMonth {
   key: string;   // YYYY-MM
   label: string;
-  cells: { date: string; inMonth: boolean; state: 'done' | 'partial' | 'miss' | 'off' | 'future' }[];
+  cells: { date: string; inMonth: boolean; state: 'done' | 'partial' | 'miss' | 'frozen' | 'off' | 'future' }[];
 }
 
 export function buildCalendars(detail: HabitDetail, months = 3): CalendarMonth[] {
   const habit = detail.habit;
   const today = todayISO();
   const entryMap = new Map(detail.entries.map((e) => [e.date, e.value]));
+  const frozen = new Set(detail.frozenDates ?? []);
   const out: CalendarMonth[] = [];
   const now = fromISO(today);
 
@@ -129,6 +131,7 @@ export function buildCalendars(detail: HabitDetail, months = 3): CalendarMonth[]
       else if (date < detail.habit.createdDate
         || (isFixedDay(habit as Habit) && !habit.activeDays.includes(dow(date)))) state = 'off';
       else if (isCompleted(habit as Habit, value)) state = 'done';
+      else if (frozen.has(date)) state = 'frozen'; // a miss that a streak freeze forgave
       else if (isQuit(habit)) state = 'miss'; // a slip
       else if (value != null) state = 'partial';
       else state = isFixedDay(habit as Habit) ? 'miss' : 'off';
@@ -160,9 +163,25 @@ export function quickCurrentStreak(habit: Habit, entryDates: Map<string, number>
     }
     return streak;
   }
+  const start = habit.createdAt.slice(0, 10);
+  if (freezesEnabled(habit)) {
+    // forward walk, because which misses are frozen depends on what came before them
+    const from = addDays(today, -(lookbackDays - 1));
+    const valueAt = (date: string) => entryDates.get(`${habit.id}|${date}`);
+    const { frozen } = freezeDays(habit, valueAt, from, today, start);
+    let run = 0;
+    for (let day = from; day <= today; day = addDays(day, 1)) {
+      if (day < start || !habit.activeDays.includes(dow(day))) continue;
+      const v = valueAt(day);
+      if (isSkip(v)) continue;
+      if (isCompleted(habit, v)) run += 1;
+      else if (day === today || frozen.has(day)) continue;
+      else run = 0;
+    }
+    return run;
+  }
   let streak = 0;
   let d = today;
-  const start = habit.createdAt.slice(0, 10);
   for (let i = 0; i < lookbackDays; i++, d = addDays(d, -1)) {
     if (isQuit(habit) && d < start) break; // clean days count from the start
     if (!habit.activeDays.includes(dow(d))) continue;

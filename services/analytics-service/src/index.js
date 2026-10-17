@@ -111,12 +111,39 @@ const isScheduled = (habit, dateStr) =>
 // prorated weekly quota for a segment of `segDays` days
 const quotaFor = (freq, segDays) => Math.max(1, Math.round((freq * segDays) / 7));
 
+// ---- streak protection (freezes): keep in step with frontend/src/lib/streaks.ts -----------------
+// A daily build habit with streakFreezes > 0 may have up to that many missed days per calendar month
+// forgiven when the miss comes straight after a completed day (never two in a row).
+const freezesEnabled = (h) => isFixedDay(h) && h.kind !== 'quit' && (h.streakFreezes ?? 0) > 0;
+function freezeDays(habit, valueAt, from, today, habitStart = habit.createdDate) {
+  const frozen = new Set();
+  const used = new Map();
+  if (!freezesEnabled(habit)) return { frozen, used };
+  let prev = null;
+  for (let d = from; d <= today; d = addDays(d, 1)) {
+    if (d < habitStart || !habit.activeDays.includes(dow(d))) continue;
+    const v = valueAt(d);
+    if (isSkip(v)) continue;
+    if (isCompleted(habit, v)) { prev = 'done'; continue; }
+    if (d === today) continue; // still open
+    const month = d.slice(0, 7);
+    if (prev === 'done' && (used.get(month) ?? 0) < habit.streakFreezes) {
+      frozen.add(d);
+      used.set(month, (used.get(month) ?? 0) + 1);
+      prev = 'frozen';
+    } else {
+      prev = 'miss';
+    }
+  }
+  return { frozen, used };
+}
+
 async function loadHabits(userId) {
   const { rows } = await pool.query(
     `SELECT h.id, h.name, h.question, h.type, h.unit, h.target::float AS target,
             h.target_type AS "targetType", h.color, h.icon,
             h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays",
-            h.position, h.kind,
+            h.position, h.kind, h.streak_freezes AS "streakFreezes",
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
      FROM habits h
      LEFT JOIN entries e ON e.habit_id = h.id
@@ -176,6 +203,21 @@ function quickStreak(habit, valById) {
       if (streak > 60) break;
     }
     return streak;
+  }
+  if (freezesEnabled(habit)) {
+    const from = addDays(today, -399);
+    const valueAt = (day) => valById.get(day);
+    const { frozen } = freezeDays(habit, valueAt, from, today);
+    let run = 0;
+    for (let day = from; day <= today; day = addDays(day, 1)) {
+      if (day < habit.createdDate || !habit.activeDays.includes(dow(day))) continue;
+      const v = valueAt(day);
+      if (isSkip(v)) continue;
+      if (isCompleted(habit, v)) run += 1;
+      else if (day === today || frozen.has(day)) continue;
+      else run = 0;
+    }
+    return run;
   }
   let streak = 0;
   let d = today;
@@ -397,7 +439,7 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
     `SELECT h.id, h.name, h.question, h.type, h.unit, h.target::float AS target, h.target_type AS "targetType",
             h.color, h.icon, h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays",
             h.kind, h.category, h.cue, h.reminder_time AS "reminderTime",
-            h.savings_per_day::float AS "savingsPerDay", h.savings_unit AS "savingsUnit",
+            h.savings_per_day::float AS "savingsPerDay", h.savings_unit AS "savingsUnit", h.streak_freezes AS "streakFreezes",
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
      FROM habits h
      LEFT JOIN entries e ON e.habit_id = h.id
@@ -415,8 +457,10 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
   let currentStreak = 0;
   const wd = Array.from({ length: 7 }, () => ({ scheduled: 0, completed: 0 }));
   const scoreSeries = [];
+  let freezeInfo = { frozen: new Set(), used: new Map() };
 
   if (isFixedDay(habit)) {
+    freezeInfo = freezeDays(habit, (d) => entryMap.get(d), from, today);
     let cur = null;
     let score = 0;
     const DECAY = Math.pow(0.5, 1 / 13);
@@ -431,6 +475,8 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
         wd[dow(d)].completed += 1;
         if (!cur) cur = { start: d, end: d, length: 1 };
         else { cur.end = d; cur.length += 1; }
+      } else if (freezeInfo.frozen.has(d)) {
+        // a freeze keeps the run going (the day still counts as missed for the score)
       } else if (cur) {
         streaks.push(cur);
         cur = null;
@@ -508,6 +554,8 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
     entries: [...entryMap.entries()]
       .map(([date, value]) => ({ date, value }))
       .sort((a, b) => a.date.localeCompare(b.date)),
+    frozenDates: [...freezeInfo.frozen].sort(),
+    freezesLeft: freezesEnabled(habit) ? Math.max(0, habit.streakFreezes - (freezeInfo.used.get(today.slice(0, 7)) ?? 0)) : 0,
   });
 }));
 

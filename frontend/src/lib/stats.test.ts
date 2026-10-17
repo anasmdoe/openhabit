@@ -20,7 +20,7 @@ function habit(over: Partial<Habit> = {}): Habit {
   return {
     id: 'h1', name: 'Test', question: '', type: 'boolean', unit: '', target: 1,
     targetType: 'at_least', color: '#000', icon: '', scheduleType: 'weekdays', frequency: 7,
-    webhookUrl: '', reminderTime: '', activeDays: ALL_DAYS, position: 0, archived: false, category: '', cue: '', savingsPerDay: 0, savingsUnit: '', kind: 'build',
+    webhookUrl: '', reminderTime: '', activeDays: ALL_DAYS, position: 0, archived: false, category: '', cue: '', savingsPerDay: 0, savingsUnit: '', streakFreezes: 0, kind: 'build',
     createdAt: '2026-01-01T00:00:00Z', ...over,
   };
 }

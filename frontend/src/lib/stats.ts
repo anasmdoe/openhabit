@@ -1,6 +1,7 @@
 // Pure stat computations mirroring analytics-service exactly, so demo mode
 // and offline fallbacks behave identically to the backend.
 import type { Entry, Habit, HabitDetail, Insights, Overview, WellnessDay } from './types';
+import { freezeDays, freezesLeft } from './streaks';
 
 export const iso = (d: Date) => d.toISOString().slice(0, 10);
 export const fromISO = (s: string) => new Date(`${s}T00:00:00Z`);
@@ -182,8 +183,10 @@ export function computeHabitDetail(habit: Habit, entries: Entry[]): HabitDetail 
   let currentStreak = 0;
   const wd = Array.from({ length: 7 }, () => ({ scheduled: 0, completed: 0 }));
   const scoreSeries: { date: string; score: number }[] = [];
+  let freezeInfo = freezeDays(habit, () => undefined, from, today, created); // empty unless protection applies
 
   if (isFixedDay(habit)) {
+    freezeInfo = freezeDays(habit, (d) => entryMap.get(d)?.value, from, today, created);
     let cur: { start: string; end: string; length: number } | null = null;
     let score = 0;
     const DECAY = Math.pow(0.5, 1 / 13);
@@ -198,6 +201,8 @@ export function computeHabitDetail(habit: Habit, entries: Entry[]): HabitDetail 
         wd[dow(d)].completed += 1;
         if (!cur) cur = { start: d, end: d, length: 1 };
         else { cur.end = d; cur.length += 1; }
+      } else if (freezeInfo.frozen.has(d)) {
+        // a freeze keeps the run going (the day itself still counts as missed for the score)
       } else if (cur) {
         streaks.push(cur);
         cur = null;
@@ -275,6 +280,8 @@ export function computeHabitDetail(habit: Habit, entries: Entry[]): HabitDetail 
     entries: [...entryMap.entries()]
       .map(([date, e]) => ({ date, value: e.value }))
       .sort((a, b) => a.date.localeCompare(b.date)),
+    frozenDates: [...freezeInfo.frozen].sort(),
+    freezesLeft: freezesLeft(habit, freezeInfo.used, today),
   };
 }
 

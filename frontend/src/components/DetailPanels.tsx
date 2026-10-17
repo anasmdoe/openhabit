@@ -6,12 +6,14 @@ import { DAY_LETTERS, MONTH_NAMES } from '../lib/types';
 import type { Habit, HabitDetail as HabitDetailData } from '../lib/types';
 import { addDays, isCompleted, isQuit, isSkip } from '../lib/stats';
 import { buildCalendars } from '../lib/periods';
+import { freezesEnabled } from '../lib/streaks';
 import {
   cleanStats, completionRates, entriesCsv, lookupFor, nextMilestone, numberStats, savingsTotal, trendSentences,
   withStart,
 } from '../lib/habitInsights';
 import type { DayEntry } from '../lib/habitInsights';
 import { fmtValue } from '../lib/format';
+import { Snowflake } from '../lib/icons';
 
 // ---- this habit's entries (with notes) for the last year -------------------------------------
 export function useHabitEntries(habitId: string) {
@@ -50,6 +52,8 @@ export function SummaryPanel({ habit, detail, entries, color }: {
   const unit = detail.streakUnit === 'weeks' ? 'week' : 'day';
   const pct = (v: number | null) => (v === null ? '—' : `${v}%`);
   const times = habit.reminderTime ? habit.reminderTime.split(',') : [];
+  const protect = freezesEnabled(habit);
+  const fmtDay = (d: string) => `${+d.slice(8, 10)} ${MONTH_NAMES[+d.slice(5, 7) - 1].slice(0, 3)}`;
   return (
     <section className="panel">
       <div className="panel-head">
@@ -76,6 +80,15 @@ export function SummaryPanel({ habit, detail, entries, color }: {
           </div>
         ) : (
           <p className="text-[12px] text-ink-soft">Every streak milestone reached. Impressive.</p>
+        )}
+        {protect && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px]">
+            <span className="inline-flex items-center gap-1 font-medium text-[rgb(var(--ice))]"><Snowflake />Streak protection</span>
+            <span className="text-ink-soft">
+              {habit.streakFreezes} a month, {detail.freezesLeft} left this month
+              {detail.frozenDates.length > 0 && ` · saved on ${detail.frozenDates.slice(-3).map(fmtDay).join(', ')}`}
+            </span>
+          </div>
         )}
         {(times.length > 0 || habit.cue) && (
           <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-ink-soft">
@@ -198,6 +211,7 @@ export function EditableCalendar({ habit, detail, entries, color, onChanged }: {
   const quit = isQuit(habit);
   const numeric = habit.type === 'numeric';
   const skipped = isSkip(entry?.value);
+  const frozenPicked = !!picked && !entry && (detail.frozenDates ?? []).includes(picked);
 
   useEffect(() => {
     setDraft(entry && !skipped ? String(entry.value) : '');
@@ -236,9 +250,10 @@ export function EditableCalendar({ habit, detail, entries, color, onChanged }: {
                     onClick={() => setPicked(c.date === picked ? null : c.date)}
                     aria-label={`${c.date}: ${c.state}`}
                     aria-pressed={c.date === picked}
-                    className={`aspect-square rounded-[3px] ${c.date === picked ? 'outline outline-2 outline-ink' : ''} ${c.date === t ? 'ring-1 ring-ink' : ''}`}
+                    className={`aspect-square rounded-[3px] grid place-items-center ${c.date === picked ? 'outline outline-2 outline-ink' : ''} ${c.date === t ? 'ring-1 ring-ink' : ''}`}
                     style={{
                       background: c.state === 'done' ? color
+                        : c.state === 'frozen' ? 'rgb(var(--ice) / 0.25)'
                         : c.state === 'partial' ? `${color}55`
                         : c.state === 'miss' ? 'rgb(var(--forest-800))'
                         : c.state === 'future' ? 'transparent'
@@ -247,7 +262,9 @@ export function EditableCalendar({ habit, detail, entries, color, onChanged }: {
                       outlineOffset: -1,
                       opacity: c.state === 'off' ? 0.55 : 1,
                     }}
-                  />
+                  >
+                    {c.state === 'frozen' && <span className="text-[rgb(var(--ice))]"><Snowflake className="w-[10px] h-[10px]" /></span>}
+                  </button>
                 );
               })}
             </div>
@@ -259,7 +276,7 @@ export function EditableCalendar({ habit, detail, entries, color, onChanged }: {
         <div className="px-4 pb-4 pt-1 border-t border-line flex flex-col gap-2.5" aria-live="polite">
           <div className="flex items-baseline justify-between pt-2.5">
             <span className="text-[13px] font-semibold">{fmtDate(picked)}</span>
-            <span className="text-[11px] text-ink-soft">{state === 'none' ? 'nothing logged' : state}</span>
+            <span className="text-[11px] text-ink-soft">{state === 'none' ? (frozenPicked ? 'missed: a streak freeze covered it' : 'nothing logged') : state}</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {numeric ? (
