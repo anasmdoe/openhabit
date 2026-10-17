@@ -5,6 +5,7 @@ import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, weekKey } from '
 import { quickCurrentStreak } from '../lib/periods';
 import type { Habit } from '../lib/types';
 import { haptic, playDone } from '../lib/feedback';
+import { fmtValue, isDuration, stepFor } from '../lib/format';
 
 // What's due today: a progress ring plus one big tap target per habit
 // (full-width rows on phones, wrapping chips on wider screens).
@@ -418,17 +419,17 @@ function TodayItem({ habit, value, streak, missedYesterday, weekCount, onToggle,
         <Check done={done} skipped={skipped} burst={burst} color={habit.color} />
         {name}
         <span className={`num text-[11px] shrink-0 ${done ? 'text-mint' : 'text-ink-soft'}`}>
-          {current}/{habit.target}{habit.unit ? ` ${habit.unit}` : ''}
+          {isDuration(habit) ? `${fmtValue(habit, current)} / ${fmtValue(habit, habit.target)}` : `${current}/${habit.target}${habit.unit ? ` ${habit.unit}` : ''}`}
         </span>
       </button>
       {meta}
       {countable && (
         <button
-          onClick={() => { haptic(6); onSetValue(Math.round((current + 1) * 100) / 100); }}
+          onClick={() => { haptic(6); onSetValue(Math.round((current + stepFor(habit)) * 100) / 100); }}
           className="w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-forest-800 hover:bg-forest-700 grid place-items-center text-[12px] font-bold shrink-0 cell-btn"
-          aria-label={`Add 1 ${habit.unit || ''} to ${habit.name}`}
+          aria-label={`Add ${stepFor(habit)} ${habit.unit || ''} to ${habit.name}`}
         >
-          +1
+          +{stepFor(habit)}
         </button>
       )}
     </div>

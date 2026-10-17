@@ -283,6 +283,17 @@ async function main() {
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', reminderTime: '08:00,08:00' }, expect: [400] });
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', cue: 'x'.repeat(121) }, expect: [400] });
   await call('habit', 'PUT', `/habits/${quitH.id}`, { token: A, body: { type: 'numeric' }, expect: [400] });
+
+  // ---- calendar feed (iCal) ------------------------------------------------
+  const fu = await call('habit', 'GET', '/habits/feed-url', { token: A });
+  check(/^u=[0-9a-f-]{36}&k=[\w-]{32}$/.test(fu.query || ''), 'calendar: feed-url returns a user id and key');
+  await call('habit', 'GET', '/habits/feed-url', { expect: [401] });
+  const ics = await call('habit', 'GET', `/habits/feed.ics?${fu.query}`);
+  check(typeof ics === 'string' && ics.startsWith('BEGIN:VCALENDAR') && ics.includes('SUMMARY:Read') && ics.includes('RRULE:'),
+    'calendar: the feed is an iCal file with recurring habits');
+  check(typeof ics === 'string' && !ics.includes('SUMMARY:Smoking'), 'calendar: quit habits are left out of the feed');
+  await call('habit', 'GET', `/habits/feed.ics?${fu.query.replace(/.$/, (c) => (c === 'a' ? 'b' : 'a'))}`, { expect: [404] });
+  await call('habit', 'GET', '/habits/feed.ics', { expect: [404] });
   await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: quitH.id, date: daysAgo(2), value: 1 } });
   const qd = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
   check(qd.currentStreak === 2 && qd.history.reduce((n, m) => n + m.completions, 0) === 1,

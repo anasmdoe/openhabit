@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../store';
 import { exportCSV, exportJSON, importJSON, importLoopCSV } from '../lib/exportImport';
-import { authApi } from '../api';
+import { API, authApi } from '../api';
 import { pushSupported, needsHomeScreen, currentSubscription, enablePush, disablePush } from '../lib/push';
 import { useModalOpen } from '../lib/modal';
 
@@ -106,7 +106,7 @@ export function AuthGate() {
 export function AccountMenu() {
   const { user, logout, changePassword, deleteAccount, updateName, openArchived } = useApp();
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens'>('menu');
+  const [view, setView] = useState<'menu' | 'profile' | 'password' | 'delete' | 'tokens' | 'calendar'>('menu');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
@@ -193,6 +193,10 @@ export function AccountMenu() {
                   onClick={() => setView('tokens')}>
                   API tokens
                 </MenuBtn>
+                <MenuBtn icon={<path d="M7 3v3m10-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" strokeLinecap="round" strokeLinejoin="round" />}
+                  onClick={() => setView('calendar')}>
+                  Calendar feed
+                </MenuBtn>
                 <MenuBtn icon={<path d="M4 8h16M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" />}
                   onClick={() => { close(); openArchived(); }}>
                   Archived habits
@@ -232,6 +236,7 @@ export function AccountMenu() {
             )}
 
             {view === 'tokens' && <TokensView onBack={() => setView('menu')} />}
+            {view === 'calendar' && <CalendarFeedView onBack={() => setView('menu')} />}
 
             {view === 'profile' && (
               <>
@@ -499,6 +504,44 @@ function TokensView({ onBack }: { onBack: () => void }) {
         ))}
         {!tokens.length && <p className="text-[11px] text-ink-soft py-2 text-center">No tokens yet.</p>}
       </div>
+    </div>
+  );
+}
+
+function CalendarFeedView({ onBack }: { onBack: () => void }) {
+  const [url, setUrl] = useState('');
+  const [err, setErr] = useState('');
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    authApi.feedUrl()
+      .then((r) => setUrl(new URL(`${API}/habits/feed.ics?${r.query}`, location.href).href))
+      .catch((e) => setErr(e instanceof Error ? e.message : 'failed'));
+  }, []);
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[12px] font-semibold flex items-center gap-2">
+        <button onClick={onBack} className="text-ink-soft hover:text-ink" aria-label="Back">‹</button>
+        Calendar feed
+      </div>
+      <p className="text-[11px] text-ink-soft leading-snug">
+        Subscribe to see your habits in Google, Apple or Outlook Calendar: recurring events on the
+        days they are due, at their first reminder time. The feed lists habit names and cues only,
+        never your entries, notes or mood. Anyone with this link can read it, so keep it private.
+      </p>
+      {url ? (
+        <>
+          <code className="num text-[10.5px] break-all select-all bg-forest-900 rounded-md p-2">{url}</code>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={() => { navigator.clipboard?.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="text-[11px] font-semibold bg-mint text-forest-950 rounded-lg px-2.5 py-1.5">
+              {copied ? 'Copied!' : 'Copy link'}
+            </button>
+            <a href={url.replace(/^https?:/, 'webcal:')} className="text-[11px] font-semibold border border-line rounded-lg px-2.5 py-1.5 hover:bg-forest-850">
+              Open in calendar app
+            </a>
+          </div>
+        </>
+      ) : err ? <p className="text-[11px] text-red-400">{err}</p> : <p className="text-[11px] text-ink-soft">Loading…</p>}
     </div>
   );
 }

@@ -106,7 +106,7 @@ Not built from the review: habit-to-habit correlations (needs a careful sample-s
 4. **Time-of-day sections** on Today (shown only when habits fall in more than one).
 5. **Accessibility pass** with axe-core over every tab, the habit window and the main popups in all three themes; contrast tokens, landmarks, labelled scroll regions and touch targets fixed.
 
-Skipped for now: a per-habit mood link (needs the same sample-size rule as correlations).
+The per-habit mood link already lives in the Trend panel (needs 5 done and 5 missed days with a mood logged).
 
 ## Next candidates, in order
 

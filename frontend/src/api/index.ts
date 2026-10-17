@@ -106,6 +106,7 @@ export const authApi = {
     req<{ id: string; name: string; prefix: string; token: string }>('/auth/tokens', {
       method: 'POST', body: JSON.stringify({ name }),
     }),
+  feedUrl: () => req<{ query: string }>('/habits/feed-url'),
   revokeToken: (id: string) => req<void>(`/auth/tokens/${id}`, { method: 'DELETE' }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),

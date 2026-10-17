@@ -11,6 +11,7 @@ import {
   withStart,
 } from '../lib/habitInsights';
 import type { DayEntry } from '../lib/habitInsights';
+import { fmtValue } from '../lib/format';
 
 // ---- this habit's entries (with notes) for the last year -------------------------------------
 export function useHabitEntries(habitId: string) {
@@ -125,7 +126,6 @@ export function NumbersPanel({ habit, entries, color }: { habit: Habit; entries:
     () => entries.filter((e) => !isSkip(e.value) && e.value >= 0).sort((a, b) => a.date.localeCompare(b.date)).slice(-30),
     [entries]);
   if (!s) return null;
-  const u = habit.unit ? ` ${habit.unit}` : '';
   return (
     <section className="panel">
       <div className="panel-head">
@@ -134,9 +134,9 @@ export function NumbersPanel({ habit, entries, color }: { habit: Habit; entries:
       </div>
       <div className="px-4 pb-4 flex flex-col gap-3">
         <div className="grid grid-cols-2 min-[420px]:grid-cols-4 gap-2">
-          <Tile label="Average" value={`${s.average}${u}`} sub="per logged day" />
-          <Tile label={habit.targetType === 'at_most' ? 'Lowest' : 'Best day'} value={`${s.best}${u}`} sub={fmtDate(s.bestDate)} />
-          <Tile label="Total" value={`${s.total}${u}`} />
+          <Tile label="Average" value={fmtValue(habit, s.average)} sub="per logged day" />
+          <Tile label={habit.targetType === 'at_most' ? 'Lowest' : 'Best day'} value={fmtValue(habit, s.best)} sub={fmtDate(s.bestDate)} />
+          <Tile label="Total" value={fmtValue(habit, s.total)} />
           <Tile label="Target hit" value={s.hitRate === null ? '—' : `${s.hitRate}%`} sub={`goal ${habit.targetType === 'at_most' ? '≤' : '≥'} ${habit.target}`} />
         </div>
         {recent.length > 2 && (

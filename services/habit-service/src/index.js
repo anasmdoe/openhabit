@@ -134,7 +134,76 @@ app.get('/healthz', asyncH(async (_req, res) => {
   res.json({ status: 'ok', service: 'habit-service' });
 }));
 
+
+// ---- calendar feed (iCal) -----------------------------------------------
+// A read-only subscription URL for Google/Apple/Outlook calendars. Calendar apps cannot send
+// an Authorization header, so the URL carries an HMAC key derived from JWT_SECRET and the user id
+// (rotating JWT_SECRET revokes every feed). It exposes habit names, cues and schedules only,
+// never entries, notes or mood.
+const feedKey = (userId) =>
+  crypto.createHmac('sha256', JWT_SECRET).update(`ics-feed:${userId}`).digest('base64url').slice(0, 32);
+
+const icsEscape = (t) => String(t).replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+function icsFold(line) {
+  const out = [];
+  let rest = Buffer.from(line);
+  while (rest.length > 75) {
+    let cut = 75;
+    while ((rest[cut] & 0xc0) === 0x80) cut -= 1; // never split a UTF-8 character
+    out.push(rest.subarray(0, cut).toString());
+    rest = Buffer.concat([Buffer.from(' '), rest.subarray(cut)]);
+  }
+  out.push(rest.toString());
+  return out.join('\r\n');
+}
+
+const BYDAY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+export function buildIcs(habits, now = new Date()) {
+  const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
+  const stamp = `${now.toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`;
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OpenHabit//Habits//EN', 'CALSCALE:GREGORIAN',
+    'X-WR-CALNAME:OpenHabit', 'REFRESH-INTERVAL;VALUE=DURATION:PT6H'];
+  for (const h of habits) {
+    if (h.archived || h.kind === 'quit') continue;
+    const days = h.schedule_type === 'per_week' ? [0, 1, 2, 3, 4, 5, 6] : h.active_days;
+    const start = new Date(now);
+    while (!days.includes(start.getUTCDay())) start.setUTCDate(start.getUTCDate() + 1);
+    const time = (h.reminder_time || '').split(',').filter(Boolean).sort()[0];
+    lines.push('BEGIN:VEVENT', `UID:${h.id}@openhabit`, `DTSTAMP:${stamp}`);
+    if (time) {
+      lines.push(`DTSTART:${ymd(start)}T${time.replace(':', '')}00`, 'DURATION:PT15M');
+    } else {
+      lines.push(`DTSTART;VALUE=DATE:${ymd(start)}`, 'DURATION:P1D');
+    }
+    lines.push(days.length === 7 ? 'RRULE:FREQ=DAILY' : `RRULE:FREQ=WEEKLY;BYDAY=${days.map((d) => BYDAY[d]).join(',')}`);
+    lines.push(`SUMMARY:${icsEscape(h.name)}`);
+    const note = [h.cue, h.schedule_type === 'per_week' ? `${h.frequency} times a week, any days` : ''].filter(Boolean).join(' - ');
+    if (note) lines.push(`DESCRIPTION:${icsEscape(note)}`);
+    if (!time) lines.push('TRANSP:TRANSPARENT'); // all-day habits should not mark you busy
+    lines.push('END:VEVENT');
+  }
+  lines.push('END:VCALENDAR');
+  return `${lines.map(icsFold).join('\r\n')}\r\n`;
+}
+
+app.get('/habits/feed.ics', asyncH(async (req, res) => {
+  const u = String(req.query.u || '');
+  const k = Buffer.from(String(req.query.k || ''));
+  const want = Buffer.from(feedKey(u));
+  if (!/^[0-9a-f-]{36}$/i.test(u) || k.length !== want.length || !crypto.timingSafeEqual(k, want)) {
+    return res.status(404).type('text/plain').send('not found');
+  }
+  const { rows } = await pool.query(
+    `SELECT id, name, cue, schedule_type, frequency, active_days, reminder_time, archived, kind
+     FROM habits WHERE user_id = $1 AND NOT archived ORDER BY position, created_at`, [u]);
+  res.set('Cache-Control', 'private, max-age=900').type('text/calendar; charset=utf-8').send(buildIcs(rows));
+}));
+
 app.use(auth);
+
+app.get('/habits/feed-url', (req, res) => {
+  res.json({ query: `u=${req.userId}&k=${feedKey(req.userId)}` });
+});
 
 app.get('/habits', asyncH(async (req, res) => {
   const includeArchived = req.query.archived === 'true';

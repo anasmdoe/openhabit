@@ -196,8 +196,13 @@ export function HabitEditor() {
                   onChange={(e) => setTarget(e.target.value)} className="input num" />
               </Field>
               <Field label="Unit">
-                <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="Km"
+                <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="Km" list="unit-suggestions"
                   className="input" />
+                <datalist id="unit-suggestions">
+                  <option value="min">shows as 1h 30m</option>
+                  <option value="h">shows as 1h 30m</option>
+                  <option value="pages" /><option value="Km" /><option value="glasses" />
+                </datalist>
               </Field>
               <Field label="Direction">
                 <select value={targetType} onChange={(e) => setTargetType(e.target.value as 'at_least' | 'at_most')}

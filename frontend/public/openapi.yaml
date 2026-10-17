@@ -293,6 +293,45 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
 
+  /habits/feed-url:
+    get:
+      operationId: getCalendarFeedUrl
+      tags: [Habits]
+      summary: Get the query string for your calendar feed
+      description: Append it to `/habits/feed.ics?` to get a subscription URL for Google, Apple or Outlook Calendar.
+      responses:
+        '200':
+          description: The feed's query string.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query: { type: string, example: 'u=0b7e...&k=Qm9...' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /habits/feed.ics:
+    get:
+      operationId: getCalendarFeed
+      tags: [Habits]
+      summary: Calendar feed (iCal)
+      description: >-
+        Recurring events for your habits that are due on set days, at their first reminder time
+        (all-day when there is none). Lists names and cues only. Authenticated by the `u` and `k`
+        query parameters from `/habits/feed-url`, because calendar apps cannot send headers.
+        Rotating `JWT_SECRET` revokes every feed.
+      security: []
+      parameters:
+        - { name: u, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: k, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: An iCalendar file.
+          content:
+            text/calendar:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
+
   /habits:
     get:
       operationId: listHabits
