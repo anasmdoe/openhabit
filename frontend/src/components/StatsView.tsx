@@ -6,6 +6,8 @@ import { InsightsPanel } from './InsightsPanel';
 import { RecapPanel } from './Recap';
 import { AllCalendar } from './AllCalendar';
 import { YearPixels } from './YearPixels';
+import { GoalsPanel } from './GoalsPanel';
+import { PatternsPanel } from './PatternsPanel';
 
 const KEY = 'openhabit.statsLayout';
 
@@ -13,6 +15,7 @@ interface Section { id: string; title: string; render: () => React.ReactNode }
 
 const SECTIONS: Section[] = [
   { id: 'recap', title: 'Recap', render: () => <RecapPanel /> },
+  { id: 'goals', title: 'Goals', render: () => <GoalsPanel /> },
   { id: 'month', title: 'This month, day by day', render: () => <MonthTrendPanel /> },
   {
     id: 'breakdown', title: 'Monthly completion and streaks',
@@ -27,6 +30,7 @@ const SECTIONS: Section[] = [
   { id: 'calendar', title: 'Calendar', render: () => <AllCalendar /> },
   { id: 'pixels', title: 'Year in pixels', render: () => <YearPixels /> },
   { id: 'insights', title: 'Insights', render: () => <InsightsPanel /> },
+  { id: 'patterns', title: 'Patterns', render: () => <PatternsPanel /> },
 ];
 
 interface Layout { order: string[]; hidden: string[] }

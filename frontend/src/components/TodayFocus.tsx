@@ -8,6 +8,7 @@ import { haptic, playDone } from '../lib/feedback';
 import { fmtValue, isDuration, stepFor } from '../lib/format';
 import { freezeDays } from '../lib/streaks';
 import { Snowflake } from '../lib/icons';
+import { effectiveSection, stackOrder } from '../lib/stacking';
 
 // What's due today: a progress ring plus one big tap target per habit
 // (full-width rows on phones, wrapping chips on wider screens).
@@ -91,6 +92,7 @@ export function TodayFocus() {
                 missedYesterday={missedYesterday}
                 frozenYesterday={frozenYesterday}
                 weekCount={weekCount}
+                afterName={h.afterHabitId ? dueById.get(h.afterHabitId)?.name : undefined}
                 onToggle={() => toggleEntry(h, t)}
                 onSetValue={(val) => setNumericEntry(h, t, val)}
               />
@@ -99,8 +101,9 @@ export function TodayFocus() {
   };
 
   const shown = due.filter((h) => !(feedback.hideDone && settled(h)));
+  const dueById = new Map(due.map((h) => [h.id, h]));
   const sections = TIME_SECTIONS
-    .map((sec) => ({ ...sec, habits: shown.filter((h) => timeSection(h) === sec.key) }))
+    .map((sec) => ({ ...sec, habits: stackOrder(shown.filter((h) => effectiveSection(h, dueById, timeSection) === sec.key)) }))
     .filter((sec) => sec.habits.length > 0);
   const showHeadings = sections.length > 1;
 
@@ -279,13 +282,14 @@ function ProgressRing({ done, total }: { done: number; total: number }) {
   );
 }
 
-function TodayItem({ habit, value, streak, missedYesterday, frozenYesterday, weekCount, onToggle, onSetValue }: {
+function TodayItem({ habit, value, streak, missedYesterday, frozenYesterday, weekCount, afterName, onToggle, onSetValue }: {
   habit: Habit;
   value: number | undefined;
   streak: number;
   missedYesterday: boolean;
   frozenYesterday: boolean;
   weekCount: number;
+  afterName?: string;
   onToggle: () => void;
   onSetValue: (v: number | null) => void;
 }) {
@@ -356,6 +360,10 @@ function TodayItem({ habit, value, streak, missedYesterday, frozenYesterday, wee
         ) : nudge ? (
           <span className="truncate text-[10.5px] font-semibold text-amber-400" title="Missing once is fine; missing twice starts a new pattern">
             Don't miss twice
+          </span>
+        ) : afterName ? (
+          <span className="truncate sm:max-w-[170px] text-[10.5px] font-normal text-ink-soft" title={`Do this right after ${afterName}`}>
+            After {afterName}
           </span>
         ) : habit.cue && (
           <span className="truncate sm:max-w-[170px] text-[10.5px] font-normal text-ink-soft" title={habit.cue}>{habit.cue}</span>

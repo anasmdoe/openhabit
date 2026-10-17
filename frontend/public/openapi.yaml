@@ -34,6 +34,8 @@ tags:
     description: Accounts, sessions, personal API tokens and Web Push devices.
   - name: Habits
     description: Habit definitions.
+  - name: Goals
+    description: 'Goals with deadlines and the pace needed to reach them.'
   - name: Tracking
     description: Entries (check-ins) and mood/sleep.
   - name: Analytics
@@ -500,6 +502,61 @@ paths:
       responses:
         '200': { description: 'Reordered.', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
         '400': { $ref: '#/components/responses/Error' }
+  /habits/goals:
+    get:
+      operationId: listGoals
+      tags: [Goals]
+      summary: List your goals (without progress)
+      responses:
+        '200':
+          description: Goals, soonest deadline first.
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Goal' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createGoal
+      tags: [Goals]
+      summary: Create a goal ("Read 20 books by December")
+      description: >-
+        A goal belongs to one habit. For a numeric habit the target is a total of its values (pages, Km);
+        for a yes/no habit it is a number of days done. Up to 50 goals.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GoalInput' } } }
+      responses:
+        '201':
+          description: Created.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /habits/goals/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    put:
+      operationId: updateGoal
+      tags: [Goals]
+      summary: Update a goal (partial); `completed` marks it done by hand
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/GoalInput' }
+                - { type: object, properties: { completed: { type: boolean } } }
+      responses:
+        '200':
+          description: The goal.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteGoal
+      tags: [Goals]
+      summary: Delete a goal
+      responses:
+        '204': { description: Deleted. }
+        '404': { $ref: '#/components/responses/Error' }
+
   /habits/{id}:
     parameters:
       - { $ref: '#/components/parameters/Id' }
@@ -753,6 +810,111 @@ paths:
                   freezesUsed: { type: integer }
                   perfectDays: { type: integer }
                   message: { type: object, properties: { subject: { type: string }, text: { type: string } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /analytics/goals:
+    get:
+      operationId: getGoalProgress
+      tags: [Goals]
+      summary: Goals with progress and the pace needed
+      description: >-
+        Progress comes from the linked habit's entries between the goal's start and its deadline.
+        `status` compares your last-14-day pace with what is needed: `ahead`, `on_track`, `behind`,
+        `missed` (deadline passed), `done`, or `upcoming`. Under 3 days in, it never says `behind`.
+      parameters:
+        - { name: today, in: query, description: "The caller's local date (default: the server's UTC date).", schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Goals, most urgent first.
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/GoalProgress' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+  /analytics/correlations:
+    get:
+      operationId: getCorrelations
+      tags: [Analytics]
+      summary: Patterns in your own data (sleep and habit-to-habit)
+      description: >-
+        Reports a pattern only when both groups have at least 8 days and the gap is clear
+        (Welch t or two-proportion z of at least 2, at least 15 minutes of sleep or 15 percentage points).
+        Today is left out because it is still open. `needed` says how much data is there, so a client can
+        explain what would unlock more.
+      parameters:
+        - { name: days, in: query, description: 'Window length, 30 to 365 (default 180).', schema: { type: integer, minimum: 30, maximum: 365 } }
+        - { name: today, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: The patterns found, strongest first (at most 8).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  span: { type: integer }
+                  found:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: { type: string, enum: [sleep, pair] }
+                        habitId: { type: string, format: uuid }
+                        otherId: { type: string, format: uuid }
+                        name: { type: string }
+                        otherName: { type: string }
+                        color: { type: string }
+                        icon: { type: string }
+                        diff: { type: number, description: 'Hours of sleep (sleep) or percentage points (pair).' }
+                        nDone: { type: integer }
+                        nMissed: { type: integer }
+                        strength: { type: number }
+                        text: { type: string }
+                  needed:
+                    type: object
+                    properties:
+                      sleepDays: { type: integer }
+                      trackedDays: { type: integer }
+                      minGroup: { type: integer }
+                      minPairDays: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /analytics/today:
+    get:
+      operationId: getToday
+      tags: [Analytics]
+      summary: Habits due today with their state (for widgets and small clients)
+      parameters:
+        - { name: today, in: query, description: "The caller's local date (default: the server's UTC date).", schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: The habits due, in your order.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: { type: string, format: date }
+                  total: { type: integer }
+                  done: { type: integer }
+                  open: { type: integer }
+                  habits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        color: { type: string }
+                        icon: { type: string }
+                        type: { type: string, enum: [boolean, numeric] }
+                        unit: { type: string }
+                        target: { type: number }
+                        targetType: { type: string, enum: [at_least, at_most] }
+                        afterHabitId: { type: [string, 'null'], format: uuid }
+                        value: { type: [number, 'null'] }
+                        completed: { type: boolean }
+                        skipped: { type: boolean }
+                        streak: { type: integer }
+                        weekCount: { type: integer, description: 'Flexible weekly habits only.' }
+                        frequency: { type: integer, description: 'Flexible weekly habits only.' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
   /analytics/habits/{id}:
@@ -1186,11 +1348,50 @@ components:
         savingsPerDay: { type: number, minimum: 0, description: 'Quit habits: what a clean day is worth (e.g. 4), shown as a running total.' }
         savingsUnit: { type: string, maxLength: 12, description: 'Unit of savingsPerDay, e.g. "$", "min" or "cigarettes".' }
         streakFreezes: { type: integer, minimum: 0, maximum: 3, default: 1, description: 'Streak protection for a daily build habit: how many missed days a month are forgiven when the miss comes straight after a completed day (never two in a row). 0 = off. Quit and flexible weekly habits ignore it.' }
+        afterHabitId: { type: [string, 'null'], format: uuid, description: 'Habit stacking: do this right after another of your build habits. Must not be itself, a quit habit, or create a loop.' }
         kind:
           type: string
           enum: [build, quit]
           default: build
           description: A `quit` habit must be yes/no and scheduled by weekday; entries record slips and days without one count as done.
+    GoalInput:
+      type: object
+      required: [habitId, title, target, deadline]
+      properties:
+        habitId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        target: { type: number, exclusiveMinimum: 0, maximum: 1000000 }
+        unit: { type: string, maxLength: 20 }
+        startDate: { $ref: '#/components/schemas/Date' }
+        deadline: { $ref: '#/components/schemas/Date' }
+    Goal:
+      allOf:
+        - $ref: '#/components/schemas/GoalInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            completedAt: { type: [string, 'null'], format: date-time }
+    GoalProgress:
+      allOf:
+        - $ref: '#/components/schemas/Goal'
+        - type: object
+          properties:
+            habit: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, color: { type: string }, icon: { type: string } } }
+            measure: { type: string, enum: [sum, days] }
+            current: { type: number }
+            remaining: { type: number }
+            pct: { type: integer }
+            daysTotal: { type: integer }
+            daysLeft: { type: integer }
+            elapsed: { type: integer }
+            elapsedPct: { type: integer }
+            pace: { type: number, description: 'Per day over the last 14 days.' }
+            projected: { type: number }
+            etaDate: { type: [string, 'null'], format: date }
+            status: { type: string, enum: [done, ahead, on_track, behind, missed, upcoming] }
+            early: { type: boolean }
+            needPerDay: { type: number }
+            message: { type: string }
     Habit:
       allOf:
         - $ref: '#/components/schemas/HabitInput'

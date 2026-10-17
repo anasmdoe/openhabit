@@ -250,6 +250,7 @@ export async function tick() {
   const { rows } = await pool.query(
     `SELECT h.id, h.user_id, h.name, h.type, h.unit, h.target::float AS target, h.target_type,
             h.schedule_type, h.frequency, h.active_days, h.reminder_time, h.cue,
+            (SELECT a.name FROM habits a WHERE a.id = h.after_habit_id) AS after_name,
             u.ntfy_url, u.timezone, u.quiet_start, u.quiet_end
      FROM habits h
      JOIN users u ON u.id = h.user_id
@@ -294,7 +295,7 @@ export async function tick() {
          ON CONFLICT DO NOTHING RETURNING 1`, [h.id, now.date, slot]);
     if (!claim.rowCount) continue;
 
-    await deliver(h, now.date, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', h.cue ? `${msg}\n${h.cue}` : msg);
+    await deliver(h, now.date, snoozed ? 'OpenHabit (snoozed)' : 'OpenHabit', [msg, h.after_name ? `After ${h.after_name}` : '', h.cue].filter(Boolean).join('\n'));
   }
 }
 

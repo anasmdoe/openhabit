@@ -458,6 +458,60 @@ async function main() {
   const ov = await call('analytics', 'GET', '/analytics/overview', { token: A });
   check(Array.isArray(ov.habits), 'analytics: overview still loads with protected habits');
 
+  // ---- habit stacking ----------------------------------------------------------
+  const stA = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stack anchor' } });
+  const stB = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stack follower', afterHabitId: stA.id } });
+  check(stB.afterHabitId === stA.id, 'stacking: a habit can come after another');
+  await call('habit', 'PUT', `/habits/${stA.id}`, { token: A, body: { afterHabitId: stA.id }, expect: [400] });
+  await call('habit', 'PUT', `/habits/${stA.id}`, { token: A, body: { afterHabitId: stB.id }, expect: [400] });
+  await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: quitH.id }, expect: [400] });
+  const foreign = await call('habit', 'POST', '/habits', { token: B, body: { name: 'Not yours' } });
+  await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: foreign.id }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Quit stacked', kind: 'quit', afterHabitId: stA.id }, expect: [400] });
+  const un = await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: null } });
+  check(un.afterHabitId === null, 'stacking: unstacking clears it');
+  await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: stA.id } });
+  await call('habit', 'DELETE', `/habits/${stA.id}`, { token: A });
+  const stB2 = await call('habit', 'GET', `/habits/${stB.id}`, { token: A });
+  check(stB2.afterHabitId === null, 'stacking: deleting the anchor un-stacks the follower');
+
+  // ---- goals with deadlines ----------------------------------------------------
+  const goalBody = { habitId: fz.id, title: 'Thirty clean days', target: 30, unit: 'days', startDate: daysAgo(10), deadline: daysAgo(-20) };
+  await call('habit', 'POST', '/habits/goals', { token: A, body: { ...goalBody, deadline: daysAgo(11) }, expect: [400] });
+  await call('habit', 'POST', '/habits/goals', { token: A, body: { ...goalBody, target: 0 }, expect: [400] });
+  await call('habit', 'POST', '/habits/goals', { token: A, body: { ...goalBody, habitId: foreign.id }, expect: [400, 404] });
+  const goal = await call('habit', 'POST', '/habits/goals', { token: A, body: goalBody });
+  check(goal.id && goal.title === 'Thirty clean days', 'goals: created');
+  await call('habit', 'PUT', `/habits/goals/${goal.id}`, { token: B, body: { title: 'mine now' }, expect: [404] });
+  const gl = await call('analytics', 'GET', `/analytics/goals?today=${daysAgo(0)}`, { token: A });
+  const gp = gl.find((x) => x.id === goal.id);
+  check(gp && gp.measure === 'days' && gp.current === 6 && gp.target === 30 && gp.habit.name === 'Frozen',
+    `goals: progress counts the completed days (current ${gp?.current}, ${gp?.status})`);
+  check(['ahead', 'on_track', 'behind'].includes(gp?.status) && gp.daysLeft === 21 && gp.needPerDay > 0 && /\S/.test(gp.message),
+    `goals: pace and days left are worked out (${gp?.status}, ${gp?.daysLeft} days left, need ${gp?.needPerDay}/day)`);
+  const gdone = await call('habit', 'PUT', `/habits/goals/${goal.id}`, { token: A, body: { completed: true } });
+  check(gdone.completedAt, 'goals: can be marked done by hand');
+  const gl2 = await call('analytics', 'GET', `/analytics/goals?today=${daysAgo(0)}`, { token: A });
+  check(gl2.find((x) => x.id === goal.id)?.status === 'done', 'goals: a goal marked done reports done');
+  check((await call('analytics', 'GET', '/analytics/goals', { token: B })).length === 0, 'goals: another user sees none of them');
+  await call('habit', 'DELETE', `/habits/goals/${goal.id}`, { token: A });
+  await call('analytics', 'GET', '/analytics/goals?today=nope', { token: A, expect: [400] });
+
+  // ---- today (widget) and correlations -------------------------------------------
+  const td = await call('analytics', 'GET', `/analytics/today?today=${daysAgo(0)}`, { token: A });
+  const tf = td.habits.find((x) => x.id === fz.id);
+  check(tf && tf.completed === true && tf.streak === 6 && td.done >= 1 && td.total === td.habits.length && !td.habits.some((x) => x.id === quitH.id),
+    `today: lists due habits with state and streak, and leaves quit habits out (${td.done}/${td.total})`);
+  await call('analytics', 'GET', '/analytics/today?today=nope', { token: A, expect: [400] });
+  const cr = await call('analytics', 'GET', `/analytics/correlations?today=${daysAgo(0)}`, { token: A });
+  check(Array.isArray(cr.found) && cr.found.length === 0 && cr.needed.minGroup === 8,
+    'patterns: with a week of data nothing is claimed, and it says what is needed');
+  await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: Array.from({ length: 60 }, (_, i) => ({ date: daysAgo(i + 1), sleepHours: i % 2 ? 7.9 : 6.9 })) } });
+  await call('tracking', 'POST', '/entries/bulk', { token: A, body: { entries: Array.from({ length: 60 }, (_, i) => ({ habitId: fz0.id, date: daysAgo(i + 1), value: i % 2 ? 1 : 0 })).filter((e) => e.value === 1) } });
+  const cr2 = await call('analytics', 'GET', `/analytics/correlations?today=${daysAgo(0)}`, { token: A });
+  const sl = cr2.found.find((x) => x.kind === 'sleep' && x.habitId === fz0.id);
+  check(sl && /sleep (5\d|6\d) minutes longer/.test(sl.text), `patterns: finds longer sleep on days a habit is done (${sl?.text})`);
+
   await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: quitH.id, date: daysAgo(2), value: 1 } });
   const qd = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
   check(qd.currentStreak === 2 && qd.history.reduce((n, m) => n + m.completions, 0) === 1,

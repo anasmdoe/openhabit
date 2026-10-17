@@ -25,7 +25,9 @@ export interface Habit {
   savingsPerDay: number; // quit habits: what a clean day is worth (0 = not tracked)
   savingsUnit: string;
   /** Missed days per month that keep a daily streak alive (0 = off). */
-  streakFreezes: number;   // ...in this unit ("$", "min", "cigarettes")
+  streakFreezes: number;
+  /** Habit stacking: this habit follows the one with this id ("after coffee, meditate"). */
+  afterHabitId: string | null;   // ...in this unit ("$", "min", "cigarettes")
   kind: HabitKind;
   createdAt: string;
 }
@@ -204,4 +206,41 @@ export interface Reaction {
   fromName: string;
   habitName: string;
   groupName: string;
+}
+
+// ---- goals with deadlines -------------------------------------------------------
+export interface Goal {
+  id: string;
+  habitId: string;
+  title: string;
+  target: number;
+  unit: string;
+  startDate: string;
+  deadline: string;
+  completedAt: string | null;
+}
+
+export type GoalStatus = 'done' | 'ahead' | 'on_track' | 'behind' | 'missed' | 'upcoming';
+
+export interface GoalProgress {
+  measure: 'sum' | 'days';
+  current: number;
+  target: number;
+  remaining: number;
+  pct: number;
+  daysTotal: number;
+  daysLeft: number;
+  elapsed: number;
+  elapsedPct: number;
+  pace: number;
+  projected: number;
+  etaDate: string | null;
+  status: GoalStatus;
+  early: boolean;
+  needPerDay: number;
+  message: string;
+}
+
+export interface GoalView extends Goal, GoalProgress {
+  habit: { id: string; name: string; color: string; icon: string };
 }

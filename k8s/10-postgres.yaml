@@ -468,6 +468,39 @@ data:
     INSERT INTO schema_migrations (version, name, checksum) VALUES ('0005', 'weekly_review', '242def212d11f46f71cad1f42ea30d8f421a9bf8c60d6adcee2d3a67851ebd3e');
     COMMIT;
     \endif
+
+    -- ===== migration 0006 stacking_and_goals =====
+    SELECT COALESCE((SELECT checksum FROM schema_migrations WHERE version = '0006'), '') AS have \gset
+    SELECT (:'have' = '') AS fresh, (:'have' <> '' AND :'have' <> '09e5de5696935d6a0710d8fc049689f6bb5d58d37b3b37d8586ce2cbe5e55ac5') AS drift \gset
+    \if :drift
+      SELECT 'migration 0006 stacking_and_goals was edited after it was applied; add a new migration instead'::int;
+    \endif
+    \if :fresh
+    BEGIN;
+    -- Habit stacking: "after <habit>, I will <this habit>". Deleting the anchor habit just unlinks it.
+    ALTER TABLE habits ADD COLUMN IF NOT EXISTS after_habit_id UUID REFERENCES habits (id) ON DELETE SET NULL;
+
+    -- Goals with deadlines: "read 20 books by December". Progress is derived from the linked habit's entries
+    -- (the sum of its values for a measurable habit, the number of completed days otherwise), never stored.
+    CREATE TABLE IF NOT EXISTS goals (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      habit_id     UUID NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
+      title        TEXT NOT NULL,
+      target       NUMERIC NOT NULL CHECK (target > 0),
+      unit         TEXT NOT NULL DEFAULT '',
+      start_date   DATE NOT NULL,
+      deadline     DATE NOT NULL,
+      completed_at TIMESTAMPTZ,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (deadline >= start_date)
+    );
+    CREATE INDEX IF NOT EXISTS goals_user_idx ON goals (user_id, deadline);
+    GRANT SELECT, INSERT, UPDATE, DELETE ON goals TO habit_svc;
+    GRANT SELECT ON goals TO analytics_svc;
+    INSERT INTO schema_migrations (version, name, checksum) VALUES ('0006', 'stacking_and_goals', '09e5de5696935d6a0710d8fc049689f6bb5d58d37b3b37d8586ce2cbe5e55ac5');
+    COMMIT;
+    \endif
   set-db-passwords.sh: |
     #!/usr/bin/env bash
     # Sets the login password of each per-service database role (created by

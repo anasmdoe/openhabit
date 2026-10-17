@@ -19,6 +19,16 @@ const COLORS = [
   '#BEF264', // lime
 ];
 
+// would stacking on `candidate` create a loop (candidate already comes after `selfId`)?
+function stacksOnto(habits: { id: string; afterHabitId: string | null }[], candidate: string, selfId?: string) {
+  if (!selfId) return false;
+  const byId = new Map(habits.map((h) => [h.id, h]));
+  for (let id: string | null = candidate, n = 0; id && n < 50; id = byId.get(id)?.afterHabitId ?? null, n++) {
+    if (id === selfId) return true;
+  }
+  return false;
+}
+
 export function HabitEditor() {
   const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit, user, habits } = useApp();
   useModalOpen(editorHabit !== null, closeEditor);
@@ -45,6 +55,7 @@ export function HabitEditor() {
   const reminderTime = [...new Set(times.filter(Boolean))].sort().join(',');
   const [kind, setKind] = useState<HabitKind>(existing?.kind ?? 'build');
   const [category, setCategory] = useState(existing?.category ?? '');
+  const [afterId, setAfterId] = useState<string>(existing?.afterHabitId ?? '');
   const [freezes, setFreezes] = useState(existing?.streakFreezes ?? 1);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -87,6 +98,7 @@ export function HabitEditor() {
         savingsUnit: quit && parseFloat(savings) > 0 ? savingsUnit.trim() : '',
         category: category.trim(),
         streakFreezes: freezes,
+        afterHabitId: quit ? null : afterId || null,
         kind,
       },
       existing?.id
@@ -165,6 +177,17 @@ export function HabitEditor() {
               className="input"
             />
           </Field>
+
+          {!quit && (
+            <Field label="Stack after" hint="optional — do this right after another habit; it shows up as the next step">
+              <select value={afterId} onChange={(e) => setAfterId(e.target.value)} className="input" aria-label="Stack after">
+                <option value="">Not stacked</option>
+                {habits
+                  .filter((h) => !h.archived && h.kind !== 'quit' && h.id !== existing?.id && !stacksOnto(habits, h.id, existing?.id))
+                  .map((h) => <option key={h.id} value={h.id}>After: {h.name}</option>)}
+              </select>
+            </Field>
+          )}
 
           {!quit && scheduleType === 'weekdays' && (
             <Field label="Streak protection" hint="a missed day right after a completed one won't reset the streak">

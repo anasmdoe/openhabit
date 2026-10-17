@@ -1,8 +1,11 @@
 // Data layer with two adapters:
 //   api   — talks to the microservices through /api/* (gateway or ingress)
 //   local — localStorage, used when no backend is reachable (demo / offline)
-import type { Entry, Habit, HabitDetail, HabitKind, Insights, Overview, WellnessDay } from '../lib/types';
-import { computeHabitDetail, computeInsights, computeOverview, todayISO, addDays } from '../lib/stats';
+import type { Entry, Goal, GoalView, Habit, HabitDetail, HabitKind, Insights, Overview, WellnessDay } from '../lib/types';
+import { goalProgress } from '../lib/goals';
+import { correlations, dataNeeded } from '../lib/correlations';
+import type { CorrDay, Correlation } from '../lib/correlations';
+import { computeHabitDetail, computeInsights, computeOverview, todayISO, addDays, dow, isCompleted, isFixedDay, isSkip } from '../lib/stats';
 
 export type DataMode = 'api' | 'local';
 
@@ -26,6 +29,7 @@ export interface HabitInput {
   savingsPerDay?: number;
   savingsUnit?: string;
   streakFreezes?: number;
+  afterHabitId?: string | null;
 }
 
 export interface DataAdapter {
@@ -46,6 +50,26 @@ export interface DataAdapter {
   getInsights(days?: number): Promise<Insights>;
   bulkPutEntries(entries: Entry[]): Promise<number>;
   bulkPutWellness(days: { date: string; mood?: number | null; sleepHours?: number | null }[]): Promise<number>;
+  getCorrelations(): Promise<CorrelationResult>;
+  listGoals(): Promise<GoalView[]>;
+  createGoal(input: GoalInput): Promise<Goal>;
+  updateGoal(id: string, patch: Partial<GoalInput> & { completed?: boolean }): Promise<Goal>;
+  deleteGoal(id: string): Promise<void>;
+}
+
+export interface CorrelationResult {
+  span: number;
+  found: Correlation[];
+  needed: { sleepDays: number; trackedDays: number; minGroup: number; minPairDays: number };
+}
+
+export interface GoalInput {
+  habitId: string;
+  title: string;
+  target: number;
+  unit?: string;
+  startDate?: string;
+  deadline: string;
 }
 
 // ---------------------------------------------------------------- api mode
@@ -281,6 +305,11 @@ const apiAdapter: DataAdapter = {
     }
     return n;
   },
+  getCorrelations: () => req(`/analytics/correlations?today=${todayISO()}`),
+  listGoals: () => req(`/analytics/goals?today=${todayISO()}`),
+  createGoal: (input) => req('/habits/goals', { method: 'POST', body: JSON.stringify(input) }),
+  updateGoal: (id, patch) => req(`/habits/goals/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  deleteGoal: (id) => req(`/habits/goals/${id}`, { method: 'DELETE' }),
 };
 
 // -------------------------------------------------------------- local mode
@@ -290,6 +319,7 @@ interface LocalDB {
   habits: Habit[];
   entries: Entry[];
   wellness: WellnessDay[];
+  goals?: Goal[];
 }
 
 function loadDB(): LocalDB {
@@ -317,7 +347,7 @@ function seedDemo(): LocalDB {
   ): Habit => ({
     id: uuid(), name, question, type, unit, target, targetType: 'at_least',
     color, icon, scheduleType, frequency, webhookUrl: '', reminderTime: '', activeDays, position, archived: false,
-    category: '', kind: 'build', cue: '', savingsPerDay: 0, savingsUnit: '', streakFreezes: 1,
+    category: '', kind: 'build', cue: '', savingsPerDay: 0, savingsUnit: '', streakFreezes: 1, afterHabitId: null,
     createdAt: `${addDays(today, -120)}T00:00:00Z`,
   });
 
@@ -366,7 +396,12 @@ function seedDemo(): LocalDB {
       sleepHours: Math.round((6 + rand() * 2.5) * 2) / 2,
     });
   }
-  return { habits, entries, wellness };
+  habits[6].afterHabitId = habits[0].id; // demo of stacking: Meditation after waking up
+  const goals: Goal[] = [
+    { id: uuid(), habitId: habits[3].id, title: 'Read 1,200 pages', target: 1200, unit: 'pages', startDate: `${today.slice(0, 4)}-01-01`, deadline: `${today.slice(0, 4)}-12-31`, completedAt: null },
+    { id: uuid(), habitId: habits[2].id, title: 'Run 100 Km', target: 100, unit: 'Km', startDate: addDays(today, -30), deadline: addDays(today, 60), completedAt: null },
+  ];
+  return { habits, entries, wellness, goals };
 }
 
 const localAdapter: DataAdapter = {
@@ -409,7 +444,7 @@ const localAdapter: DataAdapter = {
       cue: (input.cue ?? '').trim(),
       savingsPerDay: input.savingsPerDay ?? 0,
       savingsUnit: (input.savingsUnit ?? '').trim(),
-      streakFreezes: input.streakFreezes ?? 1,
+      streakFreezes: input.streakFreezes ?? 1, afterHabitId: input.afterHabitId ?? null,
       createdAt: new Date().toISOString(),
     };
     db.habits.push(habit);
@@ -428,6 +463,7 @@ const localAdapter: DataAdapter = {
     const db = loadDB();
     db.habits = db.habits.filter((h) => h.id !== id);
     db.entries = db.entries.filter((e) => e.habitId !== id);
+    for (const h of db.habits) if (h.afterHabitId === id) h.afterHabitId = null;
     saveDB(db);
   },
   async getEntries(from, to) {
@@ -473,6 +509,68 @@ const localAdapter: DataAdapter = {
     const habit = db.habits.find((h) => h.id === id);
     if (!habit) throw new Error('habit not found');
     return computeHabitDetail(habit, db.entries);
+  },
+  async getCorrelations() {
+    const db = loadDB();
+    const span = 180;
+    const last = addDays(todayISO(), -1);
+    const val = new Map(db.entries.map((e) => [`${e.habitId}|${e.date}`, e.value]));
+    const sleep = new Map(db.wellness.filter((w) => w.sleepHours != null).map((w) => [w.date, w.sleepHours as number]));
+    const daily = db.habits.filter((h) => !h.archived && isFixedDay(h));
+    const days: CorrDay[] = [];
+    for (let d = addDays(last, -(span - 1)); d <= last; d = addDays(d, 1)) {
+      const done: Record<string, boolean> = {};
+      for (const h of daily) {
+        if (!h.activeDays.includes(dow(d)) || d < h.createdAt.slice(0, 10)) continue;
+        const v = val.get(`${h.id}|${d}`);
+        if (isSkip(v)) continue;
+        done[h.id] = isCompleted(h, v);
+      }
+      days.push({ date: d, done, sleep: sleep.get(d) ?? null });
+    }
+    const list = daily.map((h) => ({ id: h.id, name: h.name, color: h.color, icon: h.icon, kind: h.kind }));
+    return { span, found: correlations(list, days), needed: dataNeeded(list, days) };
+  },
+  async listGoals() {
+    const db = loadDB();
+    const today = todayISO();
+    const byKey = new Map(db.entries.map((e) => [`${e.habitId}|${e.date}`, e.value]));
+    const out: GoalView[] = [];
+    for (const g of db.goals ?? []) {
+      const h = db.habits.find((x) => x.id === g.habitId);
+      if (!h) continue;
+      const p = goalProgress(g, h, (d) => byKey.get(`${h.id}|${d}`), today);
+      out.push({ ...g, ...p, habit: { id: h.id, name: h.name, color: h.color, icon: h.icon } });
+    }
+    return out.sort((a, b) => a.deadline.localeCompare(b.deadline));
+  },
+  async createGoal(input) {
+    const db = loadDB();
+    if (!db.habits.some((h) => h.id === input.habitId)) throw new Error('habit not found');
+    const g: Goal = {
+      id: uuid(), habitId: input.habitId, title: input.title, target: input.target, unit: input.unit ?? '',
+      startDate: input.startDate ?? todayISO(), deadline: input.deadline, completedAt: null,
+    };
+    if (g.deadline < g.startDate) throw new Error('deadline must be on or after the start date');
+    (db.goals ??= []).push(g);
+    saveDB(db);
+    return g;
+  },
+  async updateGoal(id, patch) {
+    const db = loadDB();
+    const g = (db.goals ?? []).find((x) => x.id === id);
+    if (!g) throw new Error('goal not found');
+    const { completed, ...rest } = patch;
+    Object.assign(g, rest);
+    if (completed !== undefined) g.completedAt = completed ? new Date().toISOString() : null;
+    if (g.deadline < g.startDate) throw new Error('deadline must be on or after the start date');
+    saveDB(db);
+    return g;
+  },
+  async deleteGoal(id) {
+    const db = loadDB();
+    db.goals = (db.goals ?? []).filter((g) => g.id !== id);
+    saveDB(db);
   },
   async getInsights(days = 90) {
     const db = loadDB();

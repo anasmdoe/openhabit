@@ -13,7 +13,7 @@ const habit = (over: Partial<Habit> = {}): Habit => ({
   id: 'h1', name: 'Test', question: '', type: 'boolean', unit: '', target: 1, targetType: 'at_least',
   color: '#000', icon: '', scheduleType: 'weekdays', frequency: 3, webhookUrl: '', reminderTime: '',
   activeDays: [0, 1, 2, 3, 4, 5, 6], position: 0, archived: false, category: '', cue: '', savingsPerDay: 0, savingsUnit: '',
-  streakFreezes: 1, kind: 'build', createdAt: `${addDays(TODAY, -60)}T00:00:00Z`, ...over,
+  streakFreezes: 1, afterHabitId: null, kind: 'build', createdAt: `${addDays(TODAY, -60)}T00:00:00Z`, ...over,
 });
 /** done on every offset (days ago) listed in `done`, skips on `skip`. */
 const entries = (h: Habit, done: number[], skip: number[] = []): Entry[] => [
