@@ -13,9 +13,6 @@ export function TodayFocus() {
   const { habits, entries, toggleEntry, setNumericEntry, setSkip, categoryFilter, feedback, setFeedback, openEditor, ready } = useApp();
   const t = today();
   const yesterday = addDays(t, -1);
-  const [groupBy, setGroupBy] = useState<'time' | 'category'>(() => {
-    try { return localStorage.getItem(GROUP_KEY) === 'category' ? 'category' : 'time'; } catch { return 'time'; }
-  });
 
   const lookup = useMemo(() => {
     const m = new Map<string, number>();
@@ -97,15 +94,9 @@ export function TodayFocus() {
   };
 
   const shown = due.filter((h) => !(feedback.hideDone && settled(h)));
-  const categories = Array.from(new Set(due.map((h) => h.category).filter(Boolean)));
-  const canGroupByCategory = categories.length >= 2;
-  const mode: 'time' | 'category' = groupBy === 'category' && canGroupByCategory ? 'category' : 'time';
-  const sections = mode === 'category'
-    ? [...categories, ''].map((c) => ({ key: c || 'other', label: c || 'Other', habits: shown.filter((h) => h.category === c) }))
-      .filter((sec) => sec.habits.length > 0)
-    : TIME_SECTIONS
-      .map((sec) => ({ ...sec, habits: shown.filter((h) => timeSection(h) === sec.key) }))
-      .filter((sec) => sec.habits.length > 0);
+  const sections = TIME_SECTIONS
+    .map((sec) => ({ ...sec, habits: shown.filter((h) => timeSection(h) === sec.key) }))
+    .filter((sec) => sec.habits.length > 0);
   const showHeadings = sections.length > 1;
 
   return (
@@ -130,16 +121,6 @@ export function TodayFocus() {
               : <><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" /><circle cx="12" cy="12" r="2.6" /><path d="M4 20L20 4" /></>}
           </svg>
         </button>
-        {canGroupByCategory && (
-          <button
-            onClick={() => { const next = mode === 'time' ? 'category' : 'time'; setGroupBy(next); try { localStorage.setItem(GROUP_KEY, next); } catch { /* private mode */ } }}
-            className="h-8 px-2 grid place-items-center rounded-lg text-[10px] font-semibold uppercase tracking-wider text-ink-soft hover:text-ink hover:bg-forest-850"
-            aria-label={`Grouped by ${mode === 'time' ? 'time of day' : 'category'}: switch to ${mode === 'time' ? 'category' : 'time of day'}`}
-            data-tip={mode === 'time' ? 'Group by category' : 'Group by time of day'}
-          >
-            {mode === 'time' ? 'Time' : 'Type'}
-          </button>
-        )}
         <button
           onClick={() => { const sound = !feedback.sound; setFeedback({ sound }); if (sound) playDone(); }}
           aria-pressed={feedback.sound}
@@ -165,8 +146,6 @@ export function TodayFocus() {
     </section>
   );
 }
-
-const GROUP_KEY = 'openhabit.todayGroup';
 
 const TIME_SECTIONS = [
   { key: 'morning', label: 'Morning' },

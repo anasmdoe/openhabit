@@ -43,12 +43,11 @@ test('launcher shortcuts open the right tab', async ({ page }) => {
   await expect(page.locator('nav[aria-label=Main] button[aria-current=page]')).toContainText('Stats');
 });
 
-test('Today can be divided by category instead of time of day, and remembers the choice', async ({ page }) => {
+test('category chips sit above Today and narrow the list', async ({ page }) => {
   await openApp(page);
-  await page.getByRole('button', { name: /Grouped by time of day/ }).click();
-  const heads = (await page.locator('h2').allInnerTexts()).map((t) => t.toLowerCase());
-  expect(heads).toEqual(expect.arrayContaining(['fitness', 'mind']));
-  expect(heads).not.toContain('morning habit');
-  await page.reload();
-  await expect(page.getByRole('button', { name: /Grouped by category/ })).toBeVisible();
+  const chips = page.getByRole('navigation', { name: 'Habit categories' });
+  await expect(chips.getByRole('button', { name: /^All/ })).toBeVisible();
+  await chips.getByRole('button', { name: /^Fitness/ }).click();
+  const rows = page.locator('[data-no-swipe]:visible');
+  for (const name of await rows.allInnerTexts()) expect(name).toMatch(/Gym|Running/);
 });

@@ -134,9 +134,8 @@ The per-habit mood link already lives in the Trend panel (needs 5 done and 5 mis
 
 1. **Real email through Amazon SES** (`mail.transport = "ses"`, `ses_identity`), no SMTP credentials.
 2. **CI runner as a persistent spot instance** with a separate encrypted data disk for caches and workspaces.
-3. **Category grouping everywhere**: the Habits grid is divided into labelled category groups, and Today can be grouped by category as well as by time of day (Time / Type toggle).
-4. **`db/seed.js`** now creates categories, reminder times, cues and a real quit habit, and can bring an existing demo account up to date.
-5. **`scripts/verify-all.sh`**: every check in one PASS/FAIL table, with an optional live-stack pass.
+3. **`db/seed.js`** now creates categories, reminder times, cues and a real quit habit, and can bring an existing demo account up to date.
+4. **`scripts/verify-all.sh`**: every check in one PASS/FAIL table, with an optional live-stack pass.
 
 ## Next candidates, in order
 
