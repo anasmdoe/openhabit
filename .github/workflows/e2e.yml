@@ -1,0 +1,97 @@
+name: Browser tests (Playwright)
+
+# Runs on the self-hosted runner in AWS (deploy/aws-runner), labels: self-hosted, openhabit-aws.
+# Stage 1 serves the built frontend in demo mode and runs the whole browser suite.
+# Stage 2 (when the repository secret/variable E2E_BASE_URL is set, or a URL is typed into a manual run)
+# runs the "live" project against a deployed stack and then the API smoke test against it.
+#
+# SECURITY: a self-hosted runner executes whatever the workflow runs. Pull requests from forks are
+# excluded below; keep it that way, and never use this on a public repo that takes outside PRs
+# without a required-approval rule for first-time contributors.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * *'   # nightly against the live stack
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Deployed stack to test (https://...); empty = the E2E_BASE_URL variable'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo:
+    # same-repository pull requests and our own pushes only
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, openhabit-aws]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Install Playwright and Chromium
+        working-directory: e2e
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install chromium
+      - name: Browser tests (demo mode)
+        working-directory: e2e
+        env:
+          CI: 'true'
+        run: npx playwright test --project=phone --project=desktop
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-demo
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14
+
+  live:
+    needs: demo
+    if: ${{ always() && needs.demo.result == 'success' && (github.event.inputs.base_url != '' || vars.E2E_BASE_URL != '') && github.event_name != 'pull_request' }}
+    runs-on: [self-hosted, openhabit-aws]
+    timeout-minutes: 20
+    env:
+      E2E_BASE_URL: ${{ github.event.inputs.base_url || vars.E2E_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: API smoke test against the deployed stack
+        run: node scripts/smoke-test.js --url "$E2E_BASE_URL"
+      - name: Install Playwright and Chromium
+        working-directory: e2e
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install chromium
+      - name: Browser tests (live)
+        working-directory: e2e
+        env:
+          CI: 'true'
+        run: npx playwright test --project=live
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-live
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14

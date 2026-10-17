@@ -88,8 +88,9 @@ export function AllCalendar() {
                 aria-pressed={date === picked}
                 className={`aspect-square rounded-md grid place-items-center text-[11px] num ${date === t ? 'ring-1 ring-ink' : ''} ${date === picked ? 'outline outline-2 outline-mint' : ''} ${future ? 'opacity-30' : ''}`}
                 style={{
-                  background: pct === null ? 'rgb(var(--forest-850))' : `rgb(var(--mint) / ${0.12 + pct * 0.6})`,
-                  color: pct !== null && pct > 0.6 ? 'rgb(var(--on-heat))' : undefined,
+                  // soft tint up to half done, solid accent above: text contrast stays readable in every theme
+                  background: pct === null ? 'rgb(var(--forest-850))' : `rgb(var(--mint) / ${pct > 0.5 ? 1 : 0.12 + pct * 0.6})`,
+                  color: pct !== null && pct > 0.5 ? 'rgb(var(--on-heat))' : undefined,
                 }}
               >
                 {i + 1}

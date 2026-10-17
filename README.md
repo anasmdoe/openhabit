@@ -48,6 +48,9 @@ it standalone.
   password change and full account deletion (cascades to all data). Set `ALLOW_REGISTRATION=false` on auth-service to
   close signups once your household has accounts. Demo mode (no backend) skips
   auth entirely.
+- **Password reset and email verification** — "Forgot password?" emails a one-hour link; new accounts
+  get a confirmation link (optionally required before first sign-in). Needs an outgoing-mail setting,
+  see *Email* below; without one the app works as before and hides these options
 - **Themes** — Auto (follows the phone's light/dark setting), dark, pitch black (OLED), light
 - **Habit window** — tap a habit for a summary (tracking since, 7/30/90-day and all-time rates,
   next milestone), trend and best-weekday sentences, an editable 3-month calendar (tap a day to
@@ -434,6 +437,13 @@ removes everything except your database.
   kept 14 days). The login rate limiter is per Lambda container.
 - Snooze / Done buttons work out of the box: `PUBLIC_URL` is set to the app URL.
   Web Push turns on when `.env` has the VAPID keys (`scripts/init-env.sh`).
+- Secrets: `use_secrets_manager = true` keeps `JWT_SECRET`, the database URLs and passwords, the VAPID
+  private key, the OIDC client secret and the SMTP URL in one Secrets Manager secret (about $0.40 a
+  month) that the functions read at start-up, instead of in their plain-text configuration. The
+  functions' role may read only that secret. (Sandboxes that cannot attach inline policies get the
+  broader AWS-managed `SecretsManagerReadWrite` instead.) The values are still in Terraform state: keep
+  it private.
+- Email: set `mail` (see *Email* below) and, behind a custom domain, `public_url`.
 - SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
 - Next step on the roadmap: a DynamoDB storage backend, which removes the
   database's idle cost entirely.
@@ -463,7 +473,8 @@ retention or tagging, see the sandbox block in `terraform.tfvars.example`
 │   ├── social-service/       # groups, invites, sharing, reactions, group habits
 │   └── reminder-service/     # minute tick -> ntfy + Web Push reminders, quiet hours, action links
 ├── db/
-│   ├── init.sql              # schema + per-service roles (idempotent migration)
+│   ├── migrations/           # NNNN_name.sql: the schema, applied once each, in order
+│   ├── init.sql              # GENERATED from migrations/ (node db/build-init.js); used by psql, Docker, k8s
 │   └── seed.js               # demo data via the public API
 ├── scripts/
 │   ├── backup.sh             # compose backup (gzip pg_dump + rotation)
@@ -581,6 +592,33 @@ stalled (>5 min without a tick), reminder tick errors, 5xx rate >5%, p95
 latency >1s, and pg pool saturation. Point Alertmanager (or Grafana alerting)
 at them to get notified — an ntfy receiver works nicely here too.
 
+## Email: password reset and address verification
+
+Set these on the auth-service (Docker: in `.env`; Kubernetes: keys in `app-secrets`; AWS: the `mail` variable):
+
+| Setting | Meaning |
+|---|---|
+| `PUBLIC_URL` | The https address users open the app at. Links in emails point here and **only** here: it is never taken from a request, which would let anyone aim a victim's reset link at their own server |
+| `MAIL_TRANSPORT` | `smtp` (Amazon SES SMTP, Mailgun, a Gmail app password, your own server), `webhook` (POSTs `{to, subject, text}` to `MAIL_WEBHOOK_URL`: Home Assistant, n8n, a script) or `log` (prints links to the service log: development only) |
+| `SMTP_URL` | `smtp://user:password@host:587` or `smtps://…:465` |
+| `MAIL_FROM` | e.g. `OpenHabit <no-reply@example.com>` |
+| `REQUIRE_EMAIL_VERIFICATION` | `true`: refuse sign-in until the address is confirmed |
+
+Reset links last one hour, verification links 24 hours, both work once, and a newer request voids older
+ones. "Forgot password" answers the same whether or not the address has an account and is rate limited
+(3 per address per 15 minutes). Choosing a password through the emailed link also confirms the address.
+Single sign-in (SSO) accounts count as verified. With no mail settings the options are hidden and an
+administrator can reset a password by hand.
+
+## Database migrations
+
+The schema lives in numbered files, `db/migrations/0001_baseline.sql`, `0002_…`, applied once each in
+order inside a transaction and recorded (with a checksum) in `schema_migrations`. To change the schema,
+add the next number; never edit a released file (the runners refuse it). `db/init.sql` is generated from
+them (`node db/build-init.js`, checked in CI) so that Docker's first boot, the Kubernetes ConfigMap and
+`psql -f db/init.sql` keep working; the migrate Lambda applies the same files with `db/migrate.mjs`.
+Databases created before numbering adopt `0001` automatically (it is idempotent).
+
 ## Scheduled export
 
 Keep an off-site copy of your habits, entries and mood, in the same JSON the app's Export button
@@ -597,11 +635,23 @@ Run it daily from cron (`15 3 * * * ...`), a systemd timer, a GitHub Actions `sc
 Kubernetes CronJob. The database-level backup in *Backups & restore* covers the whole instance;
 this one covers a single account and works against any deployment, including AWS serverless.
 
+## Browser tests and the CI runner
+
+`e2e/` holds the Playwright suite (phone and desktop layouts: popups and the Back button, tab and row
+swiping, the habit window, undo, themes, tooltips, sign-in/reset screens against a stubbed API, and
+axe-core accessibility scans in all three themes). `.github/workflows/e2e.yml` runs it on a
+**self-hosted runner in your AWS account** (`deploy/aws-runner`, see its README), and nightly also runs
+the API smoke test and a signed-up-user journey against a deployed stack (repository variable
+`E2E_BASE_URL`).
+
 ## Tests & CI
 
 ```bash
 cd frontend && npm test                 # unit tests for streak/score/schedule math
 scripts/test-init-sql.sh                # applies db/init.sql twice, proves it is idempotent
+scripts/test-migrations.sh              # psql and node runners agree; edited migrations are refused
+node db/build-init.js --check           # db/init.sql is up to date with db/migrations
+cd e2e && npm ci && npx playwright install chromium && npm test   # browser tests (build the frontend first)
 node scripts/smoke-test.js              # all services, each as its own DB role, end to end
 node scripts/smoke-test.js --lambda     # the same flows through the AWS Lambda handlers
 (cd deploy/aws && tofu test)            # Terraform stack, offline with a mocked AWS provider

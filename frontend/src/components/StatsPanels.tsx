@@ -1,3 +1,4 @@
+import { readableColor } from '../lib/contrast';
 import React, { useMemo, useState } from 'react';
 import { useApp, today } from '../store';
 import { Bars, HBar, LineChart, MiniRing } from '../charts';
@@ -134,7 +135,8 @@ function Card({ label, children }: { label: string; children: React.ReactNode })
 }
 
 function Big({ value, color }: { value: string; color?: string }) {
-  return <span className="num text-2xl font-bold leading-tight" style={{ color }}>{value}</span>;
+  useApp((s) => s.theme); // repaint when the theme (and so the panel colour) changes
+  return <span className="num text-2xl font-bold leading-tight" style={{ color: color ? readableColor(color) : undefined }}>{value}</span>;
 }
 
 // Full-width daily trend for the current month.

@@ -116,6 +116,14 @@ The per-habit mood link already lives in the Trend panel (needs 5 done and 5 mis
 4. **Android app inputs** (`twa/`): Bubblewrap manifest, Digital Asset Links example and steps. Not built here (needs the Android SDK and your signing key).
 5. **Launcher shortcuts**: `?view=today|habits|stats` opens that tab.
 
+## Added in round 7
+
+1. **Password reset and email verification**, with SMTP / webhook / log transports and a public URL that is never taken from a request.
+2. **Numbered database migrations** (`db/migrations`), with checksums, applied identically by psql and by the migrate Lambda.
+3. **Secrets in AWS Secrets Manager** (opt-in `use_secrets_manager`).
+4. **Playwright browser suite** (`e2e/`) and a **self-hosted GitHub Actions runner in AWS** (`deploy/aws-runner`), including axe-core accessibility scans.
+5. Contrast fixes found by the new scans: habit-coloured numbers on panels and the all-habits calendar heat cells.
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |

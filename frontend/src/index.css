@@ -259,7 +259,7 @@ nav[aria-label='Main'] { transform: translateZ(0); will-change: transform; }
 :root[data-theme='pitch-black'] { --skip: 147 164 196; }
 :root[data-theme='forest-light'] { --skip: 84 104 148; }
 :root { --on-heat: var(--forest-950); }
-:root[data-theme='forest-light'] { --on-heat: 27 29 31; }
+:root[data-theme='forest-light'] { --on-heat: 255 255 255; }
 
 /* Touch screens: icon buttons get at least a 40px hit area (WCAG 2.5.8 asks for 24px, Material for 48dp). */
 @media (pointer: coarse) {
