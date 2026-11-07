@@ -66,8 +66,15 @@ it standalone.
 - **Patterns** — Stats > Patterns reports things like "On days you do Gym you sleep 40 minutes longer" or "On days you
   do Meditation you also do Reading 14/18 times, vs 6/20 otherwise". It only speaks when both groups have 8+ days and the
   gap is clear (|t| or |z| of at least 2, at least 15 minutes or 15 points); otherwise it says what data is missing
-- **Android widget** — a small native app in [`android/`](android/README.md) puts today's habits on the home screen with
-  tap-to-complete (written, not yet compiled; CI builds it)
+- **Habits that complete themselves** — set *Complete automatically* on a habit (steps, exercise, sleep, mindful
+  minutes, distance, active energy, water): the Android app sends daily totals from **Health Connect** every hour,
+  and on iPhone a **Shortcuts** automation sends them from **Apple Health** ([recipes](docs/iphone-shortcuts.md)).
+  Yes/no habits are done at a threshold, measurable ones take the day's total; manual values are never lowered.
+  Sleep fills the Patterns panel
+- **Phone, lock screen and watch** — [`android/`](android/README.md): home-screen (and lock-screen) widget, a Quick
+  Settings tile, Health Connect sync, and a **Wear OS** app with a complication. [`ios/`](ios/README.md): Home and
+  **Lock Screen** widgets with tap-to-complete, and an **Apple Watch** app with complications. All built in CI, not yet
+  tried on devices
 - **Talk to your habits (MCP)** — [`mcp/`](mcp/README.md) is a Model Context Protocol server, so Claude, ChatGPT,
   Cursor and other assistants can read and log your habits with a personal API token: "I just ran 5 km",
   "what's left today?", "how is my reading goal going?". Runs locally over stdio or as one HTTP endpoint
