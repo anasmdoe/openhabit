@@ -13,7 +13,7 @@ A small SwiftUI app whose job is to put your habits where you look:
 It talks only to your own OpenHabit server with a personal API token (web app → Account → API tokens).
 For Apple Health, use the Shortcuts automation in [docs/iphone-shortcuts.md](../docs/iphone-shortcuts.md).
 
-> **Status: written, not yet run on a device.** The shared core (`Shared/`: models, rules, API client) is
+> **Status: builds in CI, not yet run on a device.** The shared core (`Shared/`: models, rules, API client) is
 > unit-tested with `swift test`, and `.github/workflows/ios.yml` builds the iPhone app, its widgets, the watch
 > app and its complications for the simulator on a macOS runner. Running on a real iPhone needs your Apple
 > developer team (free personal teams work for your own devices).
