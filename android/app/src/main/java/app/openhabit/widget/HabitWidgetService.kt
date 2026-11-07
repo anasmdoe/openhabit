@@ -47,11 +47,14 @@ class HabitWidgetService : RemoteViewsService() {
             return row
         }
 
-        private fun meta(h: TodayHabit): String = when {
-            h.isNumeric && h.value != null && !h.completed -> "${trim(h.value)}/${trim(h.target)} ${h.unit}".trim()
+        private fun meta(h: TodayHabit): String {
+            val v = h.value
+            return when {
+            h.isNumeric && v != null && !h.completed -> "${trim(v)}/${trim(h.target)} ${h.unit}".trim()
             h.isNumeric && !h.completed -> "${trim(h.target)} ${h.unit}".trim()
             h.streak >= 2 -> "🔥 ${h.streak}"
             else -> ""
+            }
         }
 
         private fun trim(d: Double) = if (d == Math.floor(d)) d.toLong().toString() else d.toString()
