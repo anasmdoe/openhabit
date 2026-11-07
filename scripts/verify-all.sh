@@ -14,7 +14,8 @@ step() { local label=$1; shift; printf '%-62s' "$label"; if out=$("$@" 2>&1); th
 
 step "frontend: typecheck"                  bash -c 'cd frontend && npx tsc -b'
 step "frontend: unit tests"                 bash -c 'cd frontend && npx vitest run'
-for s in auth tracking reminder; do step "service $s: unit tests" bash -c "cd services/${s}-service && npm test"; done
+for s in auth tracking analytics reminder; do step "service $s: unit tests" bash -c "cd services/${s}-service && npm test"; done
+step "MCP server: unit tests"              bash -c "cd mcp && npm test"
 step "OpenAPI: routes match the services"   node scripts/check-openapi.js
 step "OpenAPI: lint"                        bash -c 'cd frontend && npx -y @redocly/cli@1 lint public/openapi.yaml'
 step "db/init.sql is generated from migrations" node db/build-init.js --check

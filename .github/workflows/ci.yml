@@ -42,6 +42,21 @@ jobs:
       - name: openapi.yaml is a valid OpenAPI document
         run: npx --yes @redocly/cli@1.25.11 lint frontend/public/openapi.yaml --max-problems=20
 
+  mcp:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - run: npm ci
+      - run: npm test
+
   services:
     runs-on: ubuntu-24.04
     strategy:

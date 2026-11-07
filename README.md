@@ -68,6 +68,9 @@ it standalone.
   gap is clear (|t| or |z| of at least 2, at least 15 minutes or 15 points); otherwise it says what data is missing
 - **Android widget** — a small native app in [`android/`](android/README.md) puts today's habits on the home screen with
   tap-to-complete (written, not yet compiled; CI builds it)
+- **Talk to your habits (MCP)** — [`mcp/`](mcp/README.md) is a Model Context Protocol server, so Claude, ChatGPT,
+  Cursor and other assistants can read and log your habits with a personal API token: "I just ran 5 km",
+  "what's left today?", "how is my reading goal going?". Runs locally over stdio or as one HTTP endpoint
 - **Weekly review** — opt in under Account > Weekly review and every Sunday at 18:00 (your time) you get
   one digest by notification, ntfy and, when the server has email set up, email: overall completion and the
   change on the week before, the strongest habit, the one with most room, perfect days, your longest run
