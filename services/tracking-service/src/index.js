@@ -1,4 +1,5 @@
 import express from 'express';
+import { checkDay, valueFor } from './health.js';
 import pg from 'pg';
 import { metricsMiddleware, metricsHandler } from './metrics.js';
 import { verifyAction } from './actions.js';
@@ -271,6 +272,54 @@ app.post('/wellness/bulk', asyncH(async (req, res) => {
     );
   }
   res.json({ imported: good.length });
+}));
+
+// POST /wellness/health-sync  body: { days: [{ date, metrics: { steps, exercise_minutes, sleep_hours, ... } }] }
+// Daily totals from the phone's health store (Health Connect, Apple Health). Each habit with an auto_metric
+// gets an entry from its metric (see health.js); a manual value is never lowered and a skipped day is left
+// alone. sleep_hours also fills the day's sleep when none was logged by hand. Up to 62 days per call.
+app.post('/wellness/health-sync', asyncH(async (req, res) => {
+  const { days } = req.body ?? {};
+  if (!Array.isArray(days) || !days.length || days.length > 62) return res.status(400).json({ error: 'days array required (1 to 62)' });
+  for (const d of days) {
+    const err = checkDay(d);
+    if (err) return res.status(400).json({ error: err });
+  }
+  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10); // the phone's day can be ahead of UTC
+  if (days.some((d) => d.date > tomorrow)) return res.status(400).json({ error: 'days in the future are not accepted' });
+
+  const { rows: habits } = await pool.query(
+    `SELECT id, type, kind, auto_metric AS "autoMetric", auto_threshold::float AS "autoThreshold"
+     FROM habits WHERE user_id = $1 AND NOT archived AND auto_metric <> ''`, [req.userId]);
+  const byKey = new Map(); // one row per habit and day, even if a day is sent twice
+  for (const d of days) {
+    for (const h of habits) {
+      const value = valueFor(h, d.metrics[h.autoMetric]);
+      const key = `${h.id}|${d.date}`;
+      if (value != null && value > (byKey.get(key)?.value ?? -Infinity)) byKey.set(key, { habit: h.id, date: d.date, value });
+    }
+  }
+  const writes = [...byKey.values()];
+  let applied = [];
+  if (writes.length) {
+    const r = await pool.query(
+      `INSERT INTO entries (habit_id, date, value)
+       SELECT w.habit::uuid, w.date::date, w.value FROM jsonb_to_recordset($1::jsonb) AS w(habit text, date text, value numeric)
+       ON CONFLICT (habit_id, date) DO UPDATE SET value = GREATEST(entries.value, EXCLUDED.value)
+         WHERE entries.value <> -1 AND EXCLUDED.value > entries.value
+       RETURNING habit_id AS "habitId", to_char(date, 'YYYY-MM-DD') AS date, value::float AS value`,
+      [JSON.stringify(writes)]);
+    applied = r.rows;
+  }
+  const sleep = [...new Map(days.filter((d) => d.metrics.sleep_hours > 0).map((d) => [d.date, d])).values()];
+  if (sleep.length) {
+    await pool.query(
+      `INSERT INTO wellness (user_id, date, sleep_hours)
+       SELECT $1, d.date::date, d.sleep FROM jsonb_to_recordset($2::jsonb) AS d(date text, sleep numeric)
+       ON CONFLICT (user_id, date) DO UPDATE SET sleep_hours = COALESCE(wellness.sleep_hours, EXCLUDED.sleep_hours)`,
+      [req.userId, JSON.stringify(sleep.map((d) => ({ date: d.date, sleep: Math.round(d.metrics.sleep_hours * 10) / 10 })))]);
+  }
+  res.json({ days: days.length, habits: habits.length, applied, sleepDays: sleep.length });
 }));
 
 // PUT /wellness  body: { date, mood?, sleepHours? } (upsert; null clears)

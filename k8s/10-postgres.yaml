@@ -501,6 +501,29 @@ data:
     INSERT INTO schema_migrations (version, name, checksum) VALUES ('0006', 'stacking_and_goals', '09e5de5696935d6a0710d8fc049689f6bb5d58d37b3b37d8586ce2cbe5e55ac5');
     COMMIT;
     \endif
+
+    -- ===== migration 0007 health_autocomplete =====
+    SELECT COALESCE((SELECT checksum FROM schema_migrations WHERE version = '0007'), '') AS have \gset
+    SELECT (:'have' = '') AS fresh, (:'have' <> '' AND :'have' <> '276466f913f165b51e070a9e59d56d5c1e2b3ac623ef004ed3a290a39cda9089') AS drift \gset
+    \if :drift
+      SELECT 'migration 0007 health_autocomplete was edited after it was applied; add a new migration instead'::int;
+    \endif
+    \if :fresh
+    BEGIN;
+    -- Automatic completion from phone health data (Health Connect on Android, Apple Health via Shortcuts).
+    -- A habit names one daily metric; the phone sends daily totals to POST /wellness/health-sync and the
+    -- tracking service applies the rule. yes/no habits are done when the metric reaches auto_threshold;
+    -- measurable habits take the metric as their value. Manual entries are never lowered or replaced.
+    ALTER TABLE habits ADD COLUMN IF NOT EXISTS auto_metric TEXT NOT NULL DEFAULT '';
+    ALTER TABLE habits ADD COLUMN IF NOT EXISTS auto_threshold NUMERIC;
+
+    DO $$ BEGIN
+      ALTER TABLE habits ADD CONSTRAINT habits_auto_metric_chk CHECK (auto_metric IN
+        ('', 'steps', 'exercise_minutes', 'sleep_hours', 'mindful_minutes', 'distance_km', 'active_kcal', 'water_ml'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    INSERT INTO schema_migrations (version, name, checksum) VALUES ('0007', 'health_autocomplete', '276466f913f165b51e070a9e59d56d5c1e2b3ac623ef004ed3a290a39cda9089');
+    COMMIT;
+    \endif
   set-db-passwords.sh: |
     #!/usr/bin/env bash
     # Sets the login password of each per-service database role (created by

@@ -27,7 +27,10 @@ export interface Habit {
   /** Missed days per month that keep a daily streak alive (0 = off). */
   streakFreezes: number;
   /** Habit stacking: this habit follows the one with this id ("after coffee, meditate"). */
-  afterHabitId: string | null;   // ...in this unit ("$", "min", "cigarettes")
+  afterHabitId: string | null;
+  /** automatic completion from phone health data ('' = off) */
+  autoMetric: AutoMetric;
+  autoThreshold: number | null;   // ...in this unit ("$", "min", "cigarettes")
   kind: HabitKind;
   createdAt: string;
 }
@@ -244,3 +247,15 @@ export interface GoalProgress {
 export interface GoalView extends Goal, GoalProgress {
   habit: { id: string; name: string; color: string; icon: string };
 }
+
+export type AutoMetric = '' | 'steps' | 'exercise_minutes' | 'sleep_hours' | 'mindful_minutes' | 'distance_km' | 'active_kcal' | 'water_ml';
+
+export const AUTO_METRICS: { id: Exclude<AutoMetric, ''>; label: string; unit: string }[] = [
+  { id: 'steps', label: 'Steps', unit: 'steps' },
+  { id: 'exercise_minutes', label: 'Exercise', unit: 'min' },
+  { id: 'sleep_hours', label: 'Sleep', unit: 'h' },
+  { id: 'mindful_minutes', label: 'Mindful minutes', unit: 'min' },
+  { id: 'distance_km', label: 'Distance', unit: 'km' },
+  { id: 'active_kcal', label: 'Active energy', unit: 'kcal' },
+  { id: 'water_ml', label: 'Water', unit: 'ml' },
+];

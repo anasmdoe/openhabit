@@ -7,7 +7,7 @@ const TODAY = '2026-10-20';
 const base: Habit = {
   id: 'h', name: 'Read', question: '', type: 'numeric', unit: 'pages', target: 10, targetType: 'at_least', color: '#000', icon: '',
   scheduleType: 'weekdays', frequency: 3, webhookUrl: '', reminderTime: '', activeDays: [0, 1, 2, 3, 4, 5, 6], position: 0,
-  archived: false, category: '', cue: '', savingsPerDay: 0, savingsUnit: '', streakFreezes: 1, afterHabitId: null, kind: 'build',
+  archived: false, category: '', cue: '', savingsPerDay: 0, savingsUnit: '', streakFreezes: 1, afterHabitId: null, autoMetric: '', autoThreshold: null, kind: 'build',
   createdAt: '2026-01-01T00:00:00Z',
 };
 const pages = base;

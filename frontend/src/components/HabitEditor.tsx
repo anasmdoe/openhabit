@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
-import { DAY_LETTERS } from '../lib/types';
+import { AUTO_METRICS, DAY_LETTERS } from '../lib/types';
+import type { AutoMetric } from '../lib/types';
 import type { HabitKind } from '../lib/types';
 import { HabitIcon, ICON_NAMES } from '../lib/icons';
 import { useModalOpen } from '../lib/modal';
@@ -56,6 +57,8 @@ export function HabitEditor() {
   const [kind, setKind] = useState<HabitKind>(existing?.kind ?? 'build');
   const [category, setCategory] = useState(existing?.category ?? '');
   const [afterId, setAfterId] = useState<string>(existing?.afterHabitId ?? '');
+  const [autoMetric, setAutoMetric] = useState<AutoMetric>(existing?.autoMetric ?? '');
+  const [autoThreshold, setAutoThreshold] = useState(existing?.autoThreshold ? String(existing.autoThreshold) : '');
   const [freezes, setFreezes] = useState(existing?.streakFreezes ?? 1);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -99,6 +102,8 @@ export function HabitEditor() {
         category: category.trim(),
         streakFreezes: freezes,
         afterHabitId: quit ? null : afterId || null,
+        autoMetric: quit ? '' : autoMetric,
+        autoThreshold: !quit && autoMetric && type === 'boolean' && parseFloat(autoThreshold) > 0 ? parseFloat(autoThreshold) : null,
         kind,
       },
       existing?.id
@@ -186,6 +191,21 @@ export function HabitEditor() {
                   .filter((h) => !h.archived && h.kind !== 'quit' && h.id !== existing?.id && !stacksOnto(habits, h.id, existing?.id))
                   .map((h) => <option key={h.id} value={h.id}>After: {h.name}</option>)}
               </select>
+            </Field>
+          )}
+
+          {!quit && (
+            <Field label="Complete automatically" hint="from your phone's health data — needs the OpenHabit Android app or an iPhone Shortcut">
+              <div className={type === 'boolean' && autoMetric ? 'grid grid-cols-[1fr_7rem] gap-2' : ''}>
+                <select value={autoMetric} onChange={(e) => setAutoMetric(e.target.value as AutoMetric)} className="input" aria-label="Complete automatically from">
+                  <option value="">Off</option>
+                  {AUTO_METRICS.map((m) => <option key={m.id} value={m.id}>{m.label} ({m.unit})</option>)}
+                </select>
+                {type === 'boolean' && autoMetric && (
+                  <input type="number" min="0" step="any" inputMode="decimal" value={autoThreshold} onChange={(e) => setAutoThreshold(e.target.value)}
+                    placeholder={autoMetric === 'steps' ? '8000' : '30'} className="input num" aria-label="Done at" title="Done once the day reaches this amount" />
+                )}
+              </div>
             </Field>
           )}
 

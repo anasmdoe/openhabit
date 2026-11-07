@@ -475,6 +475,36 @@ async function main() {
   const stB2 = await call('habit', 'GET', `/habits/${stB.id}`, { token: A });
   check(stB2.afterHabitId === null, 'stacking: deleting the anchor un-stacks the follower');
 
+  // ---- automatic completion from health data -----------------------------------
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad metric', autoMetric: 'heartbeats' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad quit', kind: 'quit', autoMetric: 'steps' }, expect: [400] });
+  const hSteps = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Walk 8k', autoMetric: 'steps', autoThreshold: 8000 } });
+  check(hSteps.autoMetric === 'steps' && hSteps.autoThreshold === 8000, 'health: a habit can complete itself from steps');
+  const hEx = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Exercise', type: 'numeric', unit: 'min', target: 30, autoMetric: 'exercise_minutes' } });
+  await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: hSteps.id, date: daysAgo(2), value: -1 } }); // skipped by hand
+  await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: hEx.id, date: daysAgo(1), value: 50 } }); // logged by hand, more than the watch saw
+  await call('tracking', 'PUT', '/wellness', { token: A, body: { date: daysAgo(1), sleepHours: 8 } });
+  const hs = await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [
+    { date: daysAgo(0), metrics: { steps: 9500, exercise_minutes: 25.5 } },
+    { date: daysAgo(1), metrics: { steps: 4000, exercise_minutes: 35, sleep_hours: 6.2 } },
+    { date: daysAgo(2), metrics: { steps: 12000, sleep_hours: 7.25 } },
+  ] } });
+  const got = (id, d) => hs.applied.find((x) => x.habitId === id && x.date === d)?.value;
+  check(got(hSteps.id, daysAgo(0)) === 1 && got(hSteps.id, daysAgo(1)) === undefined,
+    'health: a yes/no habit is done only on days the steps reach the threshold');
+  check(got(hSteps.id, daysAgo(2)) === undefined, 'health: a day skipped by hand stays skipped');
+  check(got(hEx.id, daysAgo(0)) === 25.5 && got(hEx.id, daysAgo(1)) === undefined, 'health: a measurable habit takes the minutes, and a bigger manual value stays');
+  const hw = await call('tracking', 'GET', `/wellness?from=${daysAgo(2)}&to=${daysAgo(1)}`, { token: A });
+  check(hw.find((w) => w.date === daysAgo(1))?.sleepHours === 8 && hw.find((w) => w.date === daysAgo(2))?.sleepHours === 7.3,
+    'health: sleep fills empty days and never replaces what was logged by hand');
+  const hs2 = await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [{ date: daysAgo(0), metrics: { steps: 9600, exercise_minutes: 40 } }, { date: daysAgo(0), metrics: { exercise_minutes: 41 } }] } });
+  check(hs2.applied.length === 1 && hs2.applied[0].value === 41, 'health: a re-sync only raises values, and a day sent twice is one write');
+  await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [{ date: daysAgo(-5), metrics: { steps: 1 } }] }, expect: [400] });
+  await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [{ date: daysAgo(0), metrics: { steps: -3 } }] }, expect: [400] });
+  await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [] }, expect: [400] });
+  await call('habit', 'DELETE', `/habits/${hSteps.id}`, { token: A });
+  await call('habit', 'DELETE', `/habits/${hEx.id}`, { token: A });
+
   // ---- goals with deadlines ----------------------------------------------------
   const goalBody = { habitId: fz.id, title: 'Thirty clean days', target: 30, unit: 'days', startDate: daysAgo(10), deadline: daysAgo(-20) };
   await call('habit', 'POST', '/habits/goals', { token: A, body: { ...goalBody, deadline: daysAgo(11) }, expect: [400] });

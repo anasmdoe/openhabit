@@ -719,6 +719,60 @@ paths:
         '200': { description: 'Days stored.', content: { application/json: { schema: { type: object, properties: { imported: { type: integer } } } } } }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+  /wellness/health-sync:
+    post:
+      operationId: healthSync
+      tags: [Tracking]
+      summary: Send daily totals from the phone's health data
+      description: >-
+        For the Android app (Health Connect) and iPhone Shortcuts (Apple Health). Every habit with an
+        `autoMetric` gets an entry from that day's metric: a yes/no habit is done once the metric reaches its
+        `autoThreshold`, a measurable habit takes the metric as its value. A value logged by hand is never
+        lowered, a skipped day stays skipped, and `sleep_hours` fills the day's sleep only when none was logged.
+        Safe to repeat. Up to 62 days per call; works with a personal API token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days]
+              properties:
+                days:
+                  type: array
+                  minItems: 1
+                  maxItems: 62
+                  items:
+                    type: object
+                    required: [date, metrics]
+                    properties:
+                      date: { $ref: '#/components/schemas/Date' }
+                      metrics:
+                        type: object
+                        additionalProperties: false
+                        properties:
+                          steps: { type: number, minimum: 0, maximum: 200000 }
+                          exercise_minutes: { type: number, minimum: 0, maximum: 1440 }
+                          sleep_hours: { type: number, minimum: 0, maximum: 24 }
+                          mindful_minutes: { type: number, minimum: 0, maximum: 1440 }
+                          distance_km: { type: number, minimum: 0, maximum: 1000 }
+                          active_kcal: { type: number, minimum: 0, maximum: 20000 }
+                          water_ml: { type: number, minimum: 0, maximum: 20000 }
+            example: { days: [{ date: '2026-11-07', metrics: { steps: 9120, exercise_minutes: 34, sleep_hours: 7.4 } }] }
+      responses:
+        '200':
+          description: What was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days: { type: integer }
+                  habits: { type: integer, description: 'Habits with an autoMetric.' }
+                  applied: { type: array, items: { $ref: '#/components/schemas/Entry' } }
+                  sleepDays: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
   /wellness:
     get:
       operationId: listWellness
@@ -1348,6 +1402,11 @@ components:
         savingsPerDay: { type: number, minimum: 0, description: 'Quit habits: what a clean day is worth (e.g. 4), shown as a running total.' }
         savingsUnit: { type: string, maxLength: 12, description: 'Unit of savingsPerDay, e.g. "$", "min" or "cigarettes".' }
         streakFreezes: { type: integer, minimum: 0, maximum: 3, default: 1, description: 'Streak protection for a daily build habit: how many missed days a month are forgiven when the miss comes straight after a completed day (never two in a row). 0 = off. Quit and flexible weekly habits ignore it.' }
+        autoMetric:
+          type: string
+          enum: ['', steps, exercise_minutes, sleep_hours, mindful_minutes, distance_km, active_kcal, water_ml]
+          description: 'Complete automatically from phone health data sent to `POST /wellness/health-sync`. Not for quit habits.'
+        autoThreshold: { type: [number, 'null'], exclusiveMinimum: 0, description: 'Yes/no habits: done once the day reaches this amount of autoMetric (empty = any amount). Measurable habits take the metric as their value and ignore it.' }
         afterHabitId: { type: [string, 'null'], format: uuid, description: 'Habit stacking: do this right after another of your build habits. Must not be itself, a quit habit, or create a loop.' }
         kind:
           type: string

@@ -76,11 +76,12 @@ async function auth(req, res, next) {
 const HABIT_COLS = `id, name, question, type, unit, target::float AS target,
   target_type AS "targetType", color, icon, schedule_type AS "scheduleType",
   frequency, webhook_url AS "webhookUrl", reminder_time AS "reminderTime", active_days AS "activeDays",
-  position, archived, category, kind, cue, savings_per_day::float AS "savingsPerDay", savings_unit AS "savingsUnit", streak_freezes AS "streakFreezes", after_habit_id AS "afterHabitId",
+  position, archived, category, kind, cue, savings_per_day::float AS "savingsPerDay", savings_unit AS "savingsUnit", streak_freezes AS "streakFreezes", after_habit_id AS "afterHabitId", auto_metric AS "autoMetric", auto_threshold::float AS "autoThreshold",
   created_at AS "createdAt"`;
 
 const asyncH = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
+const AUTO_METRICS = ['', 'steps', 'exercise_minutes', 'sleep_hours', 'mindful_minutes', 'distance_km', 'active_kcal', 'water_ml'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -132,6 +133,9 @@ function validateHabit(body, partial = false) {
     savingsUnit: (v) => typeof v === 'string' && v.trim().length <= 12,
     streakFreezes: (v) => Number.isInteger(v) && v >= 0 && v <= 3,
     afterHabitId: (v) => v === null || (typeof v === 'string' && UUID_RE.test(v)),
+    // automatic completion from phone health data (see POST /wellness/health-sync)
+    autoMetric: (v) => AUTO_METRICS.includes(v),
+    autoThreshold: (v) => v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1_000_000),
     activeDays: (v) => Array.isArray(v) && v.length > 0 && v.every((d) => Number.isInteger(d) && d >= 0 && d <= 6),
     position: (v) => Number.isInteger(v),
     archived: (v) => typeof v === 'boolean',
@@ -146,6 +150,7 @@ function validateHabit(body, partial = false) {
     if (!check(body[key])) errors.push(`invalid ${key}`);
     else out[key] = typeof body[key] === 'string' && (key === 'category' || key === 'cue' || key === 'savingsUnit') ? body[key].trim() : body[key];
   }
+  if (out.kind === 'quit' && out.autoMetric) errors.push('a habit to quit cannot complete itself from health data');
   // a quit habit is yes/no and daily: logging it records a slip
   if (out.kind === 'quit' && (out.type === 'numeric' || out.scheduleType === 'per_week')) {
     errors.push('a quit habit is yes/no and scheduled by weekday');
@@ -337,9 +342,9 @@ app.post('/habits', asyncH(async (req, res) => {
   const { rows } = await pool.query(
     `INSERT INTO habits (user_id, name, question, type, unit, target, target_type, color, icon,
        schedule_type, frequency, webhook_url, reminder_time, active_days, position, category, kind, cue,
-       savings_per_day, savings_unit, streak_freezes, after_habit_id)
+       savings_per_day, savings_unit, streak_freezes, after_habit_id, auto_metric, auto_threshold)
      VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $11, $12, $13, $14, $15, $8,
-       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)), $16, $17, $18, $19, $20, $21, $22)
+       COALESCE($9, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = $10)), $16, $17, $18, $19, $20, $21, $22, $23, $24)
      RETURNING ${HABIT_COLS}`,
     [
       out.name.trim(),
@@ -364,6 +369,8 @@ app.post('/habits', asyncH(async (req, res) => {
       out.savingsUnit ?? '',
       out.streakFreezes ?? 1,
       out.afterHabitId ?? null,
+      out.autoMetric ?? '',
+      out.autoThreshold ?? null,
     ]
   );
   res.status(201).json(rows[0]);
@@ -402,7 +409,7 @@ app.put('/habits/:id', asyncH(async (req, res) => {
     targetType: 'target_type', color: 'color', icon: 'icon', activeDays: 'active_days',
     scheduleType: 'schedule_type', frequency: 'frequency', webhookUrl: 'webhook_url',
     reminderTime: 'reminder_time',
-    position: 'position', archived: 'archived', category: 'category', kind: 'kind', cue: 'cue', savingsPerDay: 'savings_per_day', savingsUnit: 'savings_unit', streakFreezes: 'streak_freezes', afterHabitId: 'after_habit_id',
+    position: 'position', archived: 'archived', category: 'category', kind: 'kind', cue: 'cue', savingsPerDay: 'savings_per_day', savingsUnit: 'savings_unit', streakFreezes: 'streak_freezes', afterHabitId: 'after_habit_id', autoMetric: 'auto_metric', autoThreshold: 'auto_threshold',
   };
   const sets = [];
   const vals = [];
