@@ -1,4 +1,4 @@
-package app.openhabit.widget
+package app.openhabit.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

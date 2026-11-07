@@ -1,4 +1,4 @@
-package app.openhabit.widget
+package app.openhabit.core
 
 import android.content.Context
 import java.net.HttpURLConnection
@@ -7,7 +7,7 @@ import java.time.LocalDate
 
 class ApiException(val status: Int, message: String) : Exception(message)
 
-/** The three calls the widget needs. Blocking: call from a background thread only. */
+/** The calls the phone app, the widget and the watch need. Blocking: call from a background thread only. */
 object Api {
     private const val TIMEOUT_MS = 10_000
 
@@ -24,6 +24,9 @@ object Api {
     fun clear(c: Context, habitId: String, date: String) {
         request(c, "DELETE", "/api/v1/entries/$habitId/$date", null)
     }
+
+    /** Sends daily health totals (see [HealthPayload]); the server turns them into entries. Returns the response JSON. */
+    fun healthSync(c: Context, json: String): String = request(c, "POST", "/api/v1/wellness/health-sync", json)
 
     private fun request(c: Context, method: String, path: String, body: String?): String {
         val conn = URL(Prefs.baseUrl(c) + path).openConnection() as HttpURLConnection

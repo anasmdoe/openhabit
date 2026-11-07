@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "OpenHabit"
-include(":app")
+include(":core", ":app", ":wear")
