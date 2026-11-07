@@ -115,7 +115,7 @@ export function PauseModal() {
               </div>
             </div>
             <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
-              <span className={`text-[11px] ${days > MAX_DAYS ? 'text-amber-400' : 'text-ink-soft'}`}>
+              <span className={`text-[11px] ${days > MAX_DAYS ? 'text-warn' : 'text-ink-soft'}`}>
                 {days > MAX_DAYS ? `At most ${MAX_DAYS} days at a time`
                   : days > 0 ? `${selected.size} habit${selected.size === 1 ? '' : 's'} × ${days} day${days === 1 ? '' : 's'}`
                   : 'Pick an end date after the start'}

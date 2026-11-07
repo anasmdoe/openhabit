@@ -20,6 +20,8 @@ export default {
         'ink-soft': 'rgb(var(--ink-soft) / <alpha-value>)',
         line: 'rgb(var(--line) / <alpha-value>)',
         cell: 'rgb(var(--cell) / <alpha-value>)',
+        warn: 'rgb(var(--warn) / <alpha-value>)',
+        danger: 'rgb(var(--danger) / <alpha-value>)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],

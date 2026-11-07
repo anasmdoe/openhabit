@@ -379,7 +379,7 @@ export function HabitEditor() {
               )}
             </div>
             {reminderTime && user && !user.ntfyUrl && (
-              <p className="text-[11px] text-amber-400 mt-1">
+              <p className="text-[11px] text-warn mt-1">
                 Reminders need an ntfy topic or “Reminders on this device” turned on (Account → Edit profile).
               </p>
             )}

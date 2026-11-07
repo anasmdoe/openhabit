@@ -358,7 +358,7 @@ function TodayItem({ habit, value, streak, missedYesterday, frozenYesterday, wee
             <Snowflake className="w-2.5 h-2.5" />Freeze used yesterday
           </span>
         ) : nudge ? (
-          <span className="truncate text-[10.5px] font-semibold text-amber-400" title="Missing once is fine; missing twice starts a new pattern">
+          <span className="truncate text-[10.5px] font-semibold text-warn" title="Missing once is fine; missing twice starts a new pattern">
             Don't miss twice
           </span>
         ) : afterName ? (

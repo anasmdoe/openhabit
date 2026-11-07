@@ -9,6 +9,8 @@
    ============================================================ */
 :root,
 :root[data-theme='forest-dark'] {
+  --warn: 251 191 36;        /* amber-400: behind, don't miss twice */
+  --danger: 251 113 133;     /* rose-400: missed, delete */
   --forest-950: 15 17 19;    /* page background   */
   --forest-900: 22 25 28;    /* card surface      */
   --forest-850: 28 32 36;    /* raised / hover    */
@@ -47,6 +49,8 @@
 }
 
 :root[data-theme='forest-light'] {
+  --warn: 180 83 9;          /* amber-700: AA on white */
+  --danger: 190 18 60;       /* rose-700 */
   --forest-950: 245 246 247;
   --forest-900: 255 255 255;
   --forest-850: 241 243 244;

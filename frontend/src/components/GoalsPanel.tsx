@@ -9,8 +9,8 @@ const STATUS: Record<GoalStatus, { label: string; cls: string }> = {
   done: { label: 'Done', cls: 'text-mint' },
   ahead: { label: 'Ahead', cls: 'text-mint' },
   on_track: { label: 'On track', cls: 'text-mint' },
-  behind: { label: 'Behind', cls: 'text-amber-400' },
-  missed: { label: 'Missed', cls: 'text-rose-400' },
+  behind: { label: 'Behind', cls: 'text-warn' },
+  missed: { label: 'Missed', cls: 'text-danger' },
   upcoming: { label: 'Starts soon', cls: 'text-ink-soft' },
 };
 
@@ -137,9 +137,9 @@ function GoalDialog({ goal, onClose, onSaved }: { goal: GoalView | null; onClose
             <input className="input" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} aria-label="Goal deadline" />
           </label>
         </div>
-        {err && <p role="alert" className="text-[12px] text-rose-400">{err}</p>}
+        {err && <p role="alert" className="text-[12px] text-danger">{err}</p>}
         <div className="flex gap-2 justify-end">
-          {goal && <button className="text-[11px] uppercase tracking-wider font-semibold text-ink-soft px-3 py-1.5 text-rose-400 mr-auto" onClick={remove}>Delete</button>}
+          {goal && <button className="text-[11px] uppercase tracking-wider font-semibold text-ink-soft px-3 py-1.5 text-danger mr-auto" onClick={remove}>Delete</button>}
           {goal && <button className="text-[11px] uppercase tracking-wider font-semibold text-ink-soft px-3 py-1.5" onClick={finish}>{goal.status === 'done' ? 'Reopen' : 'Mark done'}</button>}
           <button className="text-[11px] uppercase tracking-wider font-semibold text-ink-soft px-3 py-1.5" onClick={onClose}>Cancel</button>
           <button className="text-[11px] uppercase tracking-wider font-bold bg-mint text-forest-950 rounded-sm px-4 py-1.5 disabled:opacity-40" disabled={busy} onClick={save}>Save</button>
