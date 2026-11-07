@@ -1,0 +1,25 @@
+name: iOS and watchOS apps
+
+on:
+  push:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core unit tests (models, rules, API client)
+        run: swift test
+      - name: Generate the Xcode project
+        run: brew install xcodegen && xcodegen generate
+      - name: Build the iPhone app and its widgets (simulator, unsigned)
+        run: xcodebuild -project OpenHabit.xcodeproj -scheme OpenHabit -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet build
+      - name: Build the Apple Watch app and its complications (simulator, unsigned)
+        run: xcodebuild -project OpenHabit.xcodeproj -scheme OpenHabitWatch -destination 'generic/platform=watchOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet build
