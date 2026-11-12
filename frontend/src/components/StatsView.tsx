@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { useFlip } from '../lib/motion';
 import {
   MonthTrendPanel, MonthlyCompletionPanel, StreaksPanel, CategoryPanel,
 } from './StatsPanels';
@@ -71,6 +72,8 @@ export function StatsView() {
   const reset = () => save({ order: SECTIONS.map((s) => s.id), hidden: [] });
 
   const byId = new Map(SECTIONS.map((s) => [s.id, s]));
+  const listRef = useRef<HTMLDivElement>(null);
+  useFlip(listRef); // moving a section up or down slides it instead of swapping
   return (
     <>
       <div className="flex items-center justify-end gap-2 -mb-1">
@@ -85,12 +88,13 @@ export function StatsView() {
           {editing ? 'Done' : 'Customize'}
         </button>
       </div>
+      <div ref={listRef} className="flex flex-col gap-3">
       {layout.order.map((id, i) => {
         const sec = byId.get(id)!;
         const hidden = layout.hidden.includes(id);
         if (hidden && !editing) return null;
         return (
-          <div key={id} className="flex flex-col gap-1.5">
+          <div key={id} data-flip={id} className="flex flex-col gap-1.5">
             {editing && (
               <div className="flex items-center gap-1.5 rounded-lg bg-forest-850 px-2 py-1">
                 <span className="text-[11.5px] font-semibold flex-1 truncate">{sec.title}</span>
@@ -108,6 +112,7 @@ export function StatsView() {
           </div>
         );
       })}
+      </div>
     </>
   );
 }

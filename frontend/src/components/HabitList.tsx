@@ -9,6 +9,7 @@ import { DAY_LETTERS, MONTH_NAMES } from '../lib/types';
 import type { Entry, Habit } from '../lib/types';
 import { haptic } from '../lib/feedback';
 import { useModalOpen } from '../lib/modal';
+import { useFlip, usePresence } from '../lib/motion';
 
 // ------------------------------------------------------------- toolbar
 const ACCENTS = ['#78C8A5', '#7DD3FC', '#C4B5FD', '#F0ABFC', '#FDA4AF', '#FDBA74', '#5EEAD4'];
@@ -251,6 +252,8 @@ export function HabitList() {
   const [drag, setDrag] = useState<{ id: string; to: number } | null>(null);
   const [cellMenu, setCellMenu] = useState<{ habit: Habit; date: string; x: number; y: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  useFlip(gridRef); // rows glide to their new place after a reorder or a filter change
 
   // Week view: seven days that always fit the screen (rolling window ending on `anchor`).
   const [mode, setModeState] = useState<GridMode>(() => {
@@ -417,7 +420,7 @@ export function HabitList() {
         className="overflow-auto thin-scroll overscroll-x-contain"
         style={{ maxHeight: listH || '60vh' }}
       >
-        <div style={{ minWidth: nameEff + days.length * cell }}>
+        <div ref={gridRef} style={{ minWidth: nameEff + days.length * cell }}>
           {/* header: month switcher + day columns */}
           <div className="flex items-stretch border-b border-line sticky top-0 z-20 bg-panel">
             <div
@@ -460,6 +463,7 @@ export function HabitList() {
           {shown.map((habit, idx) => (
             <div
               key={habit.id}
+              data-flip={habit.id}
               className={`flex items-stretch border-b border-line last:border-b-0 transition-transform ${
                 drag?.id === habit.id ? 'opacity-40' : ''
               } ${drag && drag.id !== habit.id && drag.to === idx ? 'border-t-2 border-t-mint' : ''}`}
@@ -850,10 +854,11 @@ function NumericEditor({
 export function ArchivedModal() {
   const { archivedOpen, archived, closeArchived, restoreHabit, deleteHabit } = useApp();
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const present = usePresence(archivedOpen);
   useModalOpen(archivedOpen, closeArchived);
-  if (!archivedOpen) return null;
+  if (!present.show) return null;
   return (
-    <div className="backdrop grid place-items-center p-4"
+    <div className="backdrop grid place-items-center p-4" data-closing={present.closing || undefined}
       onClick={closeArchived} role="dialog" aria-modal="true" aria-label="Archived habits">
       <div className="panel w-full max-w-md modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">

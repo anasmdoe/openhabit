@@ -9,6 +9,7 @@ import type { PeriodStat } from '../lib/periodStats';
 import { shareCard } from '../lib/share';
 import { HabitIcon } from '../lib/icons';
 import { MONTH_NAMES } from '../lib/types';
+import { Num } from './Motion';
 
 /** dimmed version of a hex color for quiet bars */
 const dim = (hex: string, alpha = 0.55) => {
@@ -73,14 +74,14 @@ export function StatCards() {
   return (
     <>
       <Card label="Today">
-        <Big value={`${todayStat}%`} />
+        <Big value={todayStat} suffix="%" />
         <span className="text-[11px] text-ink-soft">of scheduled habits</span>
       </Card>
       <Card label="This month">
         <div className="flex items-center gap-3">
           <MiniRing pct={overview?.overallPct ?? 0} color="rgb(var(--mint))" size={34} />
           <div>
-            <Big value={`${overview?.overallPct ?? 0}%`} />
+            <Big value={overview?.overallPct ?? 0} suffix="%" />
             <div className="num text-[11px] text-ink-soft">
               {overview?.completed ?? 0} / {overview?.goal ?? 0} done
             </div>
@@ -89,7 +90,7 @@ export function StatCards() {
         <Delta value={trend.monthDelta} vs="last month so far" />
       </Card>
       <Card label="Best streak">
-        <Big value={String(bestStreak.len)} color={bestStreak.len ? bestStreak.color : undefined} />
+        <Big value={bestStreak.len} color={bestStreak.len ? bestStreak.color : undefined} />
         <span className="text-[11px] text-ink-soft truncate">{bestStreak.len ? bestStreak.name : 'no active streaks'}</span>
       </Card>
       <Card label="Last 7 days">
@@ -134,9 +135,9 @@ function Card({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function Big({ value, color }: { value: string; color?: string }) {
+function Big({ value, suffix = '', color }: { value: number; suffix?: string; color?: string }) {
   useApp((s) => s.theme); // repaint when the theme (and so the panel colour) changes
-  return <span className="num text-2xl font-bold leading-tight" style={{ color: color ? readableColor(color) : undefined }}>{value}</span>;
+  return <Num value={value} suffix={suffix} className="num text-2xl font-bold leading-tight" style={{ color: color ? readableColor(color) : undefined }} />;
 }
 
 // Full-width daily trend for the current month.
@@ -281,9 +282,7 @@ export function StreaksPanel() {
               {habit.icon && <HabitIcon name={habit.icon} color={habit.color} size={14} className="shrink-0" />}
               <span className="text-[12px] font-medium truncate text-ink">{habit.name}</span>
             </span>
-            <div className="flex-1 h-2.5 bg-forest-800 rounded-sm overflow-hidden">
-              <div className="h-full rounded-sm" style={{ width: `${(len / max) * 100}%`, background: dim(habit.color) }} />
-            </div>
+            <div className="flex-1"><HBar pct={(len / max) * 100} color={dim(habit.color)} /></div>
             <span className="num text-[11px] text-ink-soft w-9 text-right shrink-0">{len}d</span>
           </button>
         ))}

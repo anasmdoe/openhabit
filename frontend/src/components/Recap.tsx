@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useApp, today } from '../store';
 import { Delta } from './StatsPanels';
+import { AutoHeight, Num } from './Motion';
+import { useMountedFlag } from '../lib/motion';
 import { entryLookup, recap, recapSentences } from '../lib/periodStats';
 import { DAY_LETTERS } from '../lib/types';
 
@@ -14,6 +16,7 @@ const RANGES = [
 export function RecapPanel() {
   const { habits, entries } = useApp();
   const [range, setRange] = useState<7 | 30>(7);
+  const grown = useMountedFlag();
   const t = today();
   const r = useMemo(() => recap(habits, entryLookup(entries), range, t), [habits, entries, range, t]);
   const words = RANGES.find((x) => x.id === range)!.words;
@@ -30,11 +33,11 @@ export function RecapPanel() {
           ))}
         </div>
       </div>
-      <div className="px-4 pb-4 flex flex-col gap-3">
+      <AutoHeight className="px-4 pb-4 flex flex-col gap-3">
         {r.enough ? (
           <>
             <div className="flex items-end gap-3">
-              <span className="num text-3xl font-bold leading-none">{r.current.pct}%</span>
+              <Num value={r.current.pct ?? 0} suffix="%" className="num text-3xl font-bold leading-none" />
               <span className="flex flex-col gap-0.5 pb-0.5">
                 <span className="text-[11px] text-ink-soft">{r.current.done} of {r.current.goal} done · last {range} days</span>
                 <Delta value={r.delta} vs={`the ${range} before`} />
@@ -59,7 +62,8 @@ export function RecapPanel() {
                       <div
                         className="w-full rounded-sm"
                         style={{
-                          height: `${Math.max(w.pct ?? 0, 4)}%`,
+                          height: `${grown ? Math.max(w.pct ?? 0, 4) : 0}%`,
+                          transition: 'height 460ms var(--ease), background-color 200ms',
                           background: isBest ? 'rgb(var(--mint))' : 'rgb(var(--forest-700))',
                           opacity: isWeak ? 0.55 : 1,
                         }}
@@ -77,7 +81,7 @@ export function RecapPanel() {
           {recapSentences(r, words).join(' ')}
           {r.enough && r.perfectDays > 0 && ` ${r.perfectDays} perfect day${r.perfectDays === 1 ? '' : 's'}.`}
         </p>
-      </div>
+      </AutoHeight>
     </section>
   );
 }

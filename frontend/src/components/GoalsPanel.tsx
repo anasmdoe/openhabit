@@ -4,6 +4,8 @@ import { useApp, today } from '../store';
 import type { GoalStatus, GoalView } from '../lib/types';
 import { useModalOpen } from '../lib/modal';
 import { addDays } from '../lib/stats';
+import { useMountedFlag } from '../lib/motion';
+import { AutoHeight, Num } from './Motion';
 
 const STATUS: Record<GoalStatus, { label: string; cls: string }> = {
   done: { label: 'Done', cls: 'text-mint' },
@@ -38,14 +40,14 @@ export function GoalsPanel() {
           </button>
         )}
       </div>
-      <div className="px-4 pb-4 flex flex-col gap-3.5">
+      <AutoHeight className="px-4 pb-4 flex flex-col gap-3.5">
         {goals && goals.length === 0 && (
           <p className="text-[12.5px] text-ink-soft leading-snug">
             Give a habit a finish line: "Read 20 books by December", "Run 100 Km by June". OpenHabit tracks your pace and tells you what you need per day.
           </p>
         )}
         {goals?.map((g) => <GoalRow key={g.id} g={g} onEdit={() => setEditing(g)} />)}
-      </div>
+      </AutoHeight>
       {editing && (
         <GoalDialog goal={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />
       )}
@@ -54,6 +56,7 @@ export function GoalsPanel() {
 }
 
 function GoalRow({ g, onEdit }: { g: GoalView; onEdit: () => void }) {
+  const grown = useMountedFlag();
   const st = STATUS[g.status];
   const unit = g.measure === 'sum' ? ` ${g.unit}` : g.unit ? ` ${g.unit}` : ' days';
   return (
@@ -63,13 +66,13 @@ function GoalRow({ g, onEdit }: { g: GoalView; onEdit: () => void }) {
         <span className={`text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
       </div>
       <div className="relative h-2 rounded-full bg-line overflow-hidden" role="progressbar" aria-label={`${g.title} progress`} aria-valuenow={g.pct} aria-valuemin={0} aria-valuemax={100}>
-        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, g.pct)}%`, background: g.habit.color }} />
+        <div className="absolute inset-y-0 left-0 rounded-full fill-bar" style={{ width: `${grown ? Math.min(100, g.pct) : 0}%`, background: g.habit.color }} />
         {g.status !== 'done' && g.elapsedPct > 0 && g.elapsedPct < 100 && (
           <div className="absolute inset-y-0 w-0.5 bg-ink/60" style={{ left: `${g.elapsedPct}%` }} title="Where you should be by now" />
         )}
       </div>
       <div className="flex justify-between text-[11.5px] text-ink-soft num">
-        <span>{g.current} / {g.target}{unit} · {g.pct}%</span>
+        <span>{g.current} / {g.target}{unit} · <Num value={g.pct} suffix="%" /></span>
         <span>{g.status === 'done' || g.status === 'missed' ? g.deadline : `${g.daysLeft} days left`}</span>
       </div>
       <p className="text-[12px] text-ink-soft leading-snug">{g.message}</p>

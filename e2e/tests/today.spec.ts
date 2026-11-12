@@ -48,6 +48,8 @@ test('category chips sit above Today and narrow the list', async ({ page }) => {
   const chips = page.getByRole('navigation', { name: 'Habit categories' });
   await expect(chips.getByRole('button', { name: /^All/ })).toBeVisible();
   await chips.getByRole('button', { name: /^Fitness/ }).click();
-  const rows = page.locator('[data-no-swipe]:visible');
-  for (const name of await rows.allInnerTexts()) expect(name).toMatch(/Gym|Running/);
+  // rows that don't match fade out for a moment before they are removed, so wait for them to go
+  const rows = page.locator('[data-no-swipe]:visible:not([inert])');
+  await expect.poll(async () => (await rows.allInnerTexts()).every((n) => /Gym|Running/.test(n))).toBe(true);
+  await expect(rows).toHaveCount(2);
 });

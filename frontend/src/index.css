@@ -272,3 +272,91 @@ nav[aria-label='Main'] { transform: translateZ(0); will-change: transform; }
 @media (pointer: coarse) {
   button.w-7, button.w-8, button.w-9, a.w-8 { min-width: 40px; min-height: 40px; }
 }
+
+
+/* ==========================================================================================
+   Motion. Things move instead of jump: lists glide, panels ease, pages and themes crossfade.
+   JS-driven motion lives in lib/motion.ts; this is the CSS half. The reduced-motion rule near the
+   top of this file switches every animation and transition here off.
+   ========================================================================================== */
+:root {
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* a row entering or leaving a list (Today) */
+@keyframes row-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+@keyframes row-out { to { opacity: 0; transform: translateX(22px) scale(0.98); } }
+.row-in { animation: row-in 240ms var(--ease) backwards; }
+.row-out { animation: row-out 170ms var(--ease) forwards; pointer-events: none; }
+
+/* a field or section appearing: fades and settles */
+@keyframes field-in { from { opacity: 0; transform: translateY(-4px); } }
+.field-in { animation: field-in 220ms var(--ease) backwards; }
+
+/* a panel arriving after its data did (goals, patterns, insights, stat cards) */
+@keyframes fade-up { from { opacity: 0; transform: translateY(8px); } }
+.fade-up { animation: fade-up 300ms var(--ease) backwards; }
+@keyframes fade-in { from { opacity: 0; } }
+.fade-in { animation: fade-in 200ms ease-out backwards; }
+
+/* popups: the dimmed backdrop fades, the panel rises and scales in; both reverse on close */
+@keyframes backdrop-in { from { opacity: 0; } }
+@keyframes backdrop-out { to { opacity: 0; } }
+@keyframes modal-in { from { opacity: 0; transform: translateY(14px) scale(0.97); } }
+@keyframes modal-out { to { opacity: 0; transform: translateY(10px) scale(0.98); } }
+.backdrop { animation: backdrop-in 180ms ease-out backwards; }
+.backdrop > :first-child { animation: modal-in 240ms var(--ease) backwards; }
+.backdrop[data-closing] { animation: backdrop-out 170ms ease-in forwards; pointer-events: none; }
+.backdrop[data-closing] > :first-child { animation: modal-out 170ms ease-in forwards; }
+
+/* the habit window slides in from the side (wide screens) or up from the bottom (phones) */
+@keyframes sheet-out { to { transform: translateY(40px); opacity: 0; } }
+@keyframes side-out { to { transform: translateX(32px); opacity: 0; } }
+@keyframes dim-in { from { opacity: 0; } }
+@keyframes dim-out { to { opacity: 0; } }
+.dim-in { animation: dim-in 200ms ease-out backwards; }
+.dim-in[data-closing] { animation: dim-out 190ms ease-in forwards; pointer-events: none; }
+.dim-in[data-closing] > .sheet-in { animation: sheet-out 190ms ease-in forwards; }
+@media (min-width: 640px) { .dim-in[data-closing] > .sheet-in { animation-name: side-out; } }
+
+/* the "Undo" snackbar */
+@keyframes toast-in { from { opacity: 0; transform: translateY(14px) scale(0.96); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(10px) scale(0.97); } }
+.toast-in { animation: toast-in 240ms var(--ease-spring) backwards; }
+.toast-out { animation: toast-out 170ms ease-in forwards; }
+
+/* chart bars grow from the baseline and ease to new heights; lines draw themselves */
+.bar-rect { transform-box: fill-box; transform-origin: 50% 100%; transition: transform 420ms var(--ease), opacity 200ms; }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.line-draw { stroke-dasharray: 1; animation: draw 700ms var(--ease) backwards; }
+.arc { transition: stroke-dasharray 520ms var(--ease); }
+.fill-bar { transition: width 520ms var(--ease); }
+
+/* small things: controls respond to hover, focus and press instead of flipping state */
+button, a, summary, select, input, textarea, [role='button'] {
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, opacity 140ms ease,
+    box-shadow 140ms ease, transform 100ms ease;
+}
+button:not(:disabled):active, [role='button']:active { transform: scale(0.97); }
+button.cell-btn:active { transform: scale(0.88); }
+.seg > button { transition: background-color 180ms ease, color 180ms ease; }
+
+/* streak flames, chips and tags settle when their numbers change */
+.num { font-variant-numeric: tabular-nums; }
+
+/* Pages and themes crossfade with the View Transitions API (Chrome, Edge, Safari 18+, Firefox 144+);
+   other browsers keep the plain slide-in from the .tab-in-* classes. The tab bar and top bar stay put. */
+nav[aria-label='Main'] { view-transition-name: tabbar; }
+@keyframes vt-out-l { to { opacity: 0; transform: translateX(-26px); } }
+@keyframes vt-out-r { to { opacity: 0; transform: translateX(26px); } }
+@keyframes vt-in-r { from { opacity: 0; transform: translateX(34px); } }
+@keyframes vt-in-l { from { opacity: 0; transform: translateX(-34px); } }
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(root) { animation-duration: 280ms; animation-timing-function: var(--ease); }
+  html[data-vt='fwd']::view-transition-old(root) { animation: vt-out-l 200ms var(--ease) both; }
+  html[data-vt='fwd']::view-transition-new(root) { animation: vt-in-r 280ms var(--ease) both; }
+  html[data-vt='back']::view-transition-old(root) { animation: vt-out-r 200ms var(--ease) both; }
+  html[data-vt='back']::view-transition-new(root) { animation: vt-in-l 280ms var(--ease) both; }
+  html[data-vt='fade']::view-transition-group(root) { animation-duration: 320ms; }
+}

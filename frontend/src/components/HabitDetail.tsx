@@ -5,6 +5,7 @@ import { DAY_LETTERS } from '../lib/types';
 import { HabitIcon } from '../lib/icons';
 import { useSheetDrag } from '../lib/useSheetDrag';
 import { useModalOpen } from '../lib/modal';
+import { usePresence } from '../lib/motion';
 import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, todayISO, weekKey } from '../lib/stats';
 import type { HabitDetail as HabitDetailData } from '../lib/types';
 import {
@@ -15,7 +16,10 @@ import {
 } from './DetailPanels';
 
 export function HabitDetail() {
-  const { detailOpen, detail, closeDetail, openEditor, habits, refreshDetail } = useApp();
+  const { detailOpen, detail: liveDetail, closeDetail, openEditor, habits, refreshDetail } = useApp();
+  // the window slides away over a moment after closing; keep showing what it showed until then
+  const present = usePresence(detailOpen, 200, liveDetail);
+  const detail = liveDetail ?? (present.closing ? present.snapshot ?? null : null);
   const { entries: habitEntries, reload: reloadEntries } = useHabitEntries(detail?.habit.id ?? '');
   const changed = async () => { await refreshDetail(); await reloadEntries(); };
   const [scorePeriod, setScorePeriod] = useState<Period>('week');
@@ -28,7 +32,7 @@ export function HabitDetail() {
   const hist = useMemo(() => (detail ? aggregateHistory(detail, histPeriod) : []), [detail, histPeriod]);
   const targets = useMemo(() => (detail ? targetProgress(detail) : []), [detail]);
 
-  if (!detailOpen) return null;
+  if (!present.show) return null;
 
   const habit = detail ? habits.find((h) => h.id === detail.habit.id) : null;
   const isNumeric = detail?.habit.type === 'numeric';
@@ -39,7 +43,7 @@ export function HabitDetail() {
   const color = detail?.habit.color ?? 'rgb(var(--mint))';
 
   return (
-    <div className="fixed inset-0 z-30 flex items-end sm:items-stretch sm:justify-end bg-black/40" style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }} onClick={closeDetail}>
+    <div className="dim-in fixed inset-0 z-30 flex items-end sm:items-stretch sm:justify-end bg-black/40" data-closing={present.closing || undefined} style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }} onClick={closeDetail}>
       <div
         ref={sheetRef}
         className="sheet-in w-full sm:max-w-xl h-[92dvh] sm:h-full bg-forest-950 rounded-t-2xl sm:rounded-none border-t sm:border-t-0 sm:border-l border-line overflow-y-auto thin-scroll overscroll-y-contain"

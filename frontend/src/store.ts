@@ -6,6 +6,7 @@ import { SKIP, addDays, computeOverview, isCompleted, isSkip, monthRange, todayI
 import { quickCurrentStreak } from './lib/periods';
 import { flushQueue, socialApi } from './api';
 import { loadPrefs, savePrefs } from './lib/feedback';
+import { withViewTransition } from './lib/motion';
 import type { FeedbackPrefs } from './lib/feedback';
 
 export type Theme = 'system' | 'forest-dark' | 'pitch-black' | 'forest-light';
@@ -303,8 +304,13 @@ export const useApp = create<AppState>((set, get) => ({
     if (v === view) return;
     // Groups is a live page, so it is not remembered as the tab to reopen on
     try { if (v !== 'groups') localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ }
-    set({ view: v, viewDir: VIEW_ORDER.indexOf(v) >= VIEW_ORDER.indexOf(view) ? 1 : -1 });
-    window.scrollTo({ top: 0 });
+    const dir = VIEW_ORDER.indexOf(v) >= VIEW_ORDER.indexOf(view) ? 1 : -1;
+    const change = () => {
+      set({ view: v, viewDir: dir });
+      window.scrollTo({ top: 0 });
+    };
+    // on a phone the old page fades out and the new one slides in (browsers without View Transitions slide only)
+    if (isPhone()) withViewTransition(change, dir); else change();
   },
   goView(v) {
     if (v === 'groups') { void get().openGroups(); return; }
@@ -658,8 +664,8 @@ export const useApp = create<AppState>((set, get) => ({
   closeEditor: () => set({ editorHabit: null }),
 
   setTheme(theme) {
-    applyTheme(theme);
-    set({ theme });
+    // the whole page crossfades between the old and the new colours
+    withViewTransition(() => { applyTheme(theme); set({ theme }); });
   },
 
   async logWellness(date, mood, sleepHours) {

@@ -4,6 +4,7 @@ import type { AppView } from './store';
 import { TabBar } from './components/TabBar';
 import { useTabSwipe } from './lib/useTabSwipe';
 import { useAnyModalOpen } from './lib/modal';
+import { supportsViewTransitions } from './lib/motion';
 import { TopBar, HabitList, ArchivedModal, CategoryBar } from './components/HabitList';
 import {
   StatCards, MonthTrendPanel, MonthlyCompletionPanel, StreaksPanel, WellnessPanel, CategoryPanel,
@@ -80,7 +81,9 @@ export default function App() {
   if (authRequired) return <><AuthGate /><Toast /></>;
 
   // On phones the bottom tab bar picks one part of the page; wider screens show all of it.
-  const show = (v: AppView) => (view === v ? (viewDir > 0 ? 'tab-in-r' : 'tab-in-l') : 'max-sm:hidden');
+  // browsers with View Transitions crossfade the pages (see setView); the others slide the new page in
+  const slide = !supportsViewTransitions();
+  const show = (v: AppView) => (view === v ? (slide ? (viewDir > 0 ? 'tab-in-r' : 'tab-in-l') : '') : 'max-sm:hidden');
   const group = 'flex flex-col gap-3';
 
   return (

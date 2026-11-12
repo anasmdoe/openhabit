@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useApp } from '../store';
 import type { CorrelationResult } from '../api';
 import { HabitIcon } from '../lib/icons';
+import { AutoHeight } from './Motion';
 
 // What your own data says about how habits go together and what they do to your sleep.
 // Hidden-until-ready would be confusing, so when data is thin it says what would unlock it.
@@ -25,7 +26,7 @@ export function PatternsPanel() {
         Patterns
         <span className="normal-case tracking-normal font-medium">last {res.span} days</span>
       </div>
-      <div className="px-4 pb-3.5 flex flex-col gap-2.5">
+      <AutoHeight className="px-4 pb-3.5 flex flex-col gap-2.5">
         {found.length === 0 && (
           <p className="text-[12.5px] leading-snug text-ink-soft">
             {needed.trackedDays < needed.minPairDays
@@ -52,7 +53,7 @@ export function PatternsPanel() {
         {found.length > 0 && (
           <p className="text-[11px] text-ink-soft leading-snug">Patterns are not proof: two things going together doesn't mean one causes the other.</p>
         )}
-      </div>
+      </AutoHeight>
     </section>
   );
 }

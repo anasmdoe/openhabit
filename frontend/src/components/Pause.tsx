@@ -3,6 +3,7 @@ import { useApp, today } from '../store';
 import { HabitIcon } from '../lib/icons';
 import { addDays, fromISO } from '../lib/stats';
 import { useModalOpen } from '../lib/modal';
+import { usePresence } from '../lib/motion';
 
 const MAX_DAYS = 60;
 
@@ -20,10 +21,13 @@ export function PauseModal() {
 
   // opened from one habit's window: start with just that habit ticked
   React.useEffect(() => { if (pauseOpen) setPicked(pausePreset ? new Set(pausePreset) : null); }, [pauseOpen, pausePreset]);
-  useModalOpen(pauseOpen, () => { setPauseOpen(false); setDone(null); setPicked(null); });
-  if (!pauseOpen) return null;
+  const present = usePresence(pauseOpen);
+  useModalOpen(pauseOpen, () => setPauseOpen(false));
+  // the form resets once the dialog has finished leaving, so it never flashes back while fading out
+  React.useEffect(() => { if (!present.show) { setDone(null); setPicked(null); } }, [present.show]);
+  if (!present.show) return null;
 
-  const close = () => { setPauseOpen(false); setDone(null); setPicked(null); };
+  const close = () => setPauseOpen(false);
   const selected = picked ?? new Set(habits.map((h) => h.id));
   const days = from && to && to >= from
     ? Math.round((fromISO(to).getTime() - fromISO(from).getTime()) / 86400000) + 1 : 0;
@@ -47,7 +51,7 @@ export function PauseModal() {
   };
 
   return (
-    <div className="backdrop grid place-items-center p-4" onClick={close} role="dialog" aria-modal="true" aria-label="Take a break">
+    <div className="backdrop grid place-items-center p-4" data-closing={present.closing || undefined} onClick={close} role="dialog" aria-modal="true" aria-label="Take a break">
       <div className="panel w-full max-w-md modal-scroll thin-scroll sheet-in" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           Take a break

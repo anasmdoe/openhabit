@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../store';
 import { HabitIcon } from '../lib/icons';
+import { AutoHeight } from './Motion';
 
 // Wellness × habit correlations: what your own data says about you.
 export function InsightsPanel() {
@@ -21,7 +22,7 @@ export function InsightsPanel() {
         Insights
         <span className="normal-case tracking-normal font-medium">last {insights.span} days</span>
       </div>
-      <div className="px-4 pb-3.5 flex flex-col gap-2.5">
+      <AutoHeight className="px-4 pb-3.5 flex flex-col gap-2.5">
         {thin && (
           <p className="text-[12.5px] leading-snug text-ink-soft">
             {needMood > 0
@@ -56,7 +57,7 @@ export function InsightsPanel() {
             ))}
           </div>
         )}
-      </div>
+      </AutoHeight>
     </section>
   );
 }

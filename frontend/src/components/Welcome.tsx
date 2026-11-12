@@ -4,6 +4,7 @@ import { authApi } from '../api';
 import { currentSubscription, enablePush, needsHomeScreen, pushSupported } from '../lib/push';
 import { canPromptInstall, isInstalled, isIOS, onInstallChange, promptInstall } from '../lib/install';
 import { useModalOpen } from '../lib/modal';
+import { usePresence } from '../lib/motion';
 
 const SEEN_KEY = 'openhabit.welcome';
 const NEW_ACCOUNT_DAYS = 3;
@@ -32,8 +33,9 @@ export function Welcome() {
     currentSubscription().then((s) => setPushOn(Boolean(s))).catch(() => {});
   }, [open]);
 
+  const present = usePresence(open);
   useModalOpen(open, () => { markSeen(); setOpen(false); });
-  if (!open) return null;
+  if (!present.show) return null;
   const close = () => { markSeen(); setOpen(false); };
 
   const turnOnPush = async () => {
@@ -78,7 +80,7 @@ export function Welcome() {
   ];
 
   return (
-    <div className="backdrop grid place-items-center p-4" role="dialog" aria-modal="true" aria-label="Welcome to OpenHabit" onClick={close}>
+    <div className="backdrop grid place-items-center p-4" data-closing={present.closing || undefined} role="dialog" aria-modal="true" aria-label="Welcome to OpenHabit" onClick={close}>
       <div className="panel modal-scroll w-full max-w-md sheet-in" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 pt-5 pb-1">
           <div className="text-[18px] font-bold tracking-tight">Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''} 👋</div>

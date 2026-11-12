@@ -9,6 +9,8 @@ import { fmtValue, isDuration, stepFor } from '../lib/format';
 import { freezeDays } from '../lib/streaks';
 import { Snowflake } from '../lib/icons';
 import { effectiveSection, stackOrder } from '../lib/stacking';
+import { useExitList, useFlip } from '../lib/motion';
+import { AutoHeight, Num } from './Motion';
 
 // What's due today: a progress ring plus one big tap target per habit
 // (full-width rows on phones, wrapping chips on wider screens).
@@ -28,6 +30,23 @@ export function TodayFocus() {
       .filter((h) => (isFixedDay(h) ? h.activeDays.includes(dow(t)) : true)),
     [habits, categoryFilter, t]
   );
+
+  // the rows: leaving rows play an exit, new rows ease in, the rest glide into place
+  const listRef = useRef<HTMLDivElement>(null);
+  useFlip(listRef);
+  const seen = useRef<Set<string> | null>(null);
+
+  const valueOf = (h: Habit, d = t) => lookup.get(`${h.id}|${d}`);
+  const settled = (h: Habit) => isCompleted(h, valueOf(h)) || isSkip(valueOf(h));
+  const shown = due.filter((h) => !(feedback.hideDone && settled(h)));
+  const dueById = new Map(due.map((h) => [h.id, h]));
+  const sectionOf = (h: Habit) => effectiveSection(h, dueById, timeSection);
+  // rows that just left (completed with "hide completed" on, filtered out, ...) stay a moment to fade away
+  const display = useExitList(
+    TIME_SECTIONS.flatMap((sec) => stackOrder(shown.filter((h) => sectionOf(h) === sec.key))),
+    (h) => h.id,
+  );
+  useEffect(() => { if (display.length) seen.current = new Set(display.map((e) => e.key)); });
 
   if (!habits.length) {
     return ready ? (
@@ -58,12 +77,10 @@ export function TodayFocus() {
     );
   }
 
-  const valueOf = (h: Habit, d = t) => lookup.get(`${h.id}|${d}`);
-  const settled = (h: Habit) => isCompleted(h, valueOf(h)) || isSkip(valueOf(h));
   const doneCount = due.filter(settled).length;
   const allDone = doneCount === due.length;
 
-  const renderRow = (h: Habit) => {
+  const renderRow = (h: Habit, leaving = false) => {
           const missedYesterday = !isQuit(h) && isFixedDay(h) && h.activeDays.includes(dow(yesterday))
             && yesterday >= h.createdAt.slice(0, 10)
             && !isCompleted(h, valueOf(h, yesterday)) && !isSkip(valueOf(h, yesterday));
@@ -79,6 +96,8 @@ export function TodayFocus() {
           return (
             <SwipeRow
               key={h.id}
+              flipKey={h.id}
+              motion={leaving ? 'out' : seen.current && !seen.current.has(h.id) ? 'in' : undefined}
               enabled={!isQuit(h)}
               rightLabel={doneNow ? 'Undo' : 'Done'}
               leftLabel={skippedNow ? 'Unskip' : 'Skip'}
@@ -100,12 +119,14 @@ export function TodayFocus() {
           );
   };
 
-  const shown = due.filter((h) => !(feedback.hideDone && settled(h)));
-  const dueById = new Map(due.map((h) => [h.id, h]));
   const sections = TIME_SECTIONS
-    .map((sec) => ({ ...sec, habits: stackOrder(shown.filter((h) => effectiveSection(h, dueById, timeSection) === sec.key)) }))
-    .filter((sec) => sec.habits.length > 0);
-  const showHeadings = sections.length > 1;
+    .map((sec) => ({
+      ...sec,
+      rows: display.filter((e) => (e.leaving ? timeSection(e.item) : sectionOf(e.item)) === sec.key),
+    }))
+    .filter((sec) => sec.rows.length > 0);
+  const showHeadings = sections.filter((sec) => sec.rows.some((r) => !r.leaving)).length > 1;
+
 
   return (
     <section className="panel">
@@ -114,7 +135,7 @@ export function TodayFocus() {
         <div className="min-w-0 flex-1">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-panel-head-text">Today</div>
           <div className="text-[13px] font-semibold text-ink">
-            {allDone ? 'All clear — see you tomorrow.' : `${due.length - doneCount} to go`}
+            {allDone ? 'All clear — see you tomorrow.' : <><Num value={due.length - doneCount} /> to go</>}
           </div>
         </div>
         <button
@@ -141,16 +162,16 @@ export function TodayFocus() {
           </svg>
         </button>
       </div>
-      <div className="px-3 pb-3 grid grid-cols-1 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
+      <AutoHeight innerRef={listRef} className="px-3 pb-3 grid grid-cols-1 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
         {sections.map((sec) => (
           <Fragment key={sec.key}>
             {showHeadings && (
-              <h2 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-soft pt-1.5 sm:basis-full">{sec.label}</h2>
+              <h2 data-flip={`h-${sec.key}`} className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-soft pt-1.5 sm:basis-full">{sec.label}</h2>
             )}
-            {sec.habits.map(renderRow)}
+            {sec.rows.map((r) => renderRow(r.item, r.leaving))}
           </Fragment>
         ))}
-      </div>
+      </AutoHeight>
     </section>
   );
 }
@@ -176,9 +197,11 @@ const SWIPE_COMMIT = 72; // px
  * Touch gesture on a Today row: swipe right to log it, left to skip it.
  * Vertical scrolling stays native (touch-action: pan-y); mouse users keep the buttons.
  */
-function SwipeRow({ children, enabled, rightLabel, leftLabel, onRight, onLeft }: {
+function SwipeRow({ children, enabled, rightLabel, leftLabel, onRight, onLeft, flipKey, motion }: {
   children: React.ReactNode;
   enabled: boolean;
+  flipKey?: string;
+  motion?: 'in' | 'out';
   rightLabel: string;
   leftLabel: string;
   onRight: () => void;
@@ -189,7 +212,12 @@ function SwipeRow({ children, enabled, rightLabel, leftLabel, onRight, onLeft }:
   const drag = useRef<{ x: number; y: number; id: number; live: boolean } | null>(null);
   const swallowClick = useRef(false);
 
-  if (!enabled) return <>{children}</>;
+  // a row that mounted as new plays its entrance once; the class stays so a re-render can't cut it short
+  const enteredNew = useRef(motion === 'in').current;
+  const motionClass = motion === 'out' ? 'row-out' : enteredNew ? 'row-in' : '';
+  // a row on its way out can't be tapped, tabbed to or read out
+  const leaving = motion === 'out' ? { inert: true, 'aria-hidden': true } : {};
+  if (!enabled) return <div data-flip={flipKey} className={`relative ${motionClass}`} {...leaving}>{children}</div>;
 
   const reset = () => { drag.current = null; setDx(0); };
   const down = (e: React.PointerEvent) => {
@@ -224,7 +252,7 @@ function SwipeRow({ children, enabled, rightLabel, leftLabel, onRight, onLeft }:
   const armed = Math.abs(dx) >= SWIPE_COMMIT;
 
   return (
-    <div data-no-swipe className="relative rounded-xl overflow-hidden touch-pan-y sm:overflow-visible">
+    <div data-no-swipe data-flip={flipKey} className={`relative rounded-xl overflow-hidden touch-pan-y sm:overflow-visible ${motionClass}`} {...leaving}>
       {dx !== 0 && (
         <div
           className={`absolute inset-0 rounded-xl flex items-center px-4 text-[12px] font-bold ${
