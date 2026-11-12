@@ -9,8 +9,16 @@ const hideCompleted = (p: Page) => p.getByRole('button', { name: 'Hide completed
 // "No sugar" is a daily yes/no habit. The demo data may already have it done today, so make sure it is open first.
 const sugar = (p: Page) => p.locator('[data-no-swipe]:visible:not([inert])', { hasText: 'No sugar' }).first();
 async function ensureOpen(p: Page) {
-  if (await sugar(p).locator('button[aria-pressed="true"]').count()) await sugar(p).locator('button[aria-pressed]').click();
+  // tapping cycles done -> skipped -> open, so tap until the row is really open
+  for (let i = 0; i < 3; i++) {
+    const done = await sugar(p).locator('button[aria-pressed="true"]').count();
+    const skipped = /skipped/i.test(await sugar(p).innerText());
+    if (!done && !skipped) break;
+    await sugar(p).locator('button[aria-pressed]').click();
+    await p.waitForTimeout(150);
+  }
   await expect(sugar(p).locator('button[aria-pressed="false"]')).toBeVisible();
+  expect(await sugar(p).innerText()).not.toMatch(/skipped/i);
 }
 const tick = (p: Page) => sugar(p).locator('button[aria-pressed="false"]').click();
 
@@ -99,9 +107,10 @@ test.describe('reduce motion', () => {
     await openApp(page);
     await ensureOpen(page);
     await hideCompleted(page).click();
-    const before = await page.locator('[data-no-swipe]:visible').count();
+    await expect(sugar(page)).toBeVisible();
     await tick(page);
-    await expect(page.locator('[data-no-swipe]:visible')).toHaveCount(before - 1, { timeout: 400 });
+    // no exit animation: the row is gone straight away and no leaving ghost is ever left behind
+    await expect(page.locator('[data-no-swipe]', { hasText: 'No sugar' })).toHaveCount(0, { timeout: 400 });
     await expect(page.locator('.row-out')).toHaveCount(0);
   });
 });

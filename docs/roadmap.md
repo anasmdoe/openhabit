@@ -155,6 +155,10 @@ The per-habit mood link already lives in the Trend panel (needs 5 done and 5 mis
 2. **Lock screen and watch**: Android Quick Settings tile, lock-screen widget category, Wear OS app and complication; iPhone Home/Lock Screen widgets and an Apple Watch app with complications.
 3. **MCP server** (`mcp/`): AI assistants read and log habits with a personal API token.
 
+## Added in round 13
+
+1. **Smooth motion everywhere**: rows, numbers, charts, panels, tabs, theme and popups ease instead of jumping; respects Reduce motion. See [ui-motion.md](ui-motion.md).
+
 ## Next candidates, in order
 
 | # | Feature | Why | Size |
