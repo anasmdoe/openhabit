@@ -38,6 +38,12 @@ const PUSH_ENV = {
   PUSH_ENDPOINT_HOSTS: 'localhost',
 };
 
+// Email: the auth-service posts every message to a local receiver (filled in by main())
+const MAIL_ENV = {
+  MAIL_TRANSPORT: 'webhook', MAIL_WEBHOOK_URL: '', MAIL_FROM: 'OpenHabit <smoke@openhabit.test>',
+  OPENHABIT_TEST_CLOCK: '2026-10-18T19:00:00Z', // a Sunday evening: the weekly review is due (reminder-service reads it)
+};
+
 const SERVICES = {
   auth: 3911, habit: 3912, tracking: 3913, analytics: 3914, social: 3915, reminder: 3916,
   reminder2: 3917, // a second reminder-service replica: sends must still happen once
@@ -66,7 +72,7 @@ function start(name) {
     cwd: path.join(root, 'services', `${serviceDir(name)}-service`),
     env: {
       ...process.env, PORT: String(SERVICES[name]), DATABASE_URL: dbUrl(name), JWT_SECRET, TICK_MS: '300',
-      PUBLIC_URL: 'https://habits.smoke.test', ...PUSH_ENV,
+      PUBLIC_URL: 'https://habits.smoke.test', ...PUSH_ENV, ...MAIL_ENV,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -82,7 +88,7 @@ async function loadHandlers() {
   console.error = (...a) => { logs.lambda += `${a.join(' ')}\n`; origError(...a); };
   for (const name of Object.keys(SERVICES).filter((n) => n === serviceDir(n))) {
     Object.assign(process.env, {
-      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2', ...PUSH_ENV,
+      DATABASE_URL: dbUrl(name), JWT_SECRET, PUBLIC_URL: 'https://habits.smoke.test', PG_POOL_MAX: '2', ...PUSH_ENV, ...MAIL_ENV,
     });
     // SMOKE_LAMBDA_DIR=<dir> runs the unpacked deploy zips (<dir>/<svc>/src/lambda.js)
     const file = process.env.SMOKE_LAMBDA_DIR
@@ -93,9 +99,12 @@ async function loadHandlers() {
 }
 
 /** One request to a service, as an HTTP call or as an API Gateway v2 Lambda event. */
+// Through the gateway / API Gateway / Lambda the suite uses the versioned /api/v1 address; the
+// unversioned /api alias is checked separately.
+let prefix = '/api/v1';
 async function request(svc, method, url, headers = {}, body) {
   if (REMOTE) {
-    const res = await fetch(`${REMOTE}/api${url}`, { method, headers, body });
+    const res = await fetch(`${REMOTE}${prefix}${url}`, { method, headers, body });
     return { status: res.status, text: await res.text() };
   }
   if (!LAMBDA) {
@@ -105,10 +114,10 @@ async function request(svc, method, url, headers = {}, body) {
   const [rawPath, rawQueryString = ''] = url.split('?');
   const out = await handlers[serviceDir(svc)]({
     version: '2.0',
-    rawPath: `/api${rawPath}`,
+    rawPath: `${prefix}${rawPath}`,
     rawQueryString,
     headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])),
-    requestContext: { http: { method, path: `/api${rawPath}`, sourceIp: '203.0.113.7' } },
+    requestContext: { http: { method, path: `${prefix}${rawPath}`, sourceIp: '203.0.113.7' } },
     body,
     isBase64Encoded: false,
   });
@@ -202,6 +211,34 @@ async function main() {
   await new Promise((r) => pushService.listen(0, r));
   const pushBase = `http://localhost:${pushService.address().port}`;
 
+  // Catches outgoing email (verification and reset links).
+  const mails = [];
+  const mailServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => { mails.push(JSON.parse(body)); res.end('ok'); });
+  });
+  await new Promise((r) => mailServer.listen(0, r));
+  MAIL_ENV.MAIL_WEBHOOK_URL = `http://localhost:${mailServer.address().port}/mail`;
+  const mailsTo = (addr) => mails.filter((m) => m.to === addr);
+  const linkIn = (m, key) => decodeURIComponent((m?.text.match(new RegExp(`[?&]${key}=([\\w%-]+)`)) ?? [])[1] ?? '');
+
+  // Catches signed webhook deliveries.
+  const hooks = [];
+  const hookServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => { hooks.push({ headers: req.headers, body }); res.end('ok'); });
+  });
+  await new Promise((r) => hookServer.listen(0, r));
+  const hookUrl = `http://localhost:${hookServer.address().port}/hook`;
+  // what a receiver does (docs: README "Webhooks"), written independently of the service's own helper
+  const signatureOk = (secret, hook) => {
+    const parts = Object.fromEntries(hook.headers['x-openhabit-signature'].split(',').map((kv) => kv.split('=')));
+    const want = crypto.createHmac('sha256', secret).update(`${parts.t}.${hook.body}`).digest('hex');
+    return parts.v1 === want && Math.abs(Date.now() / 1000 - Number(parts.t)) < 300;
+  };
+
   let stopScheduler = () => {};
   if (REMOTE) {
     // nothing to start
@@ -232,6 +269,58 @@ async function main() {
   await call('auth', 'GET', '/auth/me', { token: T });
   await call('auth', 'POST', '/auth/tokens', { token: T, body: { name: 'nope' }, expect: [403] });
 
+  // ---- email verification and password reset --------------------------------
+  if (!REMOTE) {
+    const cfg = await call('auth', 'GET', '/auth/config');
+    check(cfg.mail === true, 'auth: config says email is available');
+    const eve = `eve-${tag}@smoke.test`;
+    const e = await call('auth', 'POST', '/auth/register', { body: { email: eve, password: 'smoke-password-1', name: 'Eve' } });
+    check(e.user?.emailVerified === false, 'auth: a new account starts unverified');
+    check(await waitFor(() => mailsTo(eve).length === 1), 'auth: registering sends one verification email');
+    const vtoken = linkIn(mailsTo(eve)[0], 'verify');
+    check(mailsTo(eve)[0]?.text.includes('https://habits.smoke.test/?verify=') && vtoken.length > 20, 'auth: the verification link points at PUBLIC_URL');
+    await call('auth', 'POST', '/auth/verify', { body: { token: 'not-a-real-token-not-a-real-token' }, expect: [400] });
+    await call('auth', 'POST', '/auth/verify', { body: { token: vtoken } });
+    check((await call('auth', 'GET', '/auth/me', { token: e.token })).emailVerified === true, 'auth: the link verifies the address');
+    await call('auth', 'POST', '/auth/verify', { body: { token: vtoken }, expect: [400] });
+    const again = await call('auth', 'POST', '/auth/verify/send', { token: e.token });
+    check(again.verified === true && mailsTo(eve).length === 1, 'auth: an already verified account is not emailed again');
+
+    await call('auth', 'POST', '/auth/forgot', { body: { email: `nobody-${tag}@smoke.test` } });
+    const before = mails.length;
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve } });
+    check(await waitFor(() => mails.length === before + 1), 'auth: forgot sends a reset email only to a real account');
+    check(!mails.some((m) => m.to.startsWith('nobody-')), 'auth: forgot for an unknown address sends nothing but still answers 200');
+    const rtoken = linkIn(mailsTo(eve).at(-1), 'reset');
+    check(mailsTo(eve).at(-1)?.subject.includes('Reset') && rtoken.length > 20, 'auth: the reset link is in the email');
+    await call('auth', 'POST', '/auth/reset', { body: { token: rtoken, password: 'short' }, expect: [400] });
+    await call('auth', 'POST', '/auth/reset', { body: { token: 'garbage-garbage-garbage-garbage', password: 'a-new-password-2' }, expect: [400] });
+    await call('auth', 'POST', '/auth/reset', { body: { token: rtoken, password: 'a-new-password-2' } });
+    await call('auth', 'POST', '/auth/login', { body: { email: eve, password: 'smoke-password-1' }, expect: [401] });
+    await call('auth', 'POST', '/auth/login', { body: { email: eve, password: 'a-new-password-2' } });
+    await call('auth', 'POST', '/auth/reset', { body: { token: rtoken, password: 'a-third-password-3' }, expect: [400] });
+    // a newer request voids the older link
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve } });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve } });
+    await waitFor(() => mailsTo(eve).filter((m) => m.subject.includes('Reset')).length === 3);
+    const [r1, r2] = mailsTo(eve).filter((m) => m.subject.includes('Reset')).slice(1).map((m) => linkIn(m, 'reset'));
+    await call('auth', 'POST', '/auth/reset', { body: { token: r1, password: 'a-fourth-password-4' }, expect: [400] });
+    await call('auth', 'POST', '/auth/reset', { body: { token: r2, password: 'a-fourth-password-4' } });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve }, expect: [429] });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve }, expect: [429] });
+    await call('auth', 'POST', '/auth/forgot', { body: { email: eve }, expect: [429] });
+    await call('auth', 'DELETE', '/auth/me', { token: (await call('auth', 'POST', '/auth/login', { body: { email: eve, password: 'a-fourth-password-4' } })).token, body: { password: 'a-fourth-password-4' }, expect: [200, 204] });
+  }
+
+  if (REMOTE || LAMBDA) {
+    // the unversioned alias keeps working and answers exactly like /api/v1
+    const viaV1 = await request('auth', 'GET', '/auth/me', { Authorization: `Bearer ${A}` });
+    prefix = '/api';
+    const viaAlias = await request('auth', 'GET', '/auth/me', { Authorization: `Bearer ${A}` });
+    prefix = '/api/v1';
+    check(viaV1.status === 200 && viaAlias.status === 200 && viaV1.text === viaAlias.text, 'api: /api/v1 and the /api alias answer identically');
+  }
+
   // ---- habits ------------------------------------------------------------
   const h1 = await call('habit', 'POST', '/habits', {
     token: A, body: { name: 'Read', activeDays: [0, 1, 2, 3, 4, 5, 6] },
@@ -257,6 +346,10 @@ async function main() {
   await call('tracking', 'DELETE', `/entries/${h2.id}/${today}`, { token: A });
   await call('tracking', 'PUT', '/wellness', { token: A, body: { date: today, mood: 4, sleepHours: 7.5 } });
   await call('tracking', 'GET', `/wellness?from=${daysAgo(30)}&to=${today}`, { token: A });
+  const wb = await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: [{ date: daysAgo(5), mood: 3, sleepHours: 7 }, { date: daysAgo(6), mood: 4 }, { date: daysAgo(7), sleepHours: 6.5 }] } });
+  check(wb.imported === 3, 'wellness: a whole history goes in with one bulk request');
+  await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: [{ date: daysAgo(5), mood: 9 }] }, expect: [400] });
+  await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: 'nope' }, expect: [400] });
   await call('tracking', 'PUT', '/entries', { token: B, body: { habitId: h1.id, date: today, value: 1 }, expect: [404] });
 
   // ---- analytics ---------------------------------------------------------
@@ -264,7 +357,60 @@ async function main() {
   await call('analytics', 'GET', '/analytics/overview', { token: T });
   await call('analytics', 'GET', `/analytics/habits/${h1.id}`, { token: A });
   await call('analytics', 'GET', `/analytics/habits/${h2.id}`, { token: A });
-  await call('analytics', 'GET', '/analytics/insights', { token: A });
+  const ins = await call('analytics', 'GET', '/analytics/insights', { token: A });
+  check(Number.isInteger(ins.moodDays) && ins.moodDays >= 1, `analytics: insights report how many days have a mood (${ins.moodDays})`);
+
+  // ---- signed webhooks ---------------------------------------------------
+  if (!REMOTE) {
+    const sec = await call('auth', 'GET', '/auth/webhook-secret', { token: A });
+    check(/^whsec_[\w-]{40,}$/.test(sec.secret || '') && sec.version === 1, 'webhooks: the user has a signing secret');
+    await call('auth', 'GET', '/auth/webhook-secret', { token: T, expect: [403] });
+    const wh = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Signed', webhookUrl: hookUrl } });
+    await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: wh.id, date: today, value: 1 } });
+    check(await waitFor(() => hooks.length === 1), 'webhooks: completing the habit sends one delivery');
+    const d1 = hooks[0];
+    const payload = JSON.parse(d1.body);
+    check(payload.event === 'habit.completed' && payload.habit === 'Signed' && payload.id === d1.headers['x-openhabit-delivery']
+      && d1.headers['x-openhabit-event'] === 'habit.completed', 'webhooks: headers and body identify the event and delivery');
+    check(signatureOk(sec.secret, d1), 'webhooks: the signature verifies with the user\'s secret');
+    check(!signatureOk(sec.secret, { ...d1, body: d1.body.replace('Signed', 'Forged') }), 'webhooks: a tampered body fails verification');
+    const rot = await call('auth', 'POST', '/auth/webhook-secret/rotate', { token: A });
+    check(rot.version === 2 && rot.secret !== sec.secret, 'webhooks: rotating issues a new secret');
+    await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: wh.id, date: daysAgo(1), value: 1 } });
+    check(await waitFor(() => hooks.length === 2), 'webhooks: a second delivery arrives');
+    check(signatureOk(rot.secret, hooks[1]) && !signatureOk(sec.secret, hooks[1]), 'webhooks: after rotation only the new secret verifies');
+  }
+
+  // ---- weekly review ------------------------------------------------------------
+  {
+    const wr = `wr-${tag}@smoke.test`;
+    const w = await call('auth', 'POST', '/auth/register', { body: { email: wr, password: 'smoke-password-1', name: 'Wren' } });
+    const W = w.token;
+    await call('auth', 'PUT', '/auth/me', { token: W, body: { weeklyReview: 'yes' }, expect: [400] });
+    const me0 = await call('auth', 'GET', '/auth/me', { token: W });
+    check(me0.weeklyReview === false, 'weekly review: off until the user opts in');
+    const wh = await call('habit', 'POST', '/habits', { token: W, body: { name: 'Digest habit', activeDays: [0, 1, 2, 3, 4, 5, 6] } });
+    // Mon 12 .. Sat 17 Oct 2026 done except Wednesday (a streak freeze covers it); Sunday 18th is "today"
+    await call('tracking', 'POST', '/entries/bulk', { token: W, body: { entries: ['2026-10-12', '2026-10-13', '2026-10-15', '2026-10-16', '2026-10-17'].map((date) => ({ habitId: wh.id, date, value: 1 })) } });
+    const prev = await call('analytics', 'GET', '/analytics/weekly-review?week=2026-10-14&today=2026-10-18', { token: W });
+    check(prev.weekStart === '2026-10-12' && prev.overall.goal === 6 && prev.overall.done === 5 && prev.overall.pct === 83 && prev.freezesUsed === 1
+      && prev.streak?.length === 5 && /Digest habit/.test(prev.message.text), `weekly review: the preview digest is right (${prev.overall?.pct}%, streak ${prev.streak?.length}, freezes ${prev.freezesUsed})`);
+    await call('analytics', 'GET', '/analytics/weekly-review?week=nonsense', { token: W, expect: [400] });
+    // opt in, with an ntfy topic and email: the Sunday tick sends exactly one digest to each, however many replicas run
+    await call('auth', 'PUT', '/auth/me', { token: W, body: { weeklyReview: true, ntfyUrl: `${ntfyUrl}-review`, timezone: 'UTC' } });
+    if (!REMOTE) {
+      check(await waitFor(() => pushes.some((p) => p.title?.startsWith('Your week') && p.body.includes('Digest')) , 12000) || await waitFor(() => pushes.some((p) => p.title?.startsWith('Your week')), 6000),
+        'weekly review: the Sunday digest reaches the ntfy topic');
+      check(await waitFor(() => mailsTo(wr).some((m) => m.subject.startsWith('Your week')), 8000), 'weekly review: and the email');
+      await sleep(1500); // give a second replica time to (not) send it again
+      check(pushes.filter((p) => p.title?.startsWith('Your week')).length === 1 && mailsTo(wr).filter((m) => m.subject.startsWith('Your week')).length === 1,
+        'weekly review: sent exactly once across replicas');
+      const m = mailsTo(wr).find((x) => x.subject.startsWith('Your week'));
+      check(/83%/.test(m?.text ?? '') && /streak freeze saved a day/.test(m?.text ?? '') && /Longest run: Digest habit, 5 days/.test(m?.text ?? ''),
+        'weekly review: the email reports the week, the freeze and the streak');
+    }
+    await call('auth', 'PUT', '/auth/me', { token: W, body: { weeklyReview: false } });
+  }
 
   // ---- categories, quit habits, pause --------------------------------------
   const quitH = await call('habit', 'POST', '/habits', {
@@ -272,7 +418,130 @@ async function main() {
   });
   check(quitH.kind === 'quit' && quitH.category === 'Health', 'habits: quit habit with a trimmed category');
   await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', kind: 'quit', type: 'numeric' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', savingsPerDay: -1 }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', savingsUnit: 'x'.repeat(13) }, expect: [400] });
+  const saved = await call('habit', 'PUT', `/habits/${quitH.id}`, { token: A, body: { savingsPerDay: 7.5, savingsUnit: ' $ ' } });
+  check(saved.savingsPerDay === 7.5 && saved.savingsUnit === '$', 'habits: clean-day savings are stored and trimmed');
+  const qa = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
+  check(qa.habit.savingsPerDay === 7.5 && qa.habit.kind === 'quit' && qa.habit.reminderTime !== undefined, 'analytics: habit detail carries kind, reminders and savings');
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', reminderTime: '08:00,09:00,10:00,11:00' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', reminderTime: '08:00,08:00' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', cue: 'x'.repeat(121) }, expect: [400] });
   await call('habit', 'PUT', `/habits/${quitH.id}`, { token: A, body: { type: 'numeric' }, expect: [400] });
+
+  // ---- calendar feed (iCal) ------------------------------------------------
+  const fu = await call('habit', 'GET', '/habits/feed-url', { token: A });
+  check(/^u=[0-9a-f-]{36}&k=[\w-]{32}$/.test(fu.query || ''), 'calendar: feed-url returns a user id and key');
+  await call('habit', 'GET', '/habits/feed-url', { expect: [401] });
+  const ics = await call('habit', 'GET', `/habits/feed.ics?${fu.query}`);
+  check(typeof ics === 'string' && ics.startsWith('BEGIN:VCALENDAR') && ics.includes('SUMMARY:Read') && ics.includes('RRULE:'),
+    'calendar: the feed is an iCal file with recurring habits');
+  check(typeof ics === 'string' && !ics.includes('SUMMARY:Smoking'), 'calendar: quit habits are left out of the feed');
+  await call('habit', 'GET', `/habits/feed.ics?${fu.query.replace(/.$/, (c) => (c === 'a' ? 'b' : 'a'))}`, { expect: [404] });
+  await call('habit', 'GET', '/habits/feed.ics', { expect: [404] });
+  // ---- streak protection (freezes) -----------------------------------------
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', streakFreezes: 4 }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad', streakFreezes: 1.5 }, expect: [400] });
+  const fz = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Frozen', activeDays: [0, 1, 2, 3, 4, 5, 6] } });
+  check(fz.streakFreezes === 1, 'habits: streak protection defaults to one freeze a month');
+  const fz0 = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Unprotected', activeDays: [0, 1, 2, 3, 4, 5, 6], streakFreezes: 0 } });
+  for (const h of [fz, fz0]) {
+    // done today, yesterday, the day before, then missed three days ago, done for three days before that
+    await call('tracking', 'POST', '/entries/bulk', { token: A, body: { entries: [0, 1, 2, 4, 5, 6].map((n) => ({ habitId: h.id, date: daysAgo(n), value: 1 })) } });
+  }
+  const fzd = await call('analytics', 'GET', `/analytics/habits/${fz.id}`, { token: A });
+  check(fzd.currentStreak === 6 && JSON.stringify(fzd.frozenDates) === JSON.stringify([daysAgo(3)]),
+    `analytics: an isolated miss is frozen and the streak survives (streak ${fzd.currentStreak}, frozen ${fzd.frozenDates})`);
+  check([0, 1].includes(fzd.freezesLeft), 'analytics: the detail reports the freezes left');
+  const fz0d = await call('analytics', 'GET', `/analytics/habits/${fz0.id}`, { token: A });
+  check(fz0d.currentStreak === 3 && fz0d.frozenDates.length === 0, `analytics: protection off means the miss ends the streak (streak ${fz0d.currentStreak})`);
+  const ov = await call('analytics', 'GET', '/analytics/overview', { token: A });
+  check(Array.isArray(ov.habits), 'analytics: overview still loads with protected habits');
+
+  // ---- habit stacking ----------------------------------------------------------
+  const stA = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stack anchor' } });
+  const stB = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Stack follower', afterHabitId: stA.id } });
+  check(stB.afterHabitId === stA.id, 'stacking: a habit can come after another');
+  await call('habit', 'PUT', `/habits/${stA.id}`, { token: A, body: { afterHabitId: stA.id }, expect: [400] });
+  await call('habit', 'PUT', `/habits/${stA.id}`, { token: A, body: { afterHabitId: stB.id }, expect: [400] });
+  await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: quitH.id }, expect: [400] });
+  const foreign = await call('habit', 'POST', '/habits', { token: B, body: { name: 'Not yours' } });
+  await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: foreign.id }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Quit stacked', kind: 'quit', afterHabitId: stA.id }, expect: [400] });
+  const un = await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: null } });
+  check(un.afterHabitId === null, 'stacking: unstacking clears it');
+  await call('habit', 'PUT', `/habits/${stB.id}`, { token: A, body: { afterHabitId: stA.id } });
+  await call('habit', 'DELETE', `/habits/${stA.id}`, { token: A });
+  const stB2 = await call('habit', 'GET', `/habits/${stB.id}`, { token: A });
+  check(stB2.afterHabitId === null, 'stacking: deleting the anchor un-stacks the follower');
+
+  // ---- automatic completion from health data -----------------------------------
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad metric', autoMetric: 'heartbeats' }, expect: [400] });
+  await call('habit', 'POST', '/habits', { token: A, body: { name: 'Bad quit', kind: 'quit', autoMetric: 'steps' }, expect: [400] });
+  const hSteps = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Walk 8k', autoMetric: 'steps', autoThreshold: 8000 } });
+  check(hSteps.autoMetric === 'steps' && hSteps.autoThreshold === 8000, 'health: a habit can complete itself from steps');
+  const hEx = await call('habit', 'POST', '/habits', { token: A, body: { name: 'Exercise', type: 'numeric', unit: 'min', target: 30, autoMetric: 'exercise_minutes' } });
+  await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: hSteps.id, date: daysAgo(2), value: -1 } }); // skipped by hand
+  await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: hEx.id, date: daysAgo(1), value: 50 } }); // logged by hand, more than the watch saw
+  await call('tracking', 'PUT', '/wellness', { token: A, body: { date: daysAgo(1), sleepHours: 8 } });
+  const hs = await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [
+    { date: daysAgo(0), metrics: { steps: 9500, exercise_minutes: 25.5 } },
+    { date: daysAgo(1), metrics: { steps: 4000, exercise_minutes: 35, sleep_hours: 6.2 } },
+    { date: daysAgo(2), metrics: { steps: 12000, sleep_hours: 7.25 } },
+  ] } });
+  const got = (id, d) => hs.applied.find((x) => x.habitId === id && x.date === d)?.value;
+  check(got(hSteps.id, daysAgo(0)) === 1 && got(hSteps.id, daysAgo(1)) === undefined,
+    'health: a yes/no habit is done only on days the steps reach the threshold');
+  check(got(hSteps.id, daysAgo(2)) === undefined, 'health: a day skipped by hand stays skipped');
+  check(got(hEx.id, daysAgo(0)) === 25.5 && got(hEx.id, daysAgo(1)) === undefined, 'health: a measurable habit takes the minutes, and a bigger manual value stays');
+  const hw = await call('tracking', 'GET', `/wellness?from=${daysAgo(2)}&to=${daysAgo(1)}`, { token: A });
+  check(hw.find((w) => w.date === daysAgo(1))?.sleepHours === 8 && hw.find((w) => w.date === daysAgo(2))?.sleepHours === 7.3,
+    'health: sleep fills empty days and never replaces what was logged by hand');
+  const hs2 = await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [{ date: daysAgo(0), metrics: { steps: 9600, exercise_minutes: 40 } }, { date: daysAgo(0), metrics: { exercise_minutes: 41 } }] } });
+  check(hs2.applied.length === 1 && hs2.applied[0].value === 41, 'health: a re-sync only raises values, and a day sent twice is one write');
+  await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [{ date: daysAgo(-5), metrics: { steps: 1 } }] }, expect: [400] });
+  await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [{ date: daysAgo(0), metrics: { steps: -3 } }] }, expect: [400] });
+  await call('tracking', 'POST', '/wellness/health-sync', { token: A, body: { days: [] }, expect: [400] });
+  await call('habit', 'DELETE', `/habits/${hSteps.id}`, { token: A });
+  await call('habit', 'DELETE', `/habits/${hEx.id}`, { token: A });
+
+  // ---- goals with deadlines ----------------------------------------------------
+  const goalBody = { habitId: fz.id, title: 'Thirty clean days', target: 30, unit: 'days', startDate: daysAgo(10), deadline: daysAgo(-20) };
+  await call('habit', 'POST', '/habits/goals', { token: A, body: { ...goalBody, deadline: daysAgo(11) }, expect: [400] });
+  await call('habit', 'POST', '/habits/goals', { token: A, body: { ...goalBody, target: 0 }, expect: [400] });
+  await call('habit', 'POST', '/habits/goals', { token: A, body: { ...goalBody, habitId: foreign.id }, expect: [400, 404] });
+  const goal = await call('habit', 'POST', '/habits/goals', { token: A, body: goalBody });
+  check(goal.id && goal.title === 'Thirty clean days', 'goals: created');
+  await call('habit', 'PUT', `/habits/goals/${goal.id}`, { token: B, body: { title: 'mine now' }, expect: [404] });
+  const gl = await call('analytics', 'GET', `/analytics/goals?today=${daysAgo(0)}`, { token: A });
+  const gp = gl.find((x) => x.id === goal.id);
+  check(gp && gp.measure === 'days' && gp.current === 6 && gp.target === 30 && gp.habit.name === 'Frozen',
+    `goals: progress counts the completed days (current ${gp?.current}, ${gp?.status})`);
+  check(['ahead', 'on_track', 'behind'].includes(gp?.status) && gp.daysLeft === 21 && gp.needPerDay > 0 && /\S/.test(gp.message),
+    `goals: pace and days left are worked out (${gp?.status}, ${gp?.daysLeft} days left, need ${gp?.needPerDay}/day)`);
+  const gdone = await call('habit', 'PUT', `/habits/goals/${goal.id}`, { token: A, body: { completed: true } });
+  check(gdone.completedAt, 'goals: can be marked done by hand');
+  const gl2 = await call('analytics', 'GET', `/analytics/goals?today=${daysAgo(0)}`, { token: A });
+  check(gl2.find((x) => x.id === goal.id)?.status === 'done', 'goals: a goal marked done reports done');
+  check((await call('analytics', 'GET', '/analytics/goals', { token: B })).length === 0, 'goals: another user sees none of them');
+  await call('habit', 'DELETE', `/habits/goals/${goal.id}`, { token: A });
+  await call('analytics', 'GET', '/analytics/goals?today=nope', { token: A, expect: [400] });
+
+  // ---- today (widget) and correlations -------------------------------------------
+  const td = await call('analytics', 'GET', `/analytics/today?today=${daysAgo(0)}`, { token: A });
+  const tf = td.habits.find((x) => x.id === fz.id);
+  check(tf && tf.completed === true && tf.streak === 6 && td.done >= 1 && td.total === td.habits.length && !td.habits.some((x) => x.id === quitH.id),
+    `today: lists due habits with state and streak, and leaves quit habits out (${td.done}/${td.total})`);
+  await call('analytics', 'GET', '/analytics/today?today=nope', { token: A, expect: [400] });
+  const cr = await call('analytics', 'GET', `/analytics/correlations?today=${daysAgo(0)}`, { token: A });
+  check(Array.isArray(cr.found) && cr.found.length === 0 && cr.needed.minGroup === 8,
+    'patterns: with a week of data nothing is claimed, and it says what is needed');
+  await call('tracking', 'POST', '/wellness/bulk', { token: A, body: { days: Array.from({ length: 60 }, (_, i) => ({ date: daysAgo(i + 1), sleepHours: i % 2 ? 7.9 : 6.9 })) } });
+  await call('tracking', 'POST', '/entries/bulk', { token: A, body: { entries: Array.from({ length: 60 }, (_, i) => ({ habitId: fz0.id, date: daysAgo(i + 1), value: i % 2 ? 1 : 0 })).filter((e) => e.value === 1) } });
+  const cr2 = await call('analytics', 'GET', `/analytics/correlations?today=${daysAgo(0)}`, { token: A });
+  const sl = cr2.found.find((x) => x.kind === 'sleep' && x.habitId === fz0.id);
+  check(sl && /sleep (5\d|6\d) minutes longer/.test(sl.text), `patterns: finds longer sleep on days a habit is done (${sl?.text})`);
+
   await call('tracking', 'PUT', '/entries', { token: A, body: { habitId: quitH.id, date: daysAgo(2), value: 1 } });
   const qd = await call('analytics', 'GET', `/analytics/habits/${quitH.id}`, { token: A });
   check(qd.currentStreak === 2 && qd.history.reduce((n, m) => n + m.completions, 0) === 1,
@@ -322,6 +591,15 @@ async function main() {
     check(pushesFor('Stretch').length === 1,
       `reminder: exactly one push across ${LAMBDA ? 'duplicate scheduler deliveries' : '2 replicas'} (got ${pushesFor('Stretch').length})`);
     check(pushesFor('Smoking').length === 0, 'reminder: quit habits are never nagged');
+
+    // several reminder times: one push per time slot (not per replica), with the cue in the text
+    await call('habit', 'POST', '/habits', {
+      token: A, body: { name: 'Hydrate', cue: 'After coffee, at my desk', reminderTime: `${hhmm(-2)},${hhmm()}` },
+    });
+    check(await waitFor(() => pushesFor('Hydrate').length >= 2), 'reminder: a habit with two times is pushed twice');
+    await sleep(1500);
+    check(pushesFor('Hydrate').length === 2 && pushesFor('Hydrate').every((p) => p.body.includes('After coffee, at my desk')),
+      `reminder: exactly one push per time slot, each with the cue (got ${pushesFor('Hydrate').length})`);
 
     // Buttons: signed links (Done, Snooze 30 min) plus Open; the ntfy app POSTs them.
     const push = pushesFor('Stretch')[0] ?? { actions: '' };
@@ -404,7 +682,10 @@ async function main() {
     const ticks = metric('openhabit_reminder_ticks_total');
     const tickErrors = metric('openhabit_reminder_tick_errors_total');
     if (LAMBDA) check(schedulerErrors === 0, `reminder: scheduled invocations without errors (errors=${schedulerErrors})`);
-    else check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
+    else {
+      check(ticks > 0 && tickErrors === 0, `reminder: ticks=${ticks} errors=${tickErrors}`);
+      if (tickErrors) console.log(`  reminder log: ${(logs.reminder.match(/.*tick failed.*/g) || []).slice(0, 3).join(' | ')}`);
+    }
     check(metric('openhabit_reminder_snoozes_total') === 1, 'reminder: snooze counted in metrics');
   }
 
@@ -419,6 +700,8 @@ async function main() {
 
   stopScheduler();
   ntfy.close();
+  hookServer.close();
+  mailServer.close();
   pushService.close();
 }
 

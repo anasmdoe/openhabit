@@ -1,0 +1,107 @@
+# XcodeGen spec: `brew install xcodegen && xcodegen generate` writes OpenHabit.xcodeproj (not committed).
+name: OpenHabit
+options:
+  bundleIdPrefix: app.openhabit
+  deploymentTarget:
+    iOS: "17.0"
+    watchOS: "10.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""   # set your team in Xcode to run on a device
+
+targets:
+  OpenHabit:
+    type: application
+    platform: iOS
+    sources: [App, Shared, UIShared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.openhabit.ios
+        TARGETED_DEVICE_FAMILY: "1"
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: OpenHabit
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: App/OpenHabit.entitlements
+      properties:
+        com.apple.security.application-groups: [group.app.openhabit]
+    dependencies:
+      - target: OpenHabitWidgets
+
+  OpenHabitWidgets:
+    type: app-extension
+    platform: iOS
+    sources: [Widgets, WidgetShared, Shared, UIShared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.openhabit.ios.widgets
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: OpenHabit
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/OpenHabitWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.app.openhabit]
+
+  OpenHabitWatch:
+    type: application
+    platform: watchOS
+    sources: [Watch, Shared, UIShared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.openhabit.ios.watchkitapp
+    info:
+      path: Watch/Info.plist
+      properties:
+        CFBundleDisplayName: OpenHabit
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: app.openhabit.ios
+        WKRunsIndependentlyOfCompanionApp: true
+    entitlements:
+      path: Watch/OpenHabitWatch.entitlements
+      properties:
+        com.apple.security.application-groups: [group.app.openhabit]
+    dependencies:
+      - target: OpenHabitWatchWidgets
+
+  OpenHabitWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    sources: [WatchWidgets, WidgetShared, Shared, UIShared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.openhabit.ios.watchkitapp.widgets
+    info:
+      path: WatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: OpenHabit
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: WatchWidgets/OpenHabitWatchWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.app.openhabit]
+
+schemes:
+  OpenHabit:
+    build:
+      targets:
+        OpenHabit: all
+        OpenHabitWidgets: all
+  OpenHabitWatch:
+    build:
+      targets:
+        OpenHabitWatch: all
+        OpenHabitWatchWidgets: all

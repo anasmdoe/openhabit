@@ -28,7 +28,8 @@ resource "aws_apigatewayv2_integration" "svc" {
 
 locals {
   routes = merge([
-    for svc, paths in local.services : { for path in paths : "ANY ${path}" => svc }
+    # every route is served under /api (current) and /api/v1 (the stable, versioned address)
+    for svc, paths in local.services : { for path in concat(paths, [for p in paths : "/api/v1/${trimprefix(p, "/api/")}"]) : "ANY ${path}" => svc }
   ]...)
 }
 

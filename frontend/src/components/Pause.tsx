@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useApp, today } from '../store';
 import { HabitIcon } from '../lib/icons';
 import { addDays, fromISO } from '../lib/stats';
+import { useModalOpen } from '../lib/modal';
+import { usePresence } from '../lib/motion';
 
 const MAX_DAYS = 60;
 
@@ -9,7 +11,7 @@ const MAX_DAYS = 60;
 // as skipped (excused), so goals shrink and streaks survive. Undo any single
 // day by tapping it in the grid.
 export function PauseModal() {
-  const { pauseOpen, setPauseOpen, habits, pauseHabits } = useApp();
+  const { pauseOpen, setPauseOpen, habits, pauseHabits, pausePreset } = useApp();
   const t = today();
   const [from, setFrom] = useState(t);
   const [to, setTo] = useState(addDays(t, 6));
@@ -17,9 +19,15 @@ export function PauseModal() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
 
-  if (!pauseOpen) return null;
+  // opened from one habit's window: start with just that habit ticked
+  React.useEffect(() => { if (pauseOpen) setPicked(pausePreset ? new Set(pausePreset) : null); }, [pauseOpen, pausePreset]);
+  const present = usePresence(pauseOpen);
+  useModalOpen(pauseOpen, () => setPauseOpen(false));
+  // the form resets once the dialog has finished leaving, so it never flashes back while fading out
+  React.useEffect(() => { if (!present.show) { setDone(null); setPicked(null); } }, [present.show]);
+  if (!present.show) return null;
 
-  const close = () => { setPauseOpen(false); setDone(null); setPicked(null); };
+  const close = () => setPauseOpen(false);
   const selected = picked ?? new Set(habits.map((h) => h.id));
   const days = from && to && to >= from
     ? Math.round((fromISO(to).getTime() - fromISO(from).getTime()) / 86400000) + 1 : 0;
@@ -43,8 +51,8 @@ export function PauseModal() {
   };
 
   return (
-    <div className="backdrop grid place-items-center p-4" onClick={close} role="dialog" aria-modal="true" aria-label="Take a break">
-      <div className="panel w-full max-w-md max-h-[90vh] overflow-y-auto thin-scroll sheet-in" onClick={(e) => e.stopPropagation()}>
+    <div className="backdrop grid place-items-center p-4" data-closing={present.closing || undefined} onClick={close} role="dialog" aria-modal="true" aria-label="Take a break">
+      <div className="panel w-full max-w-md modal-scroll thin-scroll sheet-in" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           Take a break
           <button onClick={close} className="normal-case font-semibold hover:text-mint" aria-label="Close">✕</button>
@@ -111,7 +119,7 @@ export function PauseModal() {
               </div>
             </div>
             <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
-              <span className={`text-[11px] ${days > MAX_DAYS ? 'text-amber-400' : 'text-ink-soft'}`}>
+              <span className={`text-[11px] ${days > MAX_DAYS ? 'text-warn' : 'text-ink-soft'}`}>
                 {days > MAX_DAYS ? `At most ${MAX_DAYS} days at a time`
                   : days > 0 ? `${selected.size} habit${selected.size === 1 ? '' : 's'} × ${days} day${days === 1 ? '' : 's'}`
                   : 'Pick an end date after the start'}

@@ -26,6 +26,33 @@ data "aws_subnets" "default" {
   }
 }
 
+# Not every AZ offers every instance type (t3.micro is missing from us-east-1e),
+# so the NAT instance goes into a default subnet whose AZ does.
+data "aws_ec2_instance_type_offerings" "nat" {
+  count         = var.create_database && var.nat_mode != "none" ? 1 : 0
+  location_type = "availability-zone"
+  filter {
+    name   = "instance-type"
+    values = ["t3.micro"]
+  }
+}
+
+data "aws_subnets" "nat" {
+  count = var.create_database && var.nat_mode != "none" ? 1 : 0
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default[0].id]
+  }
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
+  filter {
+    name   = "availability-zone"
+    values = data.aws_ec2_instance_type_offerings.nat[0].locations
+  }
+}
+
 resource "aws_security_group" "lambda" {
   count       = var.create_database ? 1 : 0
   name        = "${var.name}-lambda"
@@ -75,7 +102,7 @@ resource "aws_db_subnet_group" "db" {
 }
 
 resource "aws_db_instance" "db" {
-  count = var.create_database ? 1 : 0
+  count = var.create_database && var.db_engine == "rds" ? 1 : 0
 
   identifier              = "${var.name}-db"
   engine                  = "postgres"
@@ -101,6 +128,57 @@ resource "aws_db_instance" "db" {
       error_message = "create_database needs db_admin_password (16+ characters)."
     }
   }
+}
+
+# ---- Aurora PostgreSQL Serverless v2 (db_engine = "aurora-serverless") --------------
+# Scales to zero capacity after aurora_pause_after_seconds without connections, so an idle
+# deployment costs only storage (about $0.10 per GB-month). The first request after a pause waits
+# ~15 s while the database resumes: Lambda timeouts of 30 s absorb that, the 10 s sandbox limit does
+# not (the request fails once and the retry works).
+
+locals {
+  aurora = var.create_database && var.db_engine == "aurora-serverless"
+}
+
+resource "aws_rds_cluster" "aurora" {
+  count = local.aurora ? 1 : 0
+
+  cluster_identifier      = "${var.name}-aurora"
+  engine                  = "aurora-postgresql"
+  engine_version          = "16"
+  database_name           = var.db_name
+  master_username         = "openhabit_admin"
+  master_password         = var.db_admin_password
+  db_subnet_group_name    = aws_db_subnet_group.db[0].name
+  vpc_security_group_ids  = [aws_security_group.db[0].id]
+  storage_encrypted       = true
+  backup_retention_period = 1 # Aurora's minimum
+  skip_final_snapshot     = true
+  deletion_protection     = false
+  apply_immediately       = true
+
+  serverlessv2_scaling_configuration {
+    min_capacity             = 0
+    max_capacity             = var.aurora_max_acu
+    seconds_until_auto_pause = var.aurora_pause_after_seconds
+  }
+
+  lifecycle {
+    precondition {
+      condition     = length(var.db_admin_password) >= 16
+      error_message = "create_database needs db_admin_password (16+ characters)."
+    }
+  }
+}
+
+resource "aws_rds_cluster_instance" "aurora" {
+  count = local.aurora ? 1 : 0
+
+  identifier         = "${var.name}-aurora-1"
+  cluster_identifier = aws_rds_cluster.aurora[0].id
+  engine             = aws_rds_cluster.aurora[0].engine
+  engine_version     = aws_rds_cluster.aurora[0].engine_version
+  instance_class     = "db.serverless"
 }
 
 # ---- optional internet egress (nat_mode) -----------------------------------------
@@ -165,7 +243,7 @@ resource "aws_instance" "nat" {
   count                       = local.nat && var.nat_mode == "instance" ? 1 : 0
   ami                         = data.aws_ssm_parameter.al2023[0].value
   instance_type               = "t3.micro"
-  subnet_id                   = data.aws_subnets.default[0].ids[0]
+  subnet_id                   = concat(data.aws_subnets.nat[0].ids, data.aws_subnets.default[0].ids)[0]
   vpc_security_group_ids      = [aws_security_group.nat[0].id]
   associate_public_ip_address = true
   source_dest_check           = false
@@ -265,7 +343,9 @@ resource "aws_lambda_function" "migrate" {
   }
 
   environment {
-    variables = merge(local.common_env, {
+    variables = var.use_secrets_manager ? merge(local.common_env, {
+      SECRETS_ARN = aws_secretsmanager_secret.app[0].arn
+      }) : merge(local.common_env, {
       ADMIN_DATABASE_URL    = local.admin_url
       AUTH_DB_PASSWORD      = var.db_passwords["auth"]
       HABIT_DB_PASSWORD     = var.db_passwords["habit"]
@@ -276,7 +356,7 @@ resource "aws_lambda_function" "migrate" {
     })
   }
 
-  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed]
+  depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.lambda_logs, aws_iam_role_policy.lambda_vpc, aws_iam_role_policy_attachment.lambda_managed, aws_iam_role_policy.lambda_secrets, aws_iam_role_policy_attachment.lambda_secrets_managed]
 }
 
 resource "aws_lambda_invocation" "migrate" {
@@ -288,7 +368,8 @@ resource "aws_lambda_invocation" "migrate" {
   triggers = {
     code      = aws_lambda_function.migrate.source_code_hash
     passwords = sha256(jsonencode(var.db_passwords))
+    secrets   = var.use_secrets_manager ? aws_secretsmanager_secret_version.app[0].version_id : ""
   }
 
-  depends_on = [aws_db_instance.db]
+  depends_on = [aws_db_instance.db, aws_rds_cluster_instance.aurora]
 }

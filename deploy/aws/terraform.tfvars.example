@@ -32,3 +32,8 @@ db_name = "openhabit"
 #   client_secret = "xxxxxxxx"
 #   provider_name = "Cognito"
 # }
+
+# KodeKloud playground: a Lambda function that is invoked more than 300 times in an hour is flagged and
+# deleted by the lab's compliance sweep. Keep test runs small (one smoke test is about 45 calls to the
+# busiest function, tracking) and avoid scripts that make one request per day of history (use /wellness/bulk).
+# function_names = { tracking = "openhabit-entries" }   # only if an account's policies reject a particular name

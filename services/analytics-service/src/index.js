@@ -2,6 +2,10 @@ import express from 'express';
 import pg from 'pg';
 import { metricsMiddleware, metricsHandler } from './metrics.js';
 import crypto from 'node:crypto';
+import { freezeDays, freezesEnabled } from './streaks.js';
+import { buildDigest, defaultWeek, digestMessage } from './digest.js';
+import { goalProgress } from './goals.js';
+import { correlations, dataNeeded } from './correlations.js';
 
 const PORT = process.env.PORT || 3003;
 const pool = new pg.Pool({
@@ -116,7 +120,7 @@ async function loadHabits(userId) {
     `SELECT h.id, h.name, h.question, h.type, h.unit, h.target::float AS target,
             h.target_type AS "targetType", h.color, h.icon,
             h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays",
-            h.position, h.kind,
+            h.position, h.kind, h.streak_freezes AS "streakFreezes", h.after_habit_id AS "afterHabitId",
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
      FROM habits h
      LEFT JOIN entries e ON e.habit_id = h.id
@@ -176,6 +180,21 @@ function quickStreak(habit, valById) {
       if (streak > 60) break;
     }
     return streak;
+  }
+  if (freezesEnabled(habit)) {
+    const from = addDays(today, -399);
+    const valueAt = (day) => valById.get(day);
+    const { frozen } = freezeDays(habit, valueAt, from, today);
+    let run = 0;
+    for (let day = from; day <= today; day = addDays(day, 1)) {
+      if (day < habit.createdDate || !habit.activeDays.includes(dow(day))) continue;
+      const v = valueAt(day);
+      if (isSkip(v)) continue;
+      if (isCompleted(habit, v)) run += 1;
+      else if (day === today || frozen.has(day)) continue;
+      else run = 0;
+    }
+    return run;
   }
   let streak = 0;
   let d = today;
@@ -390,13 +409,133 @@ app.get('/analytics/overview', asyncH(async (req, res) => {
 }));
 
 // ==========================================================================
+// GET /analytics/weekly-review[?week=YYYY-MM-DD][&today=YYYY-MM-DD]
+// The same digest the Sunday notification sends, for the in-app preview. `week` is any date in
+// the week to review (default: the week that is ending on a Sunday, else the last complete week);
+// `today` is the caller's local date (default: the server's UTC date).
+// ==========================================================================
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+app.get('/analytics/weekly-review', asyncH(async (req, res) => {
+  const today = req.query.today ?? todayISO();
+  if (!DATE_RE.test(today) || (req.query.week !== undefined && !DATE_RE.test(String(req.query.week)))) {
+    return res.status(400).json({ error: 'week and today must be YYYY-MM-DD' });
+  }
+  const week = req.query.week ? addDays(String(req.query.week), -((dow(String(req.query.week)) + 6) % 7)) : defaultWeek(today);
+  const habits = await loadHabits(req.userId);
+  const byHabit = await loadEntries(req.userId, addDays(week, -130), today);
+  const digest = buildDigest({ habits, valuesByHabit: byHabit, weekStart: week, today });
+  const { subject, text } = digestMessage(digest);
+  res.json({ ...digest, message: { subject, text } });
+}));
+
+// ==========================================================================
+// GET /analytics/today[?today=YYYY-MM-DD]
+// The habits due on the caller's local date, each with its state: one cheap call for the Android
+// home-screen widget (or any small client) instead of fetching habits, entries and streaks separately.
+// ==========================================================================
+app.get('/analytics/today', asyncH(async (req, res) => {
+  const today = req.query.today ?? todayISO();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) return res.status(400).json({ error: 'today must be YYYY-MM-DD' });
+  const [habits, entryMap] = await Promise.all([
+    loadHabits(req.userId), loadEntries(req.userId, addDays(today, -120), today)]);
+  const due = [];
+  for (const h of habits) {
+    if (h.kind === 'quit') continue;
+    const vals = entryMap.get(h.id) ?? new Map();
+    const v = vals.get(today);
+    const flexible = !isFixedDay(h);
+    if (!flexible && !isScheduled(h, today)) continue;
+    let weekCount = 0;
+    if (flexible) for (let d = weekKey(today); d <= today; d = addDays(d, 1)) if (isCompleted(h, vals.get(d))) weekCount += 1;
+    due.push({
+      id: h.id, name: h.name, color: h.color, icon: h.icon, type: h.type, unit: h.unit, target: h.target,
+      targetType: h.targetType, afterHabitId: h.afterHabitId ?? null,
+      value: v == null || isSkip(v) ? null : v,
+      completed: isCompleted(h, v), skipped: isSkip(v),
+      streak: quickStreak(h, vals),
+      ...(flexible ? { weekCount, frequency: h.frequency } : {}),
+    });
+  }
+  const open = due.filter((h) => !h.completed && !h.skipped).length;
+  res.json({ date: today, total: due.length, done: due.filter((h) => h.completed).length, open, habits: due });
+}));
+
+// ==========================================================================
+// GET /analytics/correlations[?days=180&today=YYYY-MM-DD]
+// Patterns in the user's own data (sleep vs habit, habit vs habit), only when there is enough of it.
+// ==========================================================================
+app.get('/analytics/correlations', asyncH(async (req, res) => {
+  const today = req.query.today ?? todayISO();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) return res.status(400).json({ error: 'today must be YYYY-MM-DD' });
+  const span = Math.min(365, Math.max(30, parseInt(req.query.days, 10) || 180));
+  const last = addDays(today, -1); // today is still open, so it is neither done nor missed yet
+  const from = addDays(last, -(span - 1));
+  const [habits, entryMap] = await Promise.all([loadHabits(req.userId), loadEntries(req.userId, from, last)]);
+  const { rows: wellness } = await pool.query(
+    `SELECT to_char(date,'YYYY-MM-DD') AS date, sleep_hours::float AS sleep
+     FROM wellness WHERE user_id = $3 AND date BETWEEN $1 AND $2 AND sleep_hours IS NOT NULL`,
+    [from, last, req.userId]
+  );
+  const sleepByDate = new Map(wellness.map((w) => [w.date, w.sleep]));
+  const daily = habits.filter((h) => isFixedDay(h));
+  const days = [];
+  for (let d = from; d <= last; d = addDays(d, 1)) {
+    const done = {};
+    for (const h of daily) {
+      if (!isScheduled(h, d)) continue;
+      const v = entryMap.get(h.id)?.get(d);
+      if (isSkip(v)) continue;
+      done[h.id] = isCompleted(h, v);
+    }
+    days.push({ date: d, done, sleep: sleepByDate.get(d) ?? null });
+  }
+  const list = daily.map((h) => ({ id: h.id, name: h.name, color: h.color, icon: h.icon, kind: h.kind }));
+  res.json({ span, found: correlations(list, days), needed: dataNeeded(list, days) });
+}));
+
+// ==========================================================================
+// GET /analytics/goals[?today=YYYY-MM-DD]
+// Every goal with its progress, pace and a plain-language status, derived from the linked habit's entries.
+// ==========================================================================
+app.get('/analytics/goals', asyncH(async (req, res) => {
+  const today = req.query.today ?? todayISO();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) return res.status(400).json({ error: 'today must be YYYY-MM-DD' });
+  const { rows } = await pool.query(
+    `SELECT g.id, g.title, g.target::float AS target, g.unit,
+            to_char(g.start_date, 'YYYY-MM-DD') AS "startDate", to_char(g.deadline, 'YYYY-MM-DD') AS deadline,
+            g.completed_at AS "completedAt", g.habit_id AS "habitId",
+            h.name AS "habitName", h.color AS "habitColor", h.icon AS "habitIcon", h.type, h.kind,
+            h.target::float AS "habitTarget", h.target_type AS "targetType", h.unit AS "habitUnit",
+            to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
+     FROM goals g JOIN habits h ON h.id = g.habit_id LEFT JOIN entries e ON e.habit_id = h.id
+     WHERE g.user_id = $1
+     GROUP BY g.id, h.id`, [req.userId]);
+  if (!rows.length) return res.json([]);
+  const from = rows.reduce((m, r) => (r.startDate < m ? r.startDate : m), rows[0].startDate);
+  const byHabit = await loadEntries(req.userId, from, today);
+  const out = rows.map((r) => {
+    const habit = { type: r.type, kind: r.kind, target: r.habitTarget, targetType: r.targetType, unit: r.habitUnit, createdDate: r.createdDate };
+    const vals = byHabit.get(r.habitId) ?? new Map();
+    const progress = goalProgress(r, habit, (d) => vals.get(d), today);
+    return {
+      id: r.id, title: r.title, target: r.target, unit: r.unit, startDate: r.startDate, deadline: r.deadline,
+      completedAt: r.completedAt, habit: { id: r.habitId, name: r.habitName, color: r.habitColor, icon: r.habitIcon }, ...progress,
+    };
+  });
+  const rank = { behind: 0, on_track: 1, ahead: 1, upcoming: 2, done: 3, missed: 4 };
+  out.sort((a, b) => (rank[a.status] - rank[b.status]) || a.deadline.localeCompare(b.deadline));
+  res.json(out);
+}));
+
+// ==========================================================================
 // GET /analytics/habits/:id
 // ==========================================================================
 app.get('/analytics/habits/:id', asyncH(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT h.id, h.name, h.question, h.type, h.unit, h.target::float AS target, h.target_type AS "targetType",
             h.color, h.icon, h.schedule_type AS "scheduleType", h.frequency, h.active_days AS "activeDays",
-            h.kind, h.category,
+            h.kind, h.category, h.cue, h.reminder_time AS "reminderTime",
+            h.savings_per_day::float AS "savingsPerDay", h.savings_unit AS "savingsUnit", h.streak_freezes AS "streakFreezes",
             to_char(LEAST(h.created_at::date, COALESCE(MIN(e.date), h.created_at::date)), 'YYYY-MM-DD') AS "createdDate"
      FROM habits h
      LEFT JOIN entries e ON e.habit_id = h.id
@@ -414,8 +553,10 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
   let currentStreak = 0;
   const wd = Array.from({ length: 7 }, () => ({ scheduled: 0, completed: 0 }));
   const scoreSeries = [];
+  let freezeInfo = { frozen: new Set(), used: new Map() };
 
   if (isFixedDay(habit)) {
+    freezeInfo = freezeDays(habit, (d) => entryMap.get(d), from, today);
     let cur = null;
     let score = 0;
     const DECAY = Math.pow(0.5, 1 / 13);
@@ -430,6 +571,8 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
         wd[dow(d)].completed += 1;
         if (!cur) cur = { start: d, end: d, length: 1 };
         else { cur.end = d; cur.length += 1; }
+      } else if (freezeInfo.frozen.has(d)) {
+        // a freeze keeps the run going (the day still counts as missed for the score)
       } else if (cur) {
         streaks.push(cur);
         cur = null;
@@ -507,6 +650,8 @@ app.get('/analytics/habits/:id', asyncH(async (req, res) => {
     entries: [...entryMap.entries()]
       .map(([date, value]) => ({ date, value }))
       .sort((a, b) => a.date.localeCompare(b.date)),
+    frozenDates: [...freezeInfo.frozen].sort(),
+    freezesLeft: freezesEnabled(habit) ? Math.max(0, habit.streakFreezes - (freezeInfo.used.get(today.slice(0, 7)) ?? 0)) : 0,
   });
 }));
 
@@ -577,6 +722,7 @@ app.get('/analytics/insights', asyncH(async (req, res) => {
 
   res.json({
     span,
+    moodDays: moodByDate.size,
     moodImpact: moodImpact.slice(0, 5),
     sleepCompletion: buckets.map((b) => ({
       id: b.id, label: b.label, days: b.scheduled,

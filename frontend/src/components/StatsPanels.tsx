@@ -1,11 +1,15 @@
+import { readableColor } from '../lib/contrast';
 import React, { useMemo, useState } from 'react';
 import { useApp, today } from '../store';
 import { Bars, HBar, LineChart, MiniRing } from '../charts';
 import { quickCurrentStreak } from '../lib/periods';
-import { addDays, dow, isCompleted, isQuit } from '../lib/stats';
+import { addDays, fromISO } from '../lib/stats';
+import { entryLookup, periodStats } from '../lib/periodStats';
+import type { PeriodStat } from '../lib/periodStats';
 import { shareCard } from '../lib/share';
 import { HabitIcon } from '../lib/icons';
 import { MONTH_NAMES } from '../lib/types';
+import { Num } from './Motion';
 
 /** dimmed version of a hex color for quiet bars */
 const dim = (hex: string, alpha = 0.55) => {
@@ -34,25 +38,25 @@ export function StatCards() {
     return best;
   }, [habits, entries]);
 
-  const week = useMemo(() => {
-    const lookup = new Map(entries.map((e) => [`${e.habitId}|${e.date}`, e.value]));
-    const values: (number | null)[] = [];
-    const labels: string[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = addDays(t, -i);
-      let scheduled = 0;
-      let completed = 0;
-      for (const h of habits) {
-        if (!h.activeDays.includes(dow(date))) continue;
-        if (isQuit(h) && date < h.createdAt.slice(0, 10)) continue; // clean days count from the start
-        scheduled += 1;
-        if (isCompleted(h, lookup.get(`${h.id}|${date}`))) completed += 1;
-      }
-      values.push(scheduled ? Math.round((completed / scheduled) * 100) : null);
-      labels.push(String(+date.slice(8, 10)));
-    }
-    return { values, labels };
+  // last 7 days, and how they compare with the 7 before and with last month so far
+  const trend = useMemo(() => {
+    const lookup = entryLookup(entries);
+    const last7 = periodStats(habits, lookup, addDays(t, -6), t, t);
+    const prev7 = periodStats(habits, lookup, addDays(t, -13), addDays(t, -7), t);
+    const monthStart = `${t.slice(0, 7)}-01`;
+    const sofar = periodStats(habits, lookup, monthStart, t, t);
+    const prevMonthStart = (() => { const d = fromISO(monthStart); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 10); })();
+    const prevSofar = periodStats(habits, lookup, prevMonthStart, addDays(prevMonthStart, +t.slice(8, 10) - 1), t);
+    const diff = (a: PeriodStat, b: PeriodStat) =>
+      a.goal >= 5 && b.goal >= 5 && a.pct !== null && b.pct !== null ? a.pct - b.pct : null;
+    return {
+      values: last7.days.map((d) => (d.goal ? Math.round((d.done / d.goal) * 100) : null)),
+      labels: last7.days.map((d) => String(+d.date.slice(8, 10))),
+      weekDelta: diff(last7, prev7),
+      monthDelta: diff(sofar, prevSofar),
+    };
   }, [habits, entries, t]);
+  const week = trend;
 
   if (!overview) {
     return (
@@ -70,28 +74,40 @@ export function StatCards() {
   return (
     <>
       <Card label="Today">
-        <Big value={`${todayStat}%`} />
+        <Big value={todayStat} suffix="%" />
         <span className="text-[11px] text-ink-soft">of scheduled habits</span>
       </Card>
       <Card label="This month">
         <div className="flex items-center gap-3">
           <MiniRing pct={overview?.overallPct ?? 0} color="rgb(var(--mint))" size={34} />
           <div>
-            <Big value={`${overview?.overallPct ?? 0}%`} />
+            <Big value={overview?.overallPct ?? 0} suffix="%" />
             <div className="num text-[11px] text-ink-soft">
               {overview?.completed ?? 0} / {overview?.goal ?? 0} done
             </div>
           </div>
         </div>
+        <Delta value={trend.monthDelta} vs="last month so far" />
       </Card>
       <Card label="Best streak">
-        <Big value={String(bestStreak.len)} color={bestStreak.len ? bestStreak.color : undefined} />
+        <Big value={bestStreak.len} color={bestStreak.len ? bestStreak.color : undefined} />
         <span className="text-[11px] text-ink-soft truncate">{bestStreak.len ? bestStreak.name : 'no active streaks'}</span>
       </Card>
       <Card label="Last 7 days">
         <Bars values={week.values} labels={week.labels} height={56} yMax={100} />
+        <Delta value={trend.weekDelta} vs="the 7 days before" />
       </Card>
     </>
+  );
+}
+
+/** Change against an earlier period. Up is mint; down is neutral, never red: a dip is information, not failure. */
+export function Delta({ value, vs }: { value: number | null; vs: string }) {
+  if (value === null) return null;
+  return (
+    <span className={`num text-[10.5px] font-medium leading-tight ${value > 0 ? 'text-mint' : 'text-ink-soft'}`}>
+      {value > 0 ? '▲' : value < 0 ? '▼' : '＝'} {Math.abs(value)} pt{Math.abs(value) === 1 ? '' : 's'} <span className="font-normal text-ink-soft">vs {vs}</span>
+    </span>
   );
 }
 
@@ -119,8 +135,9 @@ function Card({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-function Big({ value, color }: { value: string; color?: string }) {
-  return <span className="num text-2xl font-bold leading-tight" style={{ color }}>{value}</span>;
+function Big({ value, suffix = '', color }: { value: number; suffix?: string; color?: string }) {
+  useApp((s) => s.theme); // repaint when the theme (and so the panel colour) changes
+  return <Num value={value} suffix={suffix} className="num text-2xl font-bold leading-tight" style={{ color: color ? readableColor(color) : undefined }} />;
 }
 
 // Full-width daily trend for the current month.
@@ -265,9 +282,7 @@ export function StreaksPanel() {
               {habit.icon && <HabitIcon name={habit.icon} color={habit.color} size={14} className="shrink-0" />}
               <span className="text-[12px] font-medium truncate text-ink">{habit.name}</span>
             </span>
-            <div className="flex-1 h-2.5 bg-forest-800 rounded-sm overflow-hidden">
-              <div className="h-full rounded-sm" style={{ width: `${(len / max) * 100}%`, background: dim(habit.color) }} />
-            </div>
+            <div className="flex-1"><HBar pct={(len / max) * 100} color={dim(habit.color)} /></div>
             <span className="num text-[11px] text-ink-soft w-9 text-right shrink-0">{len}d</span>
           </button>
         ))}
@@ -302,7 +317,7 @@ export function WellnessPanel() {
         Wellness
         <span className="flex items-center gap-3 normal-case tracking-normal font-medium">
           <span className="flex items-center gap-1"><i className="w-3 h-0.5 bg-mint inline-block rounded" /> sleep h</span>
-          <span className="flex items-center gap-1 opacity-70"><i className="w-3 h-0.5 inline-block border-t border-dashed border-current" /> mood (1–5)</span>
+          <span className="flex items-center gap-1"><i className="w-3 h-0.5 inline-block border-t border-dashed border-current" /> mood (1–5)</span>
         </span>
       </div>
       <div className="px-4 pb-3">

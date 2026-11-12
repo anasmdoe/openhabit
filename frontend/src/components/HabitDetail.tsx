@@ -1,25 +1,38 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useApp } from '../store';
 import { Bars, LineChart } from '../charts';
 import { DAY_LETTERS } from '../lib/types';
 import { HabitIcon } from '../lib/icons';
+import { useSheetDrag } from '../lib/useSheetDrag';
+import { useModalOpen } from '../lib/modal';
+import { usePresence } from '../lib/motion';
 import { addDays, dow, isCompleted, isFixedDay, isQuit, isSkip, todayISO, weekKey } from '../lib/stats';
 import type { HabitDetail as HabitDetailData } from '../lib/types';
 import {
-  aggregateHistory, aggregateScore, buildCalendars, targetProgress, PERIODS, type Period,
+  aggregateHistory, aggregateScore, targetProgress, PERIODS, type Period,
 } from '../lib/periods';
+import {
+  EditableCalendar, NotesPanel, NumbersPanel, QuickActions, QuitPanel, SummaryPanel, TrendPanel, useHabitEntries,
+} from './DetailPanels';
 
 export function HabitDetail() {
-  const { detailOpen, detail, closeDetail, openEditor, habits } = useApp();
+  const { detailOpen, detail: liveDetail, closeDetail, openEditor, habits, refreshDetail } = useApp();
+  // the window slides away over a moment after closing; keep showing what it showed until then
+  const present = usePresence(detailOpen, 200, liveDetail);
+  const detail = liveDetail ?? (present.closing ? present.snapshot ?? null : null);
+  const { entries: habitEntries, reload: reloadEntries } = useHabitEntries(detail?.habit.id ?? '');
+  const changed = async () => { await refreshDetail(); await reloadEntries(); };
   const [scorePeriod, setScorePeriod] = useState<Period>('week');
   const [histPeriod, setHistPeriod] = useState<Period>('month');
+  useModalOpen(detailOpen, closeDetail);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useSheetDrag(sheetRef, detailOpen, closeDetail); // pull down from the top (or the handle) to close
 
   const score = useMemo(() => (detail ? aggregateScore(detail, scorePeriod) : []), [detail, scorePeriod]);
   const hist = useMemo(() => (detail ? aggregateHistory(detail, histPeriod) : []), [detail, histPeriod]);
   const targets = useMemo(() => (detail ? targetProgress(detail) : []), [detail]);
-  const calendars = useMemo(() => (detail ? buildCalendars(detail, 3) : []), [detail]);
 
-  if (!detailOpen) return null;
+  if (!present.show) return null;
 
   const habit = detail ? habits.find((h) => h.id === detail.habit.id) : null;
   const isNumeric = detail?.habit.type === 'numeric';
@@ -30,16 +43,17 @@ export function HabitDetail() {
   const color = detail?.habit.color ?? 'rgb(var(--mint))';
 
   return (
-    <div className="fixed inset-0 z-30 flex items-end sm:items-stretch sm:justify-end bg-black/40" style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }} onClick={closeDetail}>
+    <div className="dim-in fixed inset-0 z-30 flex items-end sm:items-stretch sm:justify-end bg-black/40" data-closing={present.closing || undefined} style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }} onClick={closeDetail}>
       <div
-        className="sheet-in w-full sm:max-w-xl h-[92vh] sm:h-full bg-forest-950 rounded-t-2xl sm:rounded-none border-t sm:border-t-0 sm:border-l border-line overflow-y-auto thin-scroll"
+        ref={sheetRef}
+        className="sheet-in w-full sm:max-w-xl h-[92dvh] sm:h-full bg-forest-950 rounded-t-2xl sm:rounded-none border-t sm:border-t-0 sm:border-l border-line overflow-y-auto thin-scroll overscroll-y-contain"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Habit details"
       >
         {/* grab handle (mobile) */}
-        <div className="sm:hidden sticky top-0 z-20 bg-forest-950 pt-2.5 pb-1 grid place-items-center rounded-t-2xl" onClick={closeDetail}>
+        <div data-grab className="sm:hidden sticky top-0 z-20 bg-forest-950 pt-2.5 pb-3 grid place-items-center rounded-t-2xl" onClick={closeDetail}>
           <div className="w-10 h-1 rounded-full bg-forest-700" />
         </div>
         {!detail ? (
@@ -62,11 +76,11 @@ export function HabitDetail() {
                   {detail.habit.icon && <HabitIcon name={detail.habit.icon} color={color} size={18} className="shrink-0" />}
                   {detail.habit.name}
                 </h2>
-                {(detail.habit.question || quit) && (
+                {(detail.habit.question || detail.habit.cue || quit) && (
                   <p className="text-[12px] text-ink-soft truncate">
                     {quit && (lastSlip ? `Last slip ${lastSlip}` : 'No slips logged')}
-                    {quit && detail.habit.question && ' · '}
-                    {detail.habit.question}
+                    {quit && (detail.habit.cue || detail.habit.question) && ' · '}
+                    {detail.habit.cue || detail.habit.question}
                   </p>
                 )}
               </div>
@@ -90,6 +104,10 @@ export function HabitDetail() {
                 sub="habit score"
               />
             </div>
+
+            {habit && <SummaryPanel habit={habit} detail={detail} entries={habitEntries} color={color} />}
+            {habit && <TrendPanel habit={habit} detail={detail} entries={habitEntries} />}
+            {habit && quit && <QuitPanel habit={habit} detail={detail} entries={habitEntries} />}
 
             {/* score */}
             <section className="panel">
@@ -136,6 +154,8 @@ export function HabitDetail() {
               </section>
             )}
 
+            {habit && isNumeric && <NumbersPanel habit={habit} entries={habitEntries} color={color} />}
+
             {/* history */}
             <section className="panel">
               <div className="panel-head">
@@ -161,45 +181,15 @@ export function HabitDetail() {
               </div>
             </section>
 
-            {/* compact 3-month calendar */}
-            <section className="panel">
-              <div className="panel-head">Calendar</div>
-              <div className="px-4 pb-3 grid grid-cols-1 min-[420px]:grid-cols-3 gap-4">
-                {calendars.map((m) => (
-                  <div key={m.key}>
-                    <div className="text-[11px] font-medium text-ink-soft mb-1.5">{m.label}</div>
-                    <div className="grid grid-cols-7 gap-[3px]">
-                      {DAY_LETTERS.map((l) => (
-                        <div key={l} className="text-[8px] text-ink-soft text-center">{l[0]}</div>
-                      ))}
-                      {m.cells.map((c, i) => (
-                        <div
-                          key={i}
-                          title={c.date}
-                          className="aspect-square rounded-[3px]"
-                          style={{
-                            background: !c.inMonth ? 'transparent'
-                              : c.state === 'done' ? color
-                              : c.state === 'partial' ? `${color}55`
-                              : c.state === 'miss' ? 'rgb(var(--forest-800))'
-                              : c.state === 'future' ? 'transparent'
-                              : 'rgb(var(--forest-850))',
-                            outline: c.state === 'future' ? '1px solid rgb(var(--line))' : undefined,
-                            outlineOffset: -1,
-                            opacity: c.state === 'off' && c.inMonth ? 0.45 : 1,
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+            {habit ? (
+              <EditableCalendar habit={habit} detail={detail} entries={habitEntries} color={color} onChanged={changed} />
+            ) : null}
+            {habit && <NotesPanel entries={habitEntries} />}
 
             {/* best streaks */}
             <section className="panel">
               <div className="panel-head">Past year</div>
-              <div className="px-4 pb-3 overflow-x-auto thin-scroll">
+              <div className="px-4 pb-3 overflow-x-auto thin-scroll" tabIndex={0} role="group" aria-label="Past year">
                 <YearHeatmap detail={detail} color={color} />
               </div>
             </section>
@@ -247,6 +237,8 @@ export function HabitDetail() {
                 />
               </div>
             </section>
+
+            {habit && <QuickActions habit={habit} detail={detail} entries={habitEntries} />}
 
             {/* destructive actions live at the bottom, out of the way */}
             {habit && <DangerRow habitId={habit.id} />}

@@ -10,7 +10,7 @@ backups/
 
 # AWS deploy (deploy/aws): build output, local state and settings
 deploy/aws/build/
-deploy/aws/.terraform/
+.terraform/
 deploy/aws/*.tfstate
 deploy/aws/*.tfstate.*
 deploy/aws/terraform.tfvars

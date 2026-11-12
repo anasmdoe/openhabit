@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">OpenHabit</string>
+    <string name="widget_description">Today\'s habits. Tap one to check it off.</string>
+    <string name="widget_empty">Nothing due today.</string>
+    <string name="widget_setup">Open OpenHabit to connect your server.</string>
+    <string name="tile_label">Habits</string>
+    <string name="health_rationale">OpenHabit reads your daily totals of steps, exercise, sleep, distance, active energy and water from Health Connect, and sends only those totals to the OpenHabit server you set up, to check off the habits you chose to complete automatically. It never writes to Health Connect and never sends individual records.</string>
+</resources>

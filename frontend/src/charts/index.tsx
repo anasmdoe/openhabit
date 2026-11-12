@@ -1,6 +1,7 @@
 // Hand-rolled SVG charts rendered in *pixel space* (measured via
 // ResizeObserver) so text and bars never stretch.
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useMountedFlag } from '../lib/motion';
 
 const MINT = 'rgb(var(--mint))';
 const SOFT = 'rgb(var(--ink-soft))';
@@ -36,6 +37,9 @@ export function Bars({
   unit?: string;
 }) {
   const { ref, w } = useWidth<HTMLDivElement>();
+  const grown = useMountedFlag(); // bars grow up from the baseline on first paint
+  const [settled, setSettled] = useState(false); // ... staggered, only that first time
+  useEffect(() => { const id = window.setTimeout(() => setSettled(true), 900); return () => clearTimeout(id); }, []);
   const n = values.length;
   if (!n) return null;
 
@@ -59,11 +63,13 @@ export function Bars({
           ))}
           {values.map((v, i) => {
             if (v == null) return null;
-            const h = Math.max(1.5, (v / max) * chartH);
+            const scale = Math.min(1, Math.max(1.5 / chartH, v / max));
             const cx = i * slot + slot / 2;
+            // every bar is drawn full height and scaled from its base, so a new value glides instead of snapping
             return (
-              <rect key={i} x={cx - barW / 2} y={valueH + chartH - h} width={barW} height={h}
-                fill={fill} opacity={highlight === -1 || highlight === i ? 1 : 0.4} rx={2} />
+              <rect key={i} className="bar-rect" x={cx - barW / 2} y={valueH} width={barW} height={chartH}
+                fill={fill} opacity={highlight === -1 || highlight === i ? 1 : 0.4} rx={2}
+                style={{ transform: `scaleY(${grown ? scale : 0})`, transitionDelay: settled ? '0ms' : `${Math.min(i, 24) * 14}ms` }} />
             );
           })}
           {showValues && values.map((v, i) =>
@@ -86,14 +92,15 @@ export function Bars({
 
 // ---------------------------------------------------------------- Donut
 export function Donut({ pct, size = 120, label }: { pct: number; size?: number; label?: string }) {
+  const grown = useMountedFlag();
   const r = 42;
   const c = 2 * Math.PI * r;
-  const filled = (Math.min(100, Math.max(0, pct)) / 100) * c;
+  const filled = grown ? (Math.min(100, Math.max(0, pct)) / 100) * c : 0;
   return (
     <svg viewBox="0 0 100 100" width={size} height={size} role="img" aria-label={`${pct}% complete`}>
       <circle cx={50} cy={50} r={r} fill="none" stroke={LINE} strokeWidth={12} />
-      <circle cx={50} cy={50} r={r} fill="none" stroke={MINT} strokeWidth={12}
-        strokeDasharray={`${filled} ${c - filled}`} transform="rotate(-90 50 50)" />
+      <circle cx={50} cy={50} r={r} fill="none" stroke={MINT} strokeWidth={12} className="arc"
+        style={{ strokeDasharray: `${filled} ${c - filled}` }} transform="rotate(-90 50 50)" />
       <text x={50} y={50} textAnchor="middle" dominantBaseline="central"
         fontSize={20} fontWeight={700} fill="rgb(var(--ink))" className="num">{pct}%</text>
       {label && (
@@ -113,6 +120,8 @@ export function LineChart({
   labels?: (string | number | null)[];
 }) {
   const { ref, w } = useWidth<HTMLDivElement>();
+  const [drawn, setDrawn] = useState(false); // lines draw themselves once, not on every tab visit
+  useEffect(() => { const id = window.setTimeout(() => setDrawn(true), 1000); return () => clearTimeout(id); }, []);
   const n = Math.max(...series.map((s) => s.points.length), 0);
   if (!n) return null;
   const max = yMax ?? Math.max(1, ...series.flatMap((s) => s.points.filter((p): p is number => p != null)));
@@ -140,6 +149,7 @@ export function LineChart({
             if (d) segs.push(d);
             return segs.map((seg, i) => (
               <path key={`${s.name}${i}`} d={seg} fill="none" stroke={s.color} strokeWidth={1.6}
+                pathLength={s.dashed ? undefined : 1} className={s.dashed || drawn ? undefined : 'line-draw'}
                 strokeDasharray={s.dashed ? '4 4' : undefined} strokeLinejoin="round" strokeLinecap="round" />
             ));
           })}
@@ -156,23 +166,25 @@ export function LineChart({
 
 // ---------------------------------------------------------------- HBar
 export function HBar({ pct, color }: { pct: number; color?: string }) {
+  const grown = useMountedFlag();
   return (
     <div className="h-2.5 w-full bg-forest-800 rounded-sm overflow-hidden">
-      <div className="h-full rounded-sm" style={{ width: `${Math.min(100, pct)}%`, background: color ?? MINT }} />
+      <div className="h-full rounded-sm fill-bar" style={{ width: `${grown ? Math.min(100, pct) : 0}%`, background: color ?? MINT }} />
     </div>
   );
 }
 
 // ------------------------------------------------------------ MiniRing
 export function MiniRing({ pct, color, size = 22 }: { pct: number; color: string; size?: number }) {
+  const grown = useMountedFlag();
   const r = 9;
   const c = 2 * Math.PI * r;
-  const filled = (Math.min(100, Math.max(0, pct)) / 100) * c;
+  const filled = grown ? (Math.min(100, Math.max(0, pct)) / 100) * c : 0;
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} className="shrink-0" role="img" aria-label={`${pct}%`}>
       <circle cx={12} cy={12} r={r} fill="none" stroke={LINE} strokeWidth={3.5} />
-      <circle cx={12} cy={12} r={r} fill="none" stroke={color} strokeWidth={3.5}
-        strokeDasharray={`${filled} ${c - filled}`} transform="rotate(-90 12 12)" strokeLinecap="round" />
+      <circle cx={12} cy={12} r={r} fill="none" stroke={color} strokeWidth={3.5} className="arc"
+        style={{ strokeDasharray: `${filled} ${c - filled}` }} transform="rotate(-90 12 12)" strokeLinecap="round" />
     </svg>
   );
 }

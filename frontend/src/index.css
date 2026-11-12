@@ -9,6 +9,8 @@
    ============================================================ */
 :root,
 :root[data-theme='forest-dark'] {
+  --warn: 251 191 36;        /* amber-400: behind, don't miss twice */
+  --danger: 251 113 133;     /* rose-400: missed, delete */
   --forest-950: 15 17 19;    /* page background   */
   --forest-900: 22 25 28;    /* card surface      */
   --forest-850: 28 32 36;    /* raised / hover    */
@@ -39,7 +41,7 @@
   --panel-head: 9 9 10;
   --panel-head-text: 125 128 133;
   --ink: 235 236 238;
-  --ink-soft: 125 128 133;
+  --ink-soft: 146 149 154;
   --line: 23 23 26;
   --cell: 17 17 19;
   --slip: 232 112 100;
@@ -47,18 +49,20 @@
 }
 
 :root[data-theme='forest-light'] {
+  --warn: 180 83 9;          /* amber-700: AA on white */
+  --danger: 190 18 60;       /* rose-700 */
   --forest-950: 245 246 247;
   --forest-900: 255 255 255;
   --forest-850: 241 243 244;
   --forest-800: 232 234 236;
   --forest-700: 209 213 216;
-  --mint: 34 130 96;
+  --mint: 28 116 85;
   --cream: 27 29 31;
   --panel: 255 255 255;
   --panel-head: 255 255 255;
   --panel-head-text: 107 112 117;
   --ink: 27 29 31;
-  --ink-soft: 107 112 117;
+  --ink-soft: 92 97 102;
   --line: 227 229 232;
   --cell: 241 243 244;
   --slip: 196 64 52;
@@ -156,9 +160,19 @@ button { cursor: pointer; }
 /* modal backdrop: dim; blur comes from .app-blur on the page content,
    because backdrop-filter is GPU-blocklisted on some Linux browsers */
 .backdrop {
-  @apply fixed inset-0 z-40 bg-black/40;
+  @apply fixed inset-0 z-40 bg-black/40 overflow-y-auto overscroll-contain;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+}
+
+/* Popup panels are sized to the *visible* screen (dvh follows the browser's address bar and the
+   keyboard; plain vh does not, which pushed the bottom buttons off-screen on phones) and scroll
+   inside themselves. The fallback line is for browsers without dvh. */
+.modal-scroll {
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
 }
 
 /* applied to the dashboard wrapper while any modal is open */
@@ -171,30 +185,22 @@ button { cursor: pointer; }
   .app-content { transition: filter 160ms ease; }
 }
 
-/* styled tooltips: rounded pill, thin border, dimmed */
-[data-tip] { position: relative; }
-[data-tip]:hover::after,
-[data-tip]:focus-visible::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 6px);
-  transform: translateX(-50%);
-  white-space: nowrap;
-  padding: 3px 10px;
-  border-radius: 9999px;
+/* tooltips are drawn by components/Tooltips.tsx so no panel can clip them */
+.tooltip {
+  position: fixed;
+  z-index: 80;
+  max-width: min(260px, calc(100vw - 12px));
+  padding: 4px 11px;
+  border-radius: 12px;
   border: 1px solid rgb(var(--line));
-  background: rgb(var(--forest-900) / 0.92);
-  color: rgb(var(--ink-soft));
-  font-size: 10.5px;
+  background: rgb(var(--forest-900) / 0.97);
+  color: rgb(var(--ink));
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1.35;
   letter-spacing: 0.01em;
   pointer-events: none;
-  z-index: 60;
-}
-[data-tip-below]:hover::after {
-  bottom: auto;
-  top: calc(100% + 6px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
 }
 
 /* segmented period toggle */
@@ -215,6 +221,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   @apply bg-forest-850 border border-line rounded-lg px-3 py-2 text-sm w-full;
 }
 
+.step-btn {
+  @apply shrink-0 text-[11px] font-bold uppercase tracking-wider rounded-lg px-3 h-8 bg-mint text-forest-950 disabled:opacity-60;
+}
+
 /* Today progress ring fills smoothly */
 .ring-fill { transition: stroke-dashoffset 420ms cubic-bezier(0.22, 1, 0.36, 1); }
 
@@ -230,4 +240,123 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   border: 2px solid;
   pointer-events: none;
   animation: burst 520ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Groups shown as a page (phone tab): no popup, so no close button */
+[data-inline] [aria-label='Close'] { display: none; }
+
+/* Tab change: the new page slides in from the side the swipe came from */
+@keyframes tab-in-r { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes tab-in-l { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
+.tab-in-r { animation: tab-in-r 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+.tab-in-l { animation: tab-in-l 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* A sliding page must never make the document wider than the screen (it showed Android's
+   horizontal scrollbar and shifted the fixed tab bar), so clip sideways overflow. */
+html, body, #root { overflow-x: clip; }
+body { overscroll-behavior-x: none; }
+.app-content { overflow-x: clip; }
+nav[aria-label='Main'] { transform: translateZ(0); will-change: transform; }
+
+/* skipped habits get their own cool slate tone: not done (mint), not open (grey), not a miss */
+:root, :root[data-theme='forest-dark'] { --skip: 147 164 196; }
+:root[data-theme='pitch-black'] { --skip: 147 164 196; }
+:root[data-theme='forest-light'] { --skip: 84 104 148; }
+/* streak freezes */
+:root, :root[data-theme='forest-dark'], :root[data-theme='pitch-black'] { --ice: 125 190 255; }
+:root[data-theme='forest-light'] { --ice: 30 99 190; }
+:root { --on-heat: var(--forest-950); }
+:root[data-theme='forest-light'] { --on-heat: 255 255 255; }
+
+/* Touch screens: icon buttons get at least a 40px hit area (WCAG 2.5.8 asks for 24px, Material for 48dp). */
+@media (pointer: coarse) {
+  button.w-7, button.w-8, button.w-9, a.w-8 { min-width: 40px; min-height: 40px; }
+}
+
+
+/* ==========================================================================================
+   Motion. Things move instead of jump: lists glide, panels ease, pages and themes crossfade.
+   JS-driven motion lives in lib/motion.ts; this is the CSS half. The reduced-motion rule near the
+   top of this file switches every animation and transition here off.
+   ========================================================================================== */
+:root {
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* a row entering or leaving a list (Today) */
+@keyframes row-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+@keyframes row-out { to { opacity: 0; transform: translateX(22px) scale(0.98); } }
+.row-in { animation: row-in 240ms var(--ease) backwards; }
+.row-out { animation: row-out 170ms var(--ease) forwards; pointer-events: none; }
+
+/* a field or section appearing: fades and settles */
+@keyframes field-in { from { opacity: 0; transform: translateY(-4px); } }
+.field-in { animation: field-in 220ms var(--ease) backwards; }
+
+/* a panel arriving after its data did (goals, patterns, insights, stat cards) */
+@keyframes fade-up { from { opacity: 0; transform: translateY(8px); } }
+.fade-up { animation: fade-up 300ms var(--ease) backwards; }
+@keyframes fade-in { from { opacity: 0; } }
+.fade-in { animation: fade-in 200ms ease-out backwards; }
+
+/* popups: the dimmed backdrop fades, the panel rises and scales in; both reverse on close */
+@keyframes backdrop-in { from { opacity: 0; } }
+@keyframes backdrop-out { to { opacity: 0; } }
+@keyframes modal-in { from { opacity: 0; transform: translateY(14px) scale(0.97); } }
+@keyframes modal-out { to { opacity: 0; transform: translateY(10px) scale(0.98); } }
+.backdrop { animation: backdrop-in 180ms ease-out backwards; }
+.backdrop > :first-child { animation: modal-in 240ms var(--ease) backwards; }
+.backdrop[data-closing] { animation: backdrop-out 170ms ease-in forwards; pointer-events: none; }
+.backdrop[data-closing] > :first-child { animation: modal-out 170ms ease-in forwards; }
+
+/* the habit window slides in from the side (wide screens) or up from the bottom (phones) */
+@keyframes sheet-out { to { transform: translateY(40px); opacity: 0; } }
+@keyframes side-out { to { transform: translateX(32px); opacity: 0; } }
+@keyframes dim-in { from { opacity: 0; } }
+@keyframes dim-out { to { opacity: 0; } }
+.dim-in { animation: dim-in 200ms ease-out backwards; }
+.dim-in[data-closing] { animation: dim-out 190ms ease-in forwards; pointer-events: none; }
+.dim-in[data-closing] > .sheet-in { animation: sheet-out 190ms ease-in forwards; }
+@media (min-width: 640px) { .dim-in[data-closing] > .sheet-in { animation-name: side-out; } }
+
+/* the "Undo" snackbar */
+@keyframes toast-in { from { opacity: 0; transform: translateY(14px) scale(0.96); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(10px) scale(0.97); } }
+.toast-in { animation: toast-in 240ms var(--ease-spring) backwards; }
+.toast-out { animation: toast-out 170ms ease-in forwards; }
+
+/* chart bars grow from the baseline and ease to new heights; lines draw themselves */
+.bar-rect { transform-box: fill-box; transform-origin: 50% 100%; transition: transform 420ms var(--ease), opacity 200ms; }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.line-draw { stroke-dasharray: 1; animation: draw 700ms var(--ease) backwards; }
+.arc { transition: stroke-dasharray 520ms var(--ease); }
+.fill-bar { transition: width 520ms var(--ease); }
+
+/* small things: controls respond to hover, focus and press instead of flipping state */
+button, a, summary, select, input, textarea, [role='button'] {
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, opacity 140ms ease,
+    box-shadow 140ms ease, transform 100ms ease;
+}
+button:not(:disabled):active, [role='button']:active { transform: scale(0.97); }
+button.cell-btn:active { transform: scale(0.88); }
+.seg > button { transition: background-color 180ms ease, color 180ms ease; }
+
+/* streak flames, chips and tags settle when their numbers change */
+.num { font-variant-numeric: tabular-nums; }
+
+/* Pages and themes crossfade with the View Transitions API (Chrome, Edge, Safari 18+, Firefox 144+);
+   other browsers keep the plain slide-in from the .tab-in-* classes. The tab bar and top bar stay put. */
+nav[aria-label='Main'] { view-transition-name: tabbar; }
+@keyframes vt-out-l { to { opacity: 0; transform: translateX(-26px); } }
+@keyframes vt-out-r { to { opacity: 0; transform: translateX(26px); } }
+@keyframes vt-in-r { from { opacity: 0; transform: translateX(34px); } }
+@keyframes vt-in-l { from { opacity: 0; transform: translateX(-34px); } }
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(root) { animation-duration: 280ms; animation-timing-function: var(--ease); }
+  html[data-vt='fwd']::view-transition-old(root) { animation: vt-out-l 200ms var(--ease) both; }
+  html[data-vt='fwd']::view-transition-new(root) { animation: vt-in-r 280ms var(--ease) both; }
+  html[data-vt='back']::view-transition-old(root) { animation: vt-out-r 200ms var(--ease) both; }
+  html[data-vt='back']::view-transition-new(root) { animation: vt-in-l 280ms var(--ease) both; }
+  html[data-vt='fade']::view-transition-group(root) { animation-duration: 320ms; }
 }

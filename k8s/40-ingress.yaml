@@ -1,5 +1,5 @@
 # Two Ingresses: the API one rewrites /api/<service-path> -> /<service-path>,
-# the frontend one serves everything else. Assumes ingress-nginx.
+# the frontend one serves everything else. /api/v1/<path> is the same as /api/<path>. Assumes ingress-nginx.
 # Set `host` to whatever DNS name you use in your homelab.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -15,42 +15,42 @@ spec:
     - host: habits.home.lab          # <-- change to your hostname
       http:
         paths:
-          - path: /api/(groups.*|invites.*|join|reactions.*)
+          - path: /api(?:/v1)?/(groups.*|invites.*|join|reactions.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: social-service
                 port:
                   number: 3005
-          - path: /api/(auth.*)
+          - path: /api(?:/v1)?/(auth.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: auth-service
                 port:
                   number: 3004
-          - path: /api/(habits.*)
+          - path: /api(?:/v1)?/(habits.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: habit-service
                 port:
                   number: 3001
-          - path: /api/((?:entries|wellness).*)
+          - path: /api(?:/v1)?/((?:entries|wellness).*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: tracking-service
                 port:
                   number: 3002
-          - path: /api/(analytics.*)
+          - path: /api(?:/v1)?/(analytics.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: analytics-service
                 port:
                   number: 3003
-          - path: /api/(reminders.*)
+          - path: /api(?:/v1)?/(reminders.*)
             pathType: ImplementationSpecific
             backend:
               service:

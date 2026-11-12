@@ -42,6 +42,42 @@ spec:
               name: app-secrets
               key: VAPID_PUBLIC_KEY
               optional: true
+        - name: PUBLIC_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: PUBLIC_URL
+              optional: true
+        - name: MAIL_TRANSPORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MAIL_TRANSPORT
+              optional: true
+        - name: MAIL_FROM
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MAIL_FROM
+              optional: true
+        - name: SMTP_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: SMTP_URL
+              optional: true
+        - name: MAIL_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MAIL_WEBHOOK_URL
+              optional: true
+        - name: REQUIRE_EMAIL_VERIFICATION
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REQUIRE_EMAIL_VERIFICATION
+              optional: true
         - name: ALLOW_REGISTRATION
           valueFrom:
             configMapKeyRef:

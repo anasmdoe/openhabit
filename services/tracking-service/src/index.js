@@ -1,7 +1,9 @@
 import express from 'express';
+import { checkDay, valueFor } from './health.js';
 import pg from 'pg';
 import { metricsMiddleware, metricsHandler } from './metrics.js';
 import { verifyAction } from './actions.js';
+import { signingSecret, signBody } from './webhook.js';
 import crypto from 'node:crypto';
 
 const PORT = process.env.PORT || 3002;
@@ -129,13 +131,20 @@ app.get('/entries', asyncH(async (req, res) => {
 // Completion webhook (3s cap). Point it at anything that accepts a POST — an
 // ntfy topic URL gives instant push notifications. Logs the outcome (habit id
 // and status; never the URL). Returns a promise that never rejects.
-function fireWebhook(habitId, url, payload) {
+function fireWebhook(habitId, url, payload, secret) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 3000);
+  const body = JSON.stringify(payload);
   return fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'OpenHabit-Webhook/1',
+      'X-OpenHabit-Event': payload.event,
+      'X-OpenHabit-Delivery': payload.id,
+      'X-OpenHabit-Signature': signBody(secret, body),
+    },
+    body,
     signal: ctrl.signal,
   })
     .then((r) => console.log(`webhook habit=${habitId} status=${r.status}`))
@@ -150,7 +159,8 @@ const AWAIT_WEBHOOKS = process.env.OPENHABIT_RUNTIME === 'lambda';
 async function completionWebhook(habitId, userId, date, value) {
   if (value === -1) return;
   const { rows } = await pool.query(
-    `SELECT name, type, target::float AS target, target_type AS "targetType", webhook_url AS url
+    `SELECT name, type, target::float AS target, target_type AS "targetType", webhook_url AS url,
+            (SELECT webhook_secret_version FROM users WHERE id = $2) AS "secretVersion"
      FROM habits WHERE id = $1 AND user_id = $2 AND webhook_url <> '' AND kind = 'build'`,
     [habitId, userId]
   );
@@ -161,9 +171,10 @@ async function completionWebhook(habitId, userId, date, value) {
     : h.targetType === 'at_most' ? value <= h.target : value >= h.target;
   if (!completed) return;
   const sent = fireWebhook(habitId, h.url, {
-    event: 'habit.completed', habit: h.name, date, value,
+    id: crypto.randomUUID(), event: 'habit.completed', created: new Date().toISOString(),
+    habitId, habit: h.name, date, value,
     message: `${h.name} completed (${date})`,
-  });
+  }, signingSecret(JWT_SECRET, userId, h.secretVersion ?? 1));
   if (AWAIT_WEBHOOKS) await sent;
 }
 
@@ -237,6 +248,78 @@ app.get('/wellness', asyncH(async (req, res) => {
     [from, to, req.userId]
   );
   res.json(rows);
+}));
+
+// POST /wellness/bulk  body: { days: [{ date, mood?, sleepHours? }] }  (up to 400; same upsert rules as PUT)
+// One request instead of one per day: imports and seeding stay within per-function invocation budgets.
+app.post('/wellness/bulk', asyncH(async (req, res) => {
+  const { days } = req.body;
+  if (!Array.isArray(days) || days.length > 400) return res.status(400).json({ error: 'days array required (at most 400)' });
+  const ok = (d) => d && isDate(d.date)
+    && (d.mood == null || (Number.isInteger(d.mood) && d.mood >= 1 && d.mood <= 5))
+    && (d.sleepHours == null || (typeof d.sleepHours === 'number' && d.sleepHours >= 0 && d.sleepHours <= 24));
+  const good = days.filter(ok);
+  if (good.length !== days.length) return res.status(400).json({ error: 'every day needs a date, mood 1-5 and sleepHours 0-24 (or null)' });
+  if (good.length) {
+    await pool.query(
+      `INSERT INTO wellness (user_id, date, mood, sleep_hours)
+       SELECT $1, d.date::date, d.mood, d.sleep
+       FROM jsonb_to_recordset($2::jsonb) AS d(date text, mood int, sleep numeric)
+       ON CONFLICT (user_id, date) DO UPDATE SET
+         mood = COALESCE(EXCLUDED.mood, wellness.mood),
+         sleep_hours = COALESCE(EXCLUDED.sleep_hours, wellness.sleep_hours)`,
+      [req.userId, JSON.stringify(good.map((d) => ({ date: d.date, mood: d.mood ?? null, sleep: d.sleepHours ?? null })))]
+    );
+  }
+  res.json({ imported: good.length });
+}));
+
+// POST /wellness/health-sync  body: { days: [{ date, metrics: { steps, exercise_minutes, sleep_hours, ... } }] }
+// Daily totals from the phone's health store (Health Connect, Apple Health). Each habit with an auto_metric
+// gets an entry from its metric (see health.js); a manual value is never lowered and a skipped day is left
+// alone. sleep_hours also fills the day's sleep when none was logged by hand. Up to 62 days per call.
+app.post('/wellness/health-sync', asyncH(async (req, res) => {
+  const { days } = req.body ?? {};
+  if (!Array.isArray(days) || !days.length || days.length > 62) return res.status(400).json({ error: 'days array required (1 to 62)' });
+  for (const d of days) {
+    const err = checkDay(d);
+    if (err) return res.status(400).json({ error: err });
+  }
+  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10); // the phone's day can be ahead of UTC
+  if (days.some((d) => d.date > tomorrow)) return res.status(400).json({ error: 'days in the future are not accepted' });
+
+  const { rows: habits } = await pool.query(
+    `SELECT id, type, kind, auto_metric AS "autoMetric", auto_threshold::float AS "autoThreshold"
+     FROM habits WHERE user_id = $1 AND NOT archived AND auto_metric <> ''`, [req.userId]);
+  const byKey = new Map(); // one row per habit and day, even if a day is sent twice
+  for (const d of days) {
+    for (const h of habits) {
+      const value = valueFor(h, d.metrics[h.autoMetric]);
+      const key = `${h.id}|${d.date}`;
+      if (value != null && value > (byKey.get(key)?.value ?? -Infinity)) byKey.set(key, { habit: h.id, date: d.date, value });
+    }
+  }
+  const writes = [...byKey.values()];
+  let applied = [];
+  if (writes.length) {
+    const r = await pool.query(
+      `INSERT INTO entries (habit_id, date, value)
+       SELECT w.habit::uuid, w.date::date, w.value FROM jsonb_to_recordset($1::jsonb) AS w(habit text, date text, value numeric)
+       ON CONFLICT (habit_id, date) DO UPDATE SET value = GREATEST(entries.value, EXCLUDED.value)
+         WHERE entries.value <> -1 AND EXCLUDED.value > entries.value
+       RETURNING habit_id AS "habitId", to_char(date, 'YYYY-MM-DD') AS date, value::float AS value`,
+      [JSON.stringify(writes)]);
+    applied = r.rows;
+  }
+  const sleep = [...new Map(days.filter((d) => d.metrics.sleep_hours > 0).map((d) => [d.date, d])).values()];
+  if (sleep.length) {
+    await pool.query(
+      `INSERT INTO wellness (user_id, date, sleep_hours)
+       SELECT $1, d.date::date, d.sleep FROM jsonb_to_recordset($2::jsonb) AS d(date text, sleep numeric)
+       ON CONFLICT (user_id, date) DO UPDATE SET sleep_hours = COALESCE(wellness.sleep_hours, EXCLUDED.sleep_hours)`,
+      [req.userId, JSON.stringify(sleep.map((d) => ({ date: d.date, sleep: Math.round(d.metrics.sleep_hours * 10) / 10 })))]);
+  }
+  res.json({ days: days.length, habits: habits.length, applied, sleepDays: sleep.length });
 }));
 
 // PUT /wellness  body: { date, mood?, sleepHours? } (upsert; null clears)

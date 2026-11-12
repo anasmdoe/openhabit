@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
-import { DAY_LETTERS } from '../lib/types';
+import { AUTO_METRICS, DAY_LETTERS } from '../lib/types';
+import type { AutoMetric } from '../lib/types';
 import type { HabitKind } from '../lib/types';
 import { HabitIcon, ICON_NAMES } from '../lib/icons';
+import { useModalOpen } from '../lib/modal';
 
 const COLORS = [
   '#6EE7B7', // mint
@@ -18,8 +20,19 @@ const COLORS = [
   '#BEF264', // lime
 ];
 
+// would stacking on `candidate` create a loop (candidate already comes after `selfId`)?
+function stacksOnto(habits: { id: string; afterHabitId: string | null }[], candidate: string, selfId?: string) {
+  if (!selfId) return false;
+  const byId = new Map(habits.map((h) => [h.id, h]));
+  for (let id: string | null = candidate, n = 0; id && n < 50; id = byId.get(id)?.afterHabitId ?? null, n++) {
+    if (id === selfId) return true;
+  }
+  return false;
+}
+
 export function HabitEditor() {
   const { editorHabit, closeEditor, saveHabit, deleteHabit, archiveHabit, user, habits } = useApp();
+  useModalOpen(editorHabit !== null, closeEditor);
   const isNew = editorHabit === 'new';
   const existing = isNew || !editorHabit ? null : editorHabit;
 
@@ -35,9 +48,18 @@ export function HabitEditor() {
   const [scheduleType, setScheduleType] = useState<'weekdays' | 'per_week'>(existing?.scheduleType ?? 'weekdays');
   const [frequency, setFrequency] = useState(existing?.frequency ?? 3);
   const [webhookUrl, setWebhookUrl] = useState(existing?.webhookUrl ?? '');
-  const [reminderTime, setReminderTime] = useState(existing?.reminderTime ?? '');
+  // up to 3 reminder times a day ('' = off); stored comma-separated
+  const [times, setTimes] = useState<string[]>(existing?.reminderTime ? existing.reminderTime.split(',') : []);
+  const [cue, setCue] = useState(existing?.cue ?? '');
+  const [savings, setSavings] = useState(existing?.savingsPerDay ? String(existing.savingsPerDay) : '');
+  const [savingsUnit, setSavingsUnit] = useState(existing?.savingsUnit ?? '');
+  const reminderTime = [...new Set(times.filter(Boolean))].sort().join(',');
   const [kind, setKind] = useState<HabitKind>(existing?.kind ?? 'build');
   const [category, setCategory] = useState(existing?.category ?? '');
+  const [afterId, setAfterId] = useState<string>(existing?.afterHabitId ?? '');
+  const [autoMetric, setAutoMetric] = useState<AutoMetric>(existing?.autoMetric ?? '');
+  const [autoThreshold, setAutoThreshold] = useState(existing?.autoThreshold ? String(existing.autoThreshold) : '');
+  const [freezes, setFreezes] = useState(existing?.streakFreezes ?? 1);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!editorHabit) return null;
@@ -74,7 +96,14 @@ export function HabitEditor() {
         frequency,
         webhookUrl: quit ? '' : webhookUrl.trim(),
         reminderTime: quit ? '' : reminderTime,
+        cue: cue.trim(),
+        savingsPerDay: quit && parseFloat(savings) > 0 ? parseFloat(savings) : 0,
+        savingsUnit: quit && parseFloat(savings) > 0 ? savingsUnit.trim() : '',
         category: category.trim(),
+        streakFreezes: freezes,
+        afterHabitId: quit ? null : afterId || null,
+        autoMetric: quit ? '' : autoMetric,
+        autoThreshold: !quit && autoMetric && type === 'boolean' && parseFloat(autoThreshold) > 0 ? parseFloat(autoThreshold) : null,
         kind,
       },
       existing?.id
@@ -89,7 +118,7 @@ export function HabitEditor() {
       aria-modal="true"
       aria-label={isNew ? 'Create habit' : 'Edit habit'}
     >
-      <div className="panel w-full max-w-md max-h-[90vh] overflow-y-auto thin-scroll" onClick={(e) => e.stopPropagation()}>
+      <div className="panel w-full max-w-md modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           {isNew ? 'New habit' : 'Edit habit'}
           <button onClick={closeEditor} className="normal-case font-semibold hover:text-mint" aria-label="Close">✕</button>
@@ -144,6 +173,64 @@ export function HabitEditor() {
             />
           </Field>
 
+          <Field label="When & where" hint="optional — a cue shown with the habit and in its reminder">
+            <input
+              value={cue}
+              onChange={(e) => setCue(e.target.value)}
+              maxLength={120}
+              placeholder={quit ? 'When the urge hits: take a walk instead' : 'After my morning coffee, at my desk'}
+              className="input"
+            />
+          </Field>
+
+          {!quit && (
+            <Field label="Stack after" hint="optional — do this right after another habit; it shows up as the next step">
+              <select value={afterId} onChange={(e) => setAfterId(e.target.value)} className="input" aria-label="Stack after">
+                <option value="">Not stacked</option>
+                {habits
+                  .filter((h) => !h.archived && h.kind !== 'quit' && h.id !== existing?.id && !stacksOnto(habits, h.id, existing?.id))
+                  .map((h) => <option key={h.id} value={h.id}>After: {h.name}</option>)}
+              </select>
+            </Field>
+          )}
+
+          {!quit && (
+            <Field label="Complete automatically" hint="from your phone's health data — needs the OpenHabit Android app or an iPhone Shortcut">
+              <div className={type === 'boolean' && autoMetric ? 'grid grid-cols-[1fr_7rem] gap-2' : ''}>
+                <select value={autoMetric} onChange={(e) => setAutoMetric(e.target.value as AutoMetric)} className="input" aria-label="Complete automatically from">
+                  <option value="">Off</option>
+                  {AUTO_METRICS.map((m) => <option key={m.id} value={m.id}>{m.label} ({m.unit})</option>)}
+                </select>
+                {type === 'boolean' && autoMetric && (
+                  <input type="number" min="0" step="any" inputMode="decimal" value={autoThreshold} onChange={(e) => setAutoThreshold(e.target.value)}
+                    placeholder={autoMetric === 'steps' ? '8000' : '30'} className="input num" aria-label="Done at" title="Done once the day reaches this amount" />
+                )}
+              </div>
+            </Field>
+          )}
+
+          {!quit && scheduleType === 'weekdays' && (
+            <Field label="Streak protection" hint="a missed day right after a completed one won't reset the streak">
+              <select value={freezes} onChange={(e) => setFreezes(Number(e.target.value))} className="input" aria-label="Streak protection">
+                <option value={0}>Off</option>
+                <option value={1}>1 freeze a month</option>
+                <option value={2}>2 freezes a month</option>
+                <option value={3}>3 freezes a month</option>
+              </select>
+            </Field>
+          )}
+
+          {quit && (
+            <Field label="What a clean day is worth" hint="optional — shows a running total in the habit window">
+              <div className="grid grid-cols-[1fr_6rem] gap-2">
+                <input type="number" min="0" step="any" inputMode="decimal" value={savings} onChange={(e) => setSavings(e.target.value)}
+                  placeholder="4" className="input num" aria-label="Value of a clean day" />
+                <input value={savingsUnit} onChange={(e) => setSavingsUnit(e.target.value)} maxLength={12}
+                  placeholder="$ or min" className="input" aria-label="Unit of a clean day's value" />
+              </div>
+            </Field>
+          )}
+
           <Field label="Category" hint="optional — groups habits, e.g. Health, Work">
             <input
               value={category}
@@ -165,8 +252,13 @@ export function HabitEditor() {
                   onChange={(e) => setTarget(e.target.value)} className="input num" />
               </Field>
               <Field label="Unit">
-                <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="Km"
+                <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="Km" list="unit-suggestions"
                   className="input" />
+                <datalist id="unit-suggestions">
+                  <option value="min">shows as 1h 30m</option>
+                  <option value="h">shows as 1h 30m</option>
+                  <option value="pages" /><option value="Km" /><option value="glasses" />
+                </datalist>
               </Field>
               <Field label="Direction">
                 <select value={targetType} onChange={(e) => setTargetType(e.target.value as 'at_least' | 'at_most')}
@@ -262,21 +354,32 @@ export function HabitEditor() {
             </div>
           </Field>
 
-          {!quit && <Field label="Reminder" hint="optional — ntfy or this device, set in your profile">
-            <div className="flex items-center gap-2">
-              <input
-                className="input num w-32"
-                type="time"
-                value={reminderTime}
-                onChange={(ev) => setReminderTime(ev.target.value)}
-              />
-              {reminderTime && (
-                <button onClick={() => setReminderTime('')}
-                  className="text-[11px] text-ink-soft hover:text-ink">clear</button>
+          {!quit && <Field label="Reminders" hint="optional — up to 3 a day, each skipped once the habit is done">
+            <div className="flex flex-col gap-1.5">
+              {times.map((t, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    className="input num w-32"
+                    type="time"
+                    value={t}
+                    onChange={(ev) => setTimes(times.map((x, j) => (j === i ? ev.target.value : x)))}
+                    aria-label={`Reminder ${i + 1}`}
+                  />
+                  <button onClick={() => setTimes(times.filter((_, j) => j !== i))}
+                    className="text-[11px] text-ink-soft hover:text-ink" aria-label={`Remove reminder ${i + 1}`}>remove</button>
+                </div>
+              ))}
+              {times.length < 3 && (
+                <button
+                  onClick={() => setTimes([...times, times.length ? '20:00' : '08:00'])}
+                  className="self-start text-[11px] font-medium rounded-full px-3 h-7 border border-line text-ink-soft hover:text-ink hover:bg-forest-850"
+                >
+                  + {times.length ? 'Another reminder' : 'Add a reminder'}
+                </button>
               )}
             </div>
             {reminderTime && user && !user.ntfyUrl && (
-              <p className="text-[11px] text-amber-400 mt-1">
+              <p className="text-[11px] text-warn mt-1">
                 Reminders need an ntfy topic or “Reminders on this device” turned on (Account → Edit profile).
               </p>
             )}
@@ -326,7 +429,7 @@ export function HabitEditor() {
             </div>
           </Field>
 
-          <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
+          <div className="sticky bottom-0 -mx-4 -mb-4 px-4 pt-3 pb-4 bg-panel border-t border-line flex items-center justify-between gap-2">
             {existing ? (
               <div className="flex gap-2">
                 <button onClick={() => archiveHabit(existing.id)}
@@ -385,10 +488,10 @@ function TypeCard({ active, onClick, title, desc }: {
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <label className="flex flex-col gap-1">
+    <label className="field-in flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-[0.14em] text-ink-soft">
         {label}
-        {hint && <span className="normal-case tracking-normal ml-2 opacity-70">{hint}</span>}
+        {hint && <span className="normal-case tracking-normal ml-2">{hint}</span>}
       </span>
       {children}
     </label>

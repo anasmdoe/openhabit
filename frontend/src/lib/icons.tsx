@@ -54,3 +54,12 @@ export function HabitIcon({ name, color, size = 16, className }: {
     </svg>
   );
 }
+
+/** Small snowflake used for streak freezes. Decorative: callers label the cell or tag themselves. */
+export function Snowflake({ className = 'w-3 h-3' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7M9 3.5l3 2.5 3-2.5M9 20.5l3-2.5 3 2.5" />
+    </svg>
+  );
+}

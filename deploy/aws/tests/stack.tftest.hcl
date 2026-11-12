@@ -36,6 +36,15 @@ mock_provider "aws" {
       bucket_regional_domain_name = "openhabit-web-123456789012.s3.ap-south-1.amazonaws.com"
     }
   }
+  mock_resource "aws_secretsmanager_secret" {
+    defaults = { arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:openhabit/app-AbCdEf" }
+  }
+  mock_resource "aws_rds_cluster" {
+    defaults = {
+      id       = "openhabit-aurora"
+      endpoint = "openhabit-aurora.cluster-abc123.us-east-1.rds.amazonaws.com"
+    }
+  }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/openhabit" }
   }
@@ -75,7 +84,11 @@ run "stack" {
   command = apply
 
   assert {
-    condition     = length(aws_lambda_function.svc) == 6 && length(aws_apigatewayv2_route.svc) == 17
+    condition     = contains(keys(aws_apigatewayv2_route.svc), "ANY /api/v1/habits/{proxy+}") && contains(keys(aws_apigatewayv2_route.svc), "ANY /api/habits/{proxy+}")
+    error_message = "every route is served under /api and the versioned /api/v1"
+  }
+  assert {
+    condition     = length(aws_lambda_function.svc) == 6 && length(aws_apigatewayv2_route.svc) == 34
     error_message = "expected 6 functions and 17 API routes"
   }
   assert {
@@ -212,6 +225,146 @@ run "long_interval_widens_catch_up" {
   assert {
     condition     = nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.REMINDER_CATCH_UP_MINUTES) == "20"
     error_message = "the catch-up window must outlast the scheduler interval"
+  }
+}
+
+run "secrets_manager_keeps_secrets_out_of_the_environment" {
+  command = apply
+
+  variables {
+    use_secrets_manager = true
+    vapid               = { public_key = "pub", private_key = "priv-key-value", subject = "mailto:me@example.com" }
+    mail                = { transport = "smtp", from = "OpenHabit <no-reply@example.com>", smtp_url = "smtp://user:pw@smtp.example.com:587", webhook_url = "" }
+  }
+
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.SECRETS_ARN) == "arn:aws:secretsmanager:ap-south-1:123456789012:secret:openhabit/app-AbCdEf"
+    error_message = "functions must be told which secret to read"
+  }
+  assert {
+    condition     = alltrue([for k, f in aws_lambda_function.svc : !contains(keys(f.environment[0].variables), "JWT_SECRET") && !contains(keys(f.environment[0].variables), "DATABASE_URL")])
+    error_message = "JWT_SECRET and DATABASE_URL must not be in any function's plain-text environment"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.svc["reminder"].environment[0].variables), "VAPID_PRIVATE_KEY") && !contains(keys(aws_lambda_function.svc["auth"].environment[0].variables), "SMTP_URL")
+    error_message = "the VAPID private key and SMTP URL belong in the secret"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.migrate.environment[0].variables), "ADMIN_DATABASE_URL") && !contains(keys(aws_lambda_function.migrate.environment[0].variables), "AUTH_DB_PASSWORD")
+    error_message = "the migrate function must read its passwords from the secret"
+  }
+  assert {
+    condition     = length(aws_iam_role_policy.lambda_secrets) + length(aws_iam_role_policy_attachment.lambda_secrets_managed) == 1
+    error_message = "the role needs read access to the secret"
+  }
+  assert {
+    condition     = nonsensitive(jsondecode(aws_secretsmanager_secret_version.app[0].secret_string).auth.SMTP_URL) == "smtp://user:pw@smtp.example.com:587" && nonsensitive(jsondecode(aws_secretsmanager_secret_version.app[0].secret_string).reminder.VAPID_PRIVATE_KEY) == "priv-key-value"
+    error_message = "per-service secrets must be in the secret"
+  }
+  assert {
+    condition     = nonsensitive(jsondecode(aws_secretsmanager_secret_version.app[0].secret_string).habit.DATABASE_URL) == "postgres://habit_svc:habit-pw%2Fneeds%2Bescaping@ep-test-pooler.example.neon.tech:5432/openhabit?sslmode=verify-full"
+    error_message = "each service gets its own least-privilege database URL in the secret"
+  }
+}
+
+run "default_keeps_secrets_in_the_environment" {
+  command = apply
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.app) == 0 && length(aws_iam_role_policy.lambda_secrets) == 0
+    error_message = "Secrets Manager is opt-in"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.svc["auth"].environment[0].variables), "SECRETS_ARN")
+    error_message = "no SECRETS_ARN without Secrets Manager"
+  }
+}
+
+run "mail_settings_reach_the_functions_that_send_mail" {
+  command = apply
+
+  variables {
+    public_url                 = "https://habits.example.com"
+    require_email_verification = true
+    mail                       = { transport = "smtp", from = "OpenHabit <no-reply@example.com>", smtp_url = "smtp://user:pw@smtp.example.com:587", webhook_url = "" }
+  }
+
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.MAIL_TRANSPORT) == "smtp" && nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.PUBLIC_URL) == "https://habits.example.com"
+    error_message = "the auth function sends the emails and links to the public URL"
+  }
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.REQUIRE_EMAIL_VERIFICATION) == "true"
+    error_message = "require_email_verification must reach auth"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.svc["habit"].environment[0].variables), "SMTP_URL")
+    error_message = "other functions must not receive the SMTP credentials"
+  }
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.MAIL_TRANSPORT) == "smtp" && nonsensitive(aws_lambda_function.svc["reminder"].environment[0].variables.SMTP_URL) == "smtp://user:pw@smtp.example.com:587"
+    error_message = "the reminder function sends the weekly review email, so it gets the mail settings too"
+  }
+}
+
+run "aurora_serverless_scales_to_zero" {
+  command = apply
+
+  variables {
+    create_database            = true
+    db_engine                  = "aurora-serverless"
+    db_admin_password          = "admin-pw-0123456789abcdef"
+    aurora_pause_after_seconds = 900
+    use_managed_iam_policies   = true
+  }
+
+  assert {
+    condition     = length(aws_rds_cluster.aurora) == 1 && length(aws_db_instance.db) == 0
+    error_message = "aurora-serverless replaces the plain RDS instance"
+  }
+  assert {
+    condition     = aws_rds_cluster.aurora[0].serverlessv2_scaling_configuration[0].min_capacity == 0 && aws_rds_cluster.aurora[0].serverlessv2_scaling_configuration[0].seconds_until_auto_pause == 900
+    error_message = "the cluster must be able to pause at zero capacity"
+  }
+  assert {
+    condition     = aws_rds_cluster_instance.aurora[0].instance_class == "db.serverless"
+    error_message = "the instance class must be db.serverless"
+  }
+  assert {
+    condition     = strcontains(nonsensitive(aws_lambda_function.svc["habit"].environment[0].variables.DATABASE_URL), "@openhabit-aurora.cluster-abc123.us-east-1.rds.amazonaws.com:")
+    error_message = "services must connect to the cluster endpoint"
+  }
+}
+
+run "rejects_bad_aurora_pause" {
+  command = plan
+  variables {
+    db_engine                  = "aurora-serverless"
+    aurora_pause_after_seconds = 60
+  }
+  expect_failures = [var.aurora_pause_after_seconds]
+}
+
+run "ses_sends_with_the_function_role" {
+  command = apply
+
+  variables {
+    public_url   = "https://habits.example.com"
+    ses_identity = "no-reply@example.com"
+    mail         = { transport = "ses", from = "OpenHabit <no-reply@example.com>", smtp_url = "", webhook_url = "" }
+  }
+
+  assert {
+    condition     = length(aws_sesv2_email_identity.from) == 1
+    error_message = "the sender identity must be created for verification"
+  }
+  assert {
+    condition     = nonsensitive(aws_lambda_function.svc["auth"].environment[0].variables.MAIL_TRANSPORT) == "ses"
+    error_message = "the auth function must use the SES transport"
+  }
+  assert {
+    condition     = length(aws_iam_role_policy.lambda_ses) + length(aws_iam_role_policy_attachment.lambda_ses_managed) == 1
+    error_message = "the function role must be allowed to send"
   }
 }
 

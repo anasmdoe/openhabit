@@ -1,8 +1,11 @@
 // Data layer with two adapters:
 //   api   — talks to the microservices through /api/* (gateway or ingress)
 //   local — localStorage, used when no backend is reachable (demo / offline)
-import type { Entry, Habit, HabitDetail, HabitKind, Insights, Overview, WellnessDay } from '../lib/types';
-import { computeHabitDetail, computeInsights, computeOverview, todayISO, addDays } from '../lib/stats';
+import type { Entry, Goal, GoalView, Habit, HabitDetail, HabitKind, Insights, Overview, WellnessDay } from '../lib/types';
+import { goalProgress } from '../lib/goals';
+import { correlations, dataNeeded } from '../lib/correlations';
+import type { CorrDay, Correlation } from '../lib/correlations';
+import { computeHabitDetail, computeInsights, computeOverview, todayISO, addDays, dow, isCompleted, isFixedDay, isSkip } from '../lib/stats';
 
 export type DataMode = 'api' | 'local';
 
@@ -22,6 +25,13 @@ export interface HabitInput {
   activeDays?: number[];
   category?: string;
   kind?: HabitKind;
+  cue?: string;
+  savingsPerDay?: number;
+  savingsUnit?: string;
+  streakFreezes?: number;
+  afterHabitId?: string | null;
+  autoMetric?: import('../lib/types').AutoMetric;
+  autoThreshold?: number | null;
 }
 
 export interface DataAdapter {
@@ -41,10 +51,31 @@ export interface DataAdapter {
   getHabitDetail(id: string): Promise<HabitDetail>;
   getInsights(days?: number): Promise<Insights>;
   bulkPutEntries(entries: Entry[]): Promise<number>;
+  bulkPutWellness(days: { date: string; mood?: number | null; sleepHours?: number | null }[]): Promise<number>;
+  getCorrelations(): Promise<CorrelationResult>;
+  listGoals(): Promise<GoalView[]>;
+  createGoal(input: GoalInput): Promise<Goal>;
+  updateGoal(id: string, patch: Partial<GoalInput> & { completed?: boolean }): Promise<Goal>;
+  deleteGoal(id: string): Promise<void>;
+}
+
+export interface CorrelationResult {
+  span: number;
+  found: Correlation[];
+  needed: { sleepDays: number; trackedDays: number; minGroup: number; minPairDays: number };
+}
+
+export interface GoalInput {
+  habitId: string;
+  title: string;
+  target: number;
+  unit?: string;
+  startDate?: string;
+  deadline: string;
 }
 
 // ---------------------------------------------------------------- api mode
-export const API = '/api';
+export const API = '/api/v1';
 const TOKEN_KEY = 'openhabit.token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
@@ -52,6 +83,20 @@ export const setToken = (t: string | null) =>
   t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY);
 
 export class AuthError extends Error {}
+
+export interface WeeklyReview {
+  weekStart: string;
+  weekEnd: string;
+  enough: boolean;
+  overall: { pct: number | null; done: number; goal: number; prevPct: number | null; delta: number | null };
+  habits: { id: string; name: string; done: number; goal: number; pct: number }[];
+  best: { name: string; done: number; goal: number } | null;
+  attention: { name: string; done: number; goal: number } | null;
+  streak: { name: string; length: number } | null;
+  freezesUsed: number;
+  perfectDays: number;
+  message: { subject: string; text: string };
+}
 
 export interface User {
   id: string;
@@ -61,6 +106,9 @@ export interface User {
   timezone: string;
   quietStart: string; // 'HH:MM' local, '' = no quiet hours
   quietEnd: string;
+  createdAt?: string; // ISO time the account was created
+  emailVerified?: boolean;
+  weeklyReview?: boolean;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -88,7 +136,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 // ---- auth endpoints (api mode only) ------------------------------------
 export const authApi = {
   register: (email: string, password: string, name: string) =>
-    req<{ token: string; user: User }>('/auth/register', {
+    req<{ token?: string; user: User; verificationRequired?: boolean }>('/auth/register', {
       method: 'POST', body: JSON.stringify({ email, password, name }),
     }),
   login: (email: string, password: string) =>
@@ -96,18 +144,28 @@ export const authApi = {
       method: 'POST', body: JSON.stringify({ email, password }),
     }),
   me: () => req<User>('/auth/me'),
-  config: () => req<{ registration: boolean; oidc: { enabled: boolean; name?: string } }>('/auth/config'),
+  config: () => req<{ registration: boolean; mail?: boolean; oidc: { enabled: boolean; name?: string } }>('/auth/config'),
   listTokens: () => req<{ id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }[]>('/auth/tokens'),
   createToken: (name: string) =>
     req<{ id: string; name: string; prefix: string; token: string }>('/auth/tokens', {
       method: 'POST', body: JSON.stringify({ name }),
     }),
+  forgotPassword: (email: string) => req<{ ok: true }>('/auth/forgot', { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string) =>
+    req<{ ok: true }>('/auth/reset', { method: 'POST', body: JSON.stringify({ token, password }) }),
+  verifyEmail: (token: string) => req<{ ok: true }>('/auth/verify', { method: 'POST', body: JSON.stringify({ token }) }),
+  sendVerification: () => req<{ ok: true; verified: boolean }>('/auth/verify/send', { method: 'POST' }),
+  webhookSecret: () => req<{ secret: string; version: number }>('/auth/webhook-secret'),
+  rotateWebhookSecret: () => req<{ secret: string; version: number }>('/auth/webhook-secret/rotate', { method: 'POST' }),
+  weeklyReview: (today: string, week?: string) =>
+    req<WeeklyReview>(`/analytics/weekly-review?today=${today}${week ? `&week=${week}` : ''}`),
+  feedUrl: () => req<{ query: string }>('/habits/feed-url'),
   revokeToken: (id: string) => req<void>(`/auth/tokens/${id}`, { method: 'DELETE' }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
   updateName: (name: string) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify({ name }) }),
-  updateProfile: (patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string }) =>
+  updateProfile: (patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string; weeklyReview?: boolean }) =>
     req<User>('/auth/me', { method: 'PUT', body: JSON.stringify(patch) }),
   deleteAccount: (password: string) =>
     req<void>('/auth/me', { method: 'DELETE', body: JSON.stringify({ password }) }),
@@ -240,6 +298,20 @@ const apiAdapter: DataAdapter = {
     });
     return r.imported ?? entries.length;
   },
+  bulkPutWellness: async (days) => {
+    let n = 0;
+    for (let i = 0; i < days.length; i += 400) {
+      const chunk = days.slice(i, i + 400);
+      const r = await req<{ imported: number }>('/wellness/bulk', { method: 'POST', body: JSON.stringify({ days: chunk }) });
+      n += r.imported ?? chunk.length;
+    }
+    return n;
+  },
+  getCorrelations: () => req(`/analytics/correlations?today=${todayISO()}`),
+  listGoals: () => req(`/analytics/goals?today=${todayISO()}`),
+  createGoal: (input) => req('/habits/goals', { method: 'POST', body: JSON.stringify(input) }),
+  updateGoal: (id, patch) => req(`/habits/goals/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  deleteGoal: (id) => req(`/habits/goals/${id}`, { method: 'DELETE' }),
 };
 
 // -------------------------------------------------------------- local mode
@@ -249,6 +321,7 @@ interface LocalDB {
   habits: Habit[];
   entries: Entry[];
   wellness: WellnessDay[];
+  goals?: Goal[];
 }
 
 function loadDB(): LocalDB {
@@ -276,7 +349,7 @@ function seedDemo(): LocalDB {
   ): Habit => ({
     id: uuid(), name, question, type, unit, target, targetType: 'at_least',
     color, icon, scheduleType, frequency, webhookUrl: '', reminderTime: '', activeDays, position, archived: false,
-    category: '', kind: 'build',
+    category: '', kind: 'build', cue: '', savingsPerDay: 0, savingsUnit: '', streakFreezes: 1, afterHabitId: null, autoMetric: '', autoThreshold: null,
     createdAt: `${addDays(today, -120)}T00:00:00Z`,
   });
 
@@ -293,6 +366,11 @@ function seedDemo(): LocalDB {
   const categories = ['Morning', 'Fitness', 'Fitness', 'Mind', 'Morning', 'Health', 'Mind', 'Mind'];
   habits.forEach((h, i) => { h.category = categories[i]; });
   habits[7].kind = 'quit'; // a habit to break: entries are slips
+  ['05:00', '17:30', '07:00', '21:00', '08:30', '', '06:30', ''].forEach((t, i) => { habits[i].reminderTime = t; });
+  habits[3].cue = 'After dinner, on the sofa';
+  habits[6].cue = 'Right after waking up, before the phone';
+  habits[7].cue = 'When the urge hits: take a walk instead';
+  habits[7].savingsPerDay = 15; habits[7].savingsUnit = 'min'; // minutes a clean day gives back
 
   // deterministic pseudo-random completion patterns
   let s = 42;
@@ -320,7 +398,12 @@ function seedDemo(): LocalDB {
       sleepHours: Math.round((6 + rand() * 2.5) * 2) / 2,
     });
   }
-  return { habits, entries, wellness };
+  habits[6].afterHabitId = habits[0].id; // demo of stacking: Meditation after waking up
+  const goals: Goal[] = [
+    { id: uuid(), habitId: habits[3].id, title: 'Read 1,800 pages', target: 1800, unit: 'pages', startDate: `${today.slice(0, 4)}-01-01`, deadline: `${today.slice(0, 4)}-12-31`, completedAt: null },
+    { id: uuid(), habitId: habits[2].id, title: 'Run 100 Km', target: 100, unit: 'Km', startDate: addDays(today, -30), deadline: addDays(today, 60), completedAt: null },
+  ];
+  return { habits, entries, wellness, goals };
 }
 
 const localAdapter: DataAdapter = {
@@ -360,6 +443,10 @@ const localAdapter: DataAdapter = {
       archived: false,
       category: (input.category ?? '').trim(),
       kind: input.kind ?? 'build',
+      cue: (input.cue ?? '').trim(),
+      savingsPerDay: input.savingsPerDay ?? 0,
+      savingsUnit: (input.savingsUnit ?? '').trim(),
+      streakFreezes: input.streakFreezes ?? 1, afterHabitId: input.afterHabitId ?? null, autoMetric: input.autoMetric ?? '', autoThreshold: input.autoThreshold ?? null,
       createdAt: new Date().toISOString(),
     };
     db.habits.push(habit);
@@ -378,6 +465,7 @@ const localAdapter: DataAdapter = {
     const db = loadDB();
     db.habits = db.habits.filter((h) => h.id !== id);
     db.entries = db.entries.filter((e) => e.habitId !== id);
+    for (const h of db.habits) if (h.afterHabitId === id) h.afterHabitId = null;
     saveDB(db);
   },
   async getEntries(from, to) {
@@ -424,6 +512,68 @@ const localAdapter: DataAdapter = {
     if (!habit) throw new Error('habit not found');
     return computeHabitDetail(habit, db.entries);
   },
+  async getCorrelations() {
+    const db = loadDB();
+    const span = 180;
+    const last = addDays(todayISO(), -1);
+    const val = new Map(db.entries.map((e) => [`${e.habitId}|${e.date}`, e.value]));
+    const sleep = new Map(db.wellness.filter((w) => w.sleepHours != null).map((w) => [w.date, w.sleepHours as number]));
+    const daily = db.habits.filter((h) => !h.archived && isFixedDay(h));
+    const days: CorrDay[] = [];
+    for (let d = addDays(last, -(span - 1)); d <= last; d = addDays(d, 1)) {
+      const done: Record<string, boolean> = {};
+      for (const h of daily) {
+        if (!h.activeDays.includes(dow(d)) || d < h.createdAt.slice(0, 10)) continue;
+        const v = val.get(`${h.id}|${d}`);
+        if (isSkip(v)) continue;
+        done[h.id] = isCompleted(h, v);
+      }
+      days.push({ date: d, done, sleep: sleep.get(d) ?? null });
+    }
+    const list = daily.map((h) => ({ id: h.id, name: h.name, color: h.color, icon: h.icon, kind: h.kind }));
+    return { span, found: correlations(list, days), needed: dataNeeded(list, days) };
+  },
+  async listGoals() {
+    const db = loadDB();
+    const today = todayISO();
+    const byKey = new Map(db.entries.map((e) => [`${e.habitId}|${e.date}`, e.value]));
+    const out: GoalView[] = [];
+    for (const g of db.goals ?? []) {
+      const h = db.habits.find((x) => x.id === g.habitId);
+      if (!h) continue;
+      const p = goalProgress(g, h, (d) => byKey.get(`${h.id}|${d}`), today);
+      out.push({ ...g, ...p, habit: { id: h.id, name: h.name, color: h.color, icon: h.icon } });
+    }
+    return out.sort((a, b) => a.deadline.localeCompare(b.deadline));
+  },
+  async createGoal(input) {
+    const db = loadDB();
+    if (!db.habits.some((h) => h.id === input.habitId)) throw new Error('habit not found');
+    const g: Goal = {
+      id: uuid(), habitId: input.habitId, title: input.title, target: input.target, unit: input.unit ?? '',
+      startDate: input.startDate ?? todayISO(), deadline: input.deadline, completedAt: null,
+    };
+    if (g.deadline < g.startDate) throw new Error('deadline must be on or after the start date');
+    (db.goals ??= []).push(g);
+    saveDB(db);
+    return g;
+  },
+  async updateGoal(id, patch) {
+    const db = loadDB();
+    const g = (db.goals ?? []).find((x) => x.id === id);
+    if (!g) throw new Error('goal not found');
+    const { completed, ...rest } = patch;
+    Object.assign(g, rest);
+    if (completed !== undefined) g.completedAt = completed ? new Date().toISOString() : null;
+    if (g.deadline < g.startDate) throw new Error('deadline must be on or after the start date');
+    saveDB(db);
+    return g;
+  },
+  async deleteGoal(id) {
+    const db = loadDB();
+    db.goals = (db.goals ?? []).filter((g) => g.id !== id);
+    saveDB(db);
+  },
   async getInsights(days = 90) {
     const db = loadDB();
     return computeInsights(db.habits, db.entries, db.wellness, days);
@@ -440,6 +590,10 @@ const localAdapter: DataAdapter = {
     saveDB(db);
     return entries.length;
   },
+  async bulkPutWellness(days) {
+    for (const day of days) await localAdapter.putWellness(day);
+    return days.length;
+  },
 };
 
 // ------------------------------------------------------------- detection
@@ -452,7 +606,9 @@ export async function detectAdapter(): Promise<DataAdapter> {
       headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
     });
     clearTimeout(t);
-    if (res.ok || res.status === 401) return apiAdapter;
+    // a static host that answers every path with index.html is not a backend
+    const json = (res.headers.get('content-type') ?? '').includes('json');
+    if ((res.ok && json) || res.status === 401) return apiAdapter;
   } catch {
     /* backend not reachable */
   }

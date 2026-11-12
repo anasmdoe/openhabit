@@ -1,0 +1,16 @@
+{
+  "name": "@openhabit/e2e",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:demo": "playwright test --project=phone --project=desktop",
+    "test:live": "playwright test --project=live",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.56.1"
+  }
+}

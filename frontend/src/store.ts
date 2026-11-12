@@ -5,9 +5,14 @@ import type { Entry, Group, GroupDashboard, GroupInvite, Habit, HabitDetail, Ins
 import { SKIP, addDays, computeOverview, isCompleted, isSkip, monthRange, todayISO } from './lib/stats';
 import { quickCurrentStreak } from './lib/periods';
 import { flushQueue, socialApi } from './api';
+import { loadPrefs, savePrefs } from './lib/feedback';
+import { withViewTransition } from './lib/motion';
+import type { FeedbackPrefs } from './lib/feedback';
 
-export type Theme = 'forest-dark' | 'pitch-black' | 'forest-light';
-export const THEME_CYCLE: Theme[] = ['forest-dark', 'pitch-black', 'forest-light'];
+export type Theme = 'system' | 'forest-dark' | 'pitch-black' | 'forest-light';
+export const THEME_CYCLE: Theme[] = ['system', 'forest-dark', 'pitch-black', 'forest-light'];
+
+export interface Toast { id: number; message: string; undo?: () => void }
 
 const ENTRY_LOOKBACK = 120; // days of entries kept in memory for grid + streaks
 
@@ -15,6 +20,9 @@ interface AppState {
   adapter: DataAdapter | null;
   ready: boolean;
   theme: Theme;
+  toast: Toast | null;
+  showToast(message: string, undo?: () => void): void;
+  dismissToast(): void;
   habits: Habit[];
   entries: Entry[]; // rolling window, last ENTRY_LOOKBACK days
   overview: Overview | null; // current month (for the dashboard panels)
@@ -53,29 +61,43 @@ interface AppState {
   setNote(habit: Habit, date: string, notes: string): Promise<void>;
   user: User | null;
   authRequired: boolean;
-  authConfig: { registration: boolean; oidc: { enabled: boolean; name?: string } } | null;
+  authConfig: { registration: boolean; mail?: boolean; oidc: { enabled: boolean; name?: string } } | null;
   ssoError: string | null;
   loginWithSSO(): void;
   gridYear: number;
   gridMonth: number; // 1-12, the month shown in the habit grid
   categoryFilter: string; // '' = all categories (Today + grid)
+  feedback: FeedbackPrefs;
+  setFeedback(p: Partial<FeedbackPrefs>): void;
+  /** bumped whenever mood or sleep is saved, so views built from it can refetch */
+  wellnessVersion: number;
+  /** Phone navigation: which part of the app the bottom tab bar shows. Wider screens show everything. */
+  view: AppView;
+  /** +1 when the last tab change moved right (towards Groups), -1 when it moved left: drives the slide-in. */
+  viewDir: 1 | -1;
+  setView(v: AppView): void;
+  /** Switch tab; Groups also loads its data. */
+  goView(v: AppView): void;
   setCategoryFilter(c: string): void;
 
   shiftGridMonth(delta: number): Promise<void>;
   reorderHabits(ids: string[]): Promise<void>;
 
   login(email: string, password: string): Promise<void>;
-  register(email: string, password: string, name: string): Promise<void>;
+  /** Resolves true when the server wants the email confirmed before the first sign-in. */
+  register(email: string, password: string, name: string): Promise<boolean>;
   logout(): void;
   changePassword(current: string, next: string): Promise<void>;
   updateName(name: string): Promise<void>;
-  updateProfile(patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string }): Promise<void>;
+  updateProfile(patch: { name?: string; ntfyUrl?: string; timezone?: string; quietStart?: string; quietEnd?: string; weeklyReview?: boolean }): Promise<void>;
   deleteAccount(password: string): Promise<void>;
   init(): Promise<void>;
   openArchived(): Promise<void>;
   closeArchived(): void;
   pauseOpen: boolean;
-  setPauseOpen(open: boolean): void;
+  /** Habits ticked when the Take a break popup opens (null = all of them). */
+  pausePreset: string[] | null;
+  setPauseOpen(open: boolean, preset?: string[]): void;
   /** Vacation / sick days: skip every open day from..to for these habits. Returns days paused. */
   pauseHabits(habitIds: string[], from: string, to: string): Promise<number>;
   restoreHabit(id: string): Promise<void>;
@@ -83,11 +105,14 @@ interface AppState {
   refreshOverview(): Promise<void>;
   toggleEntry(habit: Habit, date: string): Promise<void>;
   setNumericEntry(habit: Habit, date: string, value: number | null): Promise<void>;
+  restoreEntry(habit: Habit, date: string, prev: Entry | undefined): Promise<void>;
   saveHabit(input: HabitInput, id?: string): Promise<void>;
   deleteHabit(id: string): Promise<void>;
   archiveHabit(id: string): Promise<void>;
   openDetail(id: string): Promise<void>;
   closeDetail(): void;
+  /** Reload the open habit window after its entries changed from inside it. */
+  refreshDetail(): Promise<void>;
   openEditor(habit: Habit | 'new'): void;
   closeEditor(): void;
   setTheme(theme: Theme): void;
@@ -111,8 +136,16 @@ function applyAccent(hex: string | null) {
   localStorage.setItem(ACCENT_KEY, hex);
 }
 
+const darkQuery = () => (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null);
+
+/** The concrete palette for a preference ("system" follows the phone's light/dark setting). */
+export function resolveTheme(theme: Theme): Exclude<Theme, 'system'> {
+  if (theme !== 'system') return theme;
+  return darkQuery()?.matches === false ? 'forest-light' : 'forest-dark';
+}
+
 function applyTheme(theme: Theme) {
-  document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.theme = resolveTheme(theme);
   localStorage.setItem(THEME_KEY, theme);
 }
 
@@ -127,6 +160,10 @@ function syncTimezone(user: User | null) {
 
 const MILESTONES = new Set([7, 30, 100, 365]);
 const CATEGORY_KEY = 'openhabit.category';
+const VIEW_KEY = 'openhabit.view';
+export const VIEW_ORDER: AppView[] = ['today', 'habits', 'stats', 'groups'];
+export type AppView = 'today' | 'habits' | 'stats' | 'groups';
+export const isPhone = () => typeof matchMedia === 'function' && matchMedia('(max-width: 639px)').matches;
 
 /** Habits in the selected category (all of them when the filter is empty or stale). */
 export function visibleHabits(habits: Habit[], filter: string): Habit[] {
@@ -154,7 +191,12 @@ export const useApp = create<AppState>((set, get) => ({
   ready: false,
   theme: THEME_CYCLE.includes(localStorage.getItem(THEME_KEY) as Theme)
     ? (localStorage.getItem(THEME_KEY) as Theme)
-    : 'forest-dark',
+    : 'system',
+  toast: null,
+  showToast(message, undo) {
+    set({ toast: { id: Date.now(), message, undo } });
+  },
+  dismissToast: () => set({ toast: null }),
   habits: [],
   entries: [],
   overview: null,
@@ -182,7 +224,8 @@ export const useApp = create<AppState>((set, get) => ({
   groupDashboard: null,
 
   async openGroups() {
-    set({ groupsOpen: true });
+    // phones show Groups as a tab; wider screens keep it a popup
+    if (isPhone()) get().setView('groups'); else set({ groupsOpen: true });
     await get().loadSocial();
     const now = new Date().toISOString();
     localStorage.setItem('openhabit.cheersSeen', now);
@@ -247,6 +290,39 @@ export const useApp = create<AppState>((set, get) => ({
   },
   gridYear: new Date().getFullYear(),
   gridMonth: new Date().getMonth() + 1,
+  view: (() => {
+    try {
+      // launcher shortcuts (?view=stats) win over the remembered tab
+      const q = new URLSearchParams(location.search).get('view');
+      if (q === 'today' || q === 'habits' || q === 'stats') return q;
+      const v = localStorage.getItem(VIEW_KEY); return v === 'habits' || v === 'stats' ? v : 'today';
+    } catch { return 'today'; }
+  })() as AppView,
+  viewDir: 1,
+  setView(v) {
+    const { view } = get();
+    if (v === view) return;
+    // Groups is a live page, so it is not remembered as the tab to reopen on
+    try { if (v !== 'groups') localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ }
+    const dir = VIEW_ORDER.indexOf(v) >= VIEW_ORDER.indexOf(view) ? 1 : -1;
+    const change = () => {
+      set({ view: v, viewDir: dir });
+      window.scrollTo({ top: 0 });
+    };
+    // on a phone the old page fades out and the new one slides in (browsers without View Transitions slide only)
+    if (isPhone()) withViewTransition(change, dir); else change();
+  },
+  goView(v) {
+    if (v === 'groups') { void get().openGroups(); return; }
+    get().setView(v);
+  },
+  feedback: loadPrefs(),
+  wellnessVersion: 0,
+  setFeedback(p) {
+    const next = { ...get().feedback, ...p };
+    savePrefs(next);
+    set({ feedback: next });
+  },
   categoryFilter: (() => { try { return localStorage.getItem(CATEGORY_KEY) ?? ''; } catch { return ''; } })(),
   setCategoryFilter(c) {
     try { localStorage.setItem(CATEGORY_KEY, c); } catch { /* private mode */ }
@@ -278,11 +354,13 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async register(email, password, name) {
-    const { token, user } = await authApi.register(email, password, name);
+    const { token, user, verificationRequired } = await authApi.register(email, password, name);
+    if (verificationRequired || !token) return true;
     setToken(token);
     set({ user, authRequired: false });
     syncTimezone(user);
     await get().refresh();
+    return false;
   },
 
   logout() {
@@ -321,7 +399,8 @@ export const useApp = create<AppState>((set, get) => ({
 
   closeArchived: () => set({ archivedOpen: false }),
   pauseOpen: false,
-  setPauseOpen: (open) => set({ pauseOpen: open }),
+  pausePreset: null,
+  setPauseOpen: (open, preset) => set({ pauseOpen: open, pausePreset: open ? preset ?? null : null }),
   async pauseHabits(habitIds, from, to) {
     const { adapter, entries } = get();
     if (!adapter || from > to) return 0;
@@ -348,6 +427,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   async init() {
     applyTheme(get().theme);
+    darkQuery()?.addEventListener?.('change', () => {
+      if (get().theme === 'system') applyTheme('system');
+    });
     applyAccent(get().accent);
     const adapter = await detectAdapter();
     set({ adapter });
@@ -447,6 +529,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!adapter) return;
     const existing = entries.find((e) => e.habitId === habit.id && e.date === date);
     const rest = entries.filter((e) => e !== existing);
+    const undoTo = () => get().restoreEntry(habit, date, existing);
     if (!existing) {
       // none -> done
       const entry: Entry = { habitId: habit.id, date, value: 1 };
@@ -454,13 +537,30 @@ export const useApp = create<AppState>((set, get) => ({
       set({ entries: next });
       await adapter.putEntry(entry).catch(() => {});
       maybeCelebrate(habit, next, set);
+      get().showToast(`${habit.name} marked done`, undoTo);
     } else if (!isSkip(existing.value) && isCompleted(habit, existing.value)) {
       // done -> skip
       const entry: Entry = { habitId: habit.id, date, value: SKIP, notes: existing.notes };
       set({ entries: [...rest, entry] });
       await adapter.putEntry(entry).catch(() => {});
+      get().showToast(`${habit.name} skipped`, undoTo);
     } else {
       // skip (or stale value) -> none
+      set({ entries: rest });
+      await adapter.deleteEntry(habit.id, date).catch(() => {});
+      get().showToast(`${habit.name} cleared`, undoTo);
+    }
+    await get().refreshOverview();
+  },
+
+  async restoreEntry(habit, date, prev) {
+    const { adapter, entries } = get();
+    if (!adapter) return;
+    const rest = entries.filter((e) => !(e.habitId === habit.id && e.date === date));
+    if (prev) {
+      set({ entries: [...rest, prev] });
+      await adapter.putEntry(prev).catch(() => {});
+    } else {
       set({ entries: rest });
       await adapter.deleteEntry(habit.id, date).catch(() => {});
     }
@@ -472,6 +572,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!adapter) return;
     const existing = entries.find((e) => e.habitId === habit.id && e.date === date);
     const rest = entries.filter((e) => e !== existing);
+    get().showToast(skip ? `${habit.name} skipped` : `${habit.name} unskipped`, () => get().restoreEntry(habit, date, existing));
     if (skip) {
       const entry: Entry = { habitId: habit.id, date, value: SKIP, notes: existing?.notes ?? '' };
       set({ entries: [...rest, entry] });
@@ -497,7 +598,9 @@ export const useApp = create<AppState>((set, get) => ({
   async setNumericEntry(habit, date, value) {
     const { adapter, entries } = get();
     if (!adapter) return;
-    const existingNotes = entries.find((e) => e.habitId === habit.id && e.date === date)?.notes ?? '';
+    const prevEntry = entries.find((e) => e.habitId === habit.id && e.date === date);
+    const existingNotes = prevEntry?.notes ?? '';
+    get().showToast(value == null ? `${habit.name} cleared` : `${habit.name} updated`, () => get().restoreEntry(habit, date, prevEntry));
     const rest = entries.filter((e) => !(e.habitId === habit.id && e.date === date));
     if (value == null) {
       set({ entries: rest });
@@ -551,18 +654,25 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   closeDetail: () => set({ detailOpen: false, detail: null }),
+  async refreshDetail() {
+    const { adapter, detail } = get();
+    if (!adapter || !detail) return;
+    const fresh = await adapter.getHabitDetail(detail.habit.id);
+    if (get().detail?.habit.id === fresh.habit.id) set({ detail: fresh });
+  },
   openEditor: (habit) => set({ editorHabit: habit }),
   closeEditor: () => set({ editorHabit: null }),
 
   setTheme(theme) {
-    applyTheme(theme);
-    set({ theme });
+    // the whole page crossfades between the old and the new colours
+    withViewTransition(() => { applyTheme(theme); set({ theme }); });
   },
 
   async logWellness(date, mood, sleepHours) {
     const { adapter } = get();
     if (!adapter) return;
     await adapter.putWellness({ date, mood, sleepHours });
+    set((st) => ({ wellnessVersion: st.wellnessVersion + 1 }));
     await get().refreshOverview();
   },
 

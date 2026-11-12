@@ -1,0 +1,24 @@
+{
+  "packageId": "app.openhabit.twa",
+  "host": "REPLACE-WITH-YOUR-HOST",
+  "name": "OpenHabit",
+  "launcherName": "OpenHabit",
+  "display": "standalone",
+  "themeColor": "#0F1113",
+  "navigationColor": "#0F1113",
+  "backgroundColor": "#0F1113",
+  "startUrl": "/",
+  "iconUrl": "https://REPLACE-WITH-YOUR-HOST/icon-512.png",
+  "maskableIconUrl": "https://REPLACE-WITH-YOUR-HOST/icon-maskable-512.png",
+  "webManifestUrl": "https://REPLACE-WITH-YOUR-HOST/manifest.webmanifest",
+  "enableNotifications": true,
+  "enableSiteSettingsShortcut": true,
+  "appVersionName": "1.0.0",
+  "appVersion": "1",
+  "signingKey": { "path": "./openhabit-release.keystore", "alias": "openhabit" },
+  "fallbackType": "customtabs",
+  "shortcuts": [
+    { "name": "Today", "shortName": "Today", "url": "/?view=today" },
+    { "name": "Stats", "shortName": "Stats", "url": "/?view=stats" }
+  ]
+}

@@ -44,6 +44,34 @@ variable "nat_mode" {
   }
 }
 
+variable "db_engine" {
+  description = "With create_database: \"rds\" (a small always-on RDS Postgres instance, about $13/month) or \"aurora-serverless\" (Aurora PostgreSQL Serverless v2 that pauses to zero capacity when idle: you pay for storage only until the next request, which then waits about 15 seconds for the resume)."
+  type        = string
+  default     = "rds"
+
+  validation {
+    condition     = contains(["rds", "aurora-serverless"], var.db_engine)
+    error_message = "db_engine must be rds or aurora-serverless."
+  }
+}
+
+variable "aurora_max_acu" {
+  description = "Aurora Serverless v2 ceiling in capacity units (1 ACU is about 2 GiB of RAM)."
+  type        = number
+  default     = 2
+}
+
+variable "aurora_pause_after_seconds" {
+  description = "Idle time before Aurora pauses (300 to 86400). Anything that queries the database keeps it awake, including the reminder check: with reminder_interval_minutes below this it never pauses."
+  type        = number
+  default     = 600
+
+  validation {
+    condition     = var.aurora_pause_after_seconds >= 300 && var.aurora_pause_after_seconds <= 86400
+    error_message = "aurora_pause_after_seconds must be between 300 and 86400."
+  }
+}
+
 variable "db_instance_class" {
   type    = string
   default = "db.t4g.micro"
@@ -220,4 +248,50 @@ variable "cloudfront_price_class" {
   description = "PriceClass_100 = NA/EU edges only (cheapest); PriceClass_200 adds Asia incl. India."
   type        = string
   default     = "PriceClass_200"
+}
+
+# ---- email (password reset, address verification) --------------------------------
+
+variable "mail" {
+  description = "Outgoing email for password-reset and verification links. transport: ses (Amazon SES API, no credentials to manage), smtp (Mailgun, SES SMTP, ...), webhook, log or empty (= off). Links use the app's public URL (set public_url when it is not the default)."
+  type = object({
+    transport   = string
+    from        = string
+    smtp_url    = string # smtp://user:pass@host:587 (a secret)
+    webhook_url = string
+  })
+  default   = { transport = "", from = "", smtp_url = "", webhook_url = "" }
+  sensitive = true
+}
+
+variable "require_email_verification" {
+  description = "Refuse sign-in until the address is confirmed (needs mail)."
+  type        = bool
+  default     = false
+}
+
+# ---- secrets ----------------------------------------------------------------------
+
+variable "use_secrets_manager" {
+  description = "Keep JWT_SECRET, database URLs/passwords, VAPID private key, OIDC client secret and SMTP URL in one AWS Secrets Manager secret that the functions read at start-up, instead of in their plain-text environment. The functions' role gets read access to that secret only. Costs about $0.40 per month. Not available in sandboxes that deny secretsmanager:*."
+  type        = bool
+  default     = false
+}
+
+variable "secret_name" {
+  description = "Name of the Secrets Manager secret (use_secrets_manager)."
+  type        = string
+  default     = ""
+}
+
+variable "ses_identity" {
+  description = "With mail.transport = \"ses\": the email address or domain SES may send from (it is verified for you: an address gets a confirmation link, a domain needs DKIM DNS records, see the ses_dkim_records output). mail.from must belong to it."
+  type        = string
+  default     = ""
+}
+
+variable "function_names" {
+  description = "Override the Lambda function name of a service (key: auth, habit, tracking, analytics, social, reminder, web, migrate; default \"<name>-<key>\"). Only needed when an account's policies reject a particular name."
+  type        = map(string)
+  default     = {}
 }

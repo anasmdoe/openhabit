@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, THEME_CYCLE } from '../store';
 import { HabitIcon } from '../lib/icons';
 import { MiniRing } from '../charts';
+import { useModalOpen } from '../lib/modal';
+import { usePresence } from '../lib/motion';
 
 interface Item {
   id: string;
@@ -83,7 +85,9 @@ export function CommandPalette() {
 
   useEffect(() => setSel(0), [q]);
 
-  if (!open) return null;
+  const present = usePresence(open);
+  useModalOpen(open, () => setOpen(false));
+  if (!present.show) return null;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(filtered.length - 1, s + 1)); }
@@ -92,7 +96,7 @@ export function CommandPalette() {
   };
 
   return (
-    <div className="backdrop flex items-start justify-center pt-[14vh] p-4" onClick={() => setOpen(false)}>
+    <div className="backdrop flex items-start justify-center pt-[14vh] p-4" data-closing={present.closing || undefined} onClick={() => setOpen(false)}>
       <div className="panel w-full max-w-md overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-line">
           <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-soft shrink-0" fill="none" stroke="currentColor" strokeWidth="2">

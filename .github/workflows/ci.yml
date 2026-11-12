@@ -30,6 +30,33 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  api-docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: openapi.yaml documents exactly the routes the services register
+        run: node scripts/check-openapi.js
+      - name: openapi.yaml is a valid OpenAPI document
+        run: npx --yes @redocly/cli@1.25.11 lint frontend/public/openapi.yaml --max-problems=20
+
+  mcp:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - run: npm ci
+      - run: npm test
+
   services:
     runs-on: ubuntu-24.04
     strategy:
@@ -54,7 +81,7 @@ jobs:
         run: |
           cmp ../_shared/metrics.js src/metrics.js
           cmp ../_shared/lambda.js src/lambda.js
-          [ ! -f src/actions.js ] || cmp ../_shared/actions.js src/actions.js
+          for f in actions.js streaks.js digest.js mailer.js; do [ ! -f src/$f ] || cmp ../_shared/$f src/$f; done
 
   database:
     runs-on: ubuntu-24.04
@@ -79,10 +106,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: db/init.sql is generated from db/migrations
+        run: node db/build-init.js --check
       - name: k8s ConfigMap matches db/
         run: node scripts/sync-configmap.js --check
       - name: init.sql is idempotent
         run: scripts/test-init-sql.sh
+      - name: psql and node migration runners agree (and refuse edited migrations)
+        run: |
+          (cd db/migrate-lambda && npm ci --omit=dev)
+          PGDATABASE=postgres scripts/test-migrations.sh
       - name: Generate service role passwords
         run: |
           for svc in AUTH HABIT TRACKING ANALYTICS SOCIAL REMINDER; do
@@ -126,6 +159,13 @@ jobs:
       - run: tofu validate
       - name: Offline stack tests (mocked AWS provider)
         run: tofu test
+      - name: CI runner stack (deploy/aws-runner)
+        working-directory: deploy/aws-runner
+        run: |
+          tofu fmt -check -recursive
+          tofu init -backend=false -input=false
+          tofu validate
+          tofu test
 
   docker:
     runs-on: ubuntu-24.04

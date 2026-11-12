@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">OpenHabit</string>
+    <string name="complication_label">Habits today</string>
+</resources>

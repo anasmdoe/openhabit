@@ -4,9 +4,12 @@ import { AccountMenu } from './Auth';
 import { InviteBell } from './Groups';
 import { MiniRing } from '../charts';
 import { HabitIcon } from '../lib/icons';
-import { dow, isCompleted, isFixedDay, isQuit, isSkip, monthRange } from '../lib/stats';
+import { addDays, dow, fromISO, isCompleted, isFixedDay, isQuit, isSkip, monthRange } from '../lib/stats';
 import { DAY_LETTERS, MONTH_NAMES } from '../lib/types';
 import type { Entry, Habit } from '../lib/types';
+import { haptic } from '../lib/feedback';
+import { useModalOpen } from '../lib/modal';
+import { useFlip, usePresence } from '../lib/motion';
 
 // ------------------------------------------------------------- toolbar
 const ACCENTS = ['#78C8A5', '#7DD3FC', '#C4B5FD', '#F0ABFC', '#FDA4AF', '#FDBA74', '#5EEAD4'];
@@ -14,6 +17,7 @@ const ACCENTS = ['#78C8A5', '#7DD3FC', '#C4B5FD', '#F0ABFC', '#FDA4AF', '#FDBA74
 function AccentPicker() {
   const { accent, setAccent } = useApp();
   const [open, setOpen] = useState(false);
+  useModalOpen(open, () => setOpen(false), { blur: false });
   return (
     <div className="relative">
       <button
@@ -90,26 +94,31 @@ export function TopBar() {
       </div>
       <div className="flex items-center gap-1.5">
       {adapter?.mode === 'local' && (
-        <>
+        <span className="max-sm:hidden flex items-center gap-1.5">
           <span className="text-[11px] text-ink-soft px-2 py-1 rounded-lg bg-forest-850"
             data-tip="No backend — data lives in this browser">demo</span>
           <button onClick={resetDemo}
             className="text-[11px] text-ink-soft hover:text-ink px-2 py-1 rounded-lg hover:bg-forest-850"
             data-tip="Regenerate demo data">reset</button>
-        </>
+        </span>
       )}
       {habits.length > 0 && (
-        <IconBtn onClick={() => setPauseOpen(true)} label="Take a break (vacation, sick days)">
+        <span className="max-sm:hidden"><IconBtn onClick={() => setPauseOpen(true)} label="Take a break (vacation, sick days)">
           <path d="M9 7v10M15 7v10" strokeLinecap="round" />
           <circle cx="12" cy="12" r="9" />
-        </IconBtn>
+        </IconBtn></span>
       )}
-      <IconBtn onClick={openArchived} label="Archived habits">
+      <span className="max-sm:hidden"><IconBtn onClick={openArchived} label="Archived habits">
         <path d="M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" />
-      </IconBtn>
-      <AccentPicker />
-      <IconBtn onClick={nextTheme} label={`Theme: ${theme === 'forest-dark' ? 'dark' : theme === 'pitch-black' ? 'pitch black' : 'light'}`}>
-        {theme === 'forest-dark' ? (
+      </IconBtn></span>
+      <span className="max-sm:hidden"><AccentPicker /></span>
+      <span className="max-sm:hidden"><IconBtn onClick={nextTheme} label={`Theme: ${theme === 'system' ? 'follow phone' : theme === 'forest-dark' ? 'dark' : theme === 'pitch-black' ? 'pitch black' : 'light'}`}>
+        {theme === 'system' ? (
+          <>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
+          </>
+        ) : theme === 'forest-dark' ? (
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" strokeLinejoin="round" />
         ) : theme === 'pitch-black' ? (
           <>
@@ -122,13 +131,77 @@ export function TopBar() {
             <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4l1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" strokeLinecap="round" />
           </>
         )}
-      </IconBtn>
+      </IconBtn></span>
       <IconBtn onClick={() => openEditor('new')} label="New habit">
         <path d="M12 5v14M5 12h14" strokeLinecap="round" />
       </IconBtn>
-      {adapter?.mode === 'api' && <InviteBell />}
+      {adapter?.mode === 'api' && <span className="max-sm:hidden"><InviteBell /></span>}
+      <OverflowMenu />
       {adapter?.mode === 'api' && <AccountMenu />}
       </div>
+    </div>
+  );
+}
+
+// Phones: the secondary toolbar actions live behind one ⋯ button instead of filling the top row.
+const THEME_LABEL: Record<string, string> = { system: 'Auto', 'forest-dark': 'Dark', 'pitch-black': 'Black', 'forest-light': 'Light' };
+
+function OverflowMenu() {
+  const { theme, setTheme, accent, setAccent, adapter, habits, openArchived, setPauseOpen, resetDemo } = useApp();
+  const [open, setOpen] = useState(false);
+  useModalOpen(open, () => setOpen(false), { blur: false });
+  const pick = (fn: () => void) => () => { setOpen(false); fn(); };
+  const row = 'text-left text-[13px] rounded-lg px-2.5 py-2 hover:bg-forest-850 flex items-center gap-3 w-full';
+  return (
+    <div className="relative sm:hidden">
+      <IconBtn onClick={() => setOpen((o) => !o)} label="More">
+        <circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+        <circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      </IconBtn>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-10 z-40 panel w-64 p-2 flex flex-col gap-0.5 shadow-xl">
+            <div role="menu" className="flex flex-col gap-0.5">
+            {habits.length > 0 && (
+              <button role="menuitem" className={row} onClick={pick(() => setPauseOpen(true))}>
+                <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-soft" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 7v10M15 7v10" strokeLinecap="round" /><circle cx="12" cy="12" r="9" /></svg>
+                Take a break
+              </button>
+            )}
+            <button role="menuitem" className={row} onClick={pick(() => { void openArchived(); })}>
+              <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-soft" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 8h16M5 8V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2M6 8v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8M10 12h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Archived habits
+            </button>
+            </div>
+            <div className="px-2.5 pt-2 pb-1 border-t border-line mt-1">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-ink-soft mb-1.5">Theme</div>
+              <div className="seg w-full" role="group" aria-label="Theme">
+                {THEME_CYCLE.map((t) => (
+                  <button key={t} onClick={() => setTheme(t)} aria-pressed={theme === t} className="flex-1">{THEME_LABEL[t] ?? t}</button>
+                ))}
+              </div>
+            </div>
+            <div className="px-2.5 pt-2 pb-1">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-ink-soft mb-1.5">Accent</div>
+              <div className="flex gap-2 flex-wrap items-center">
+                {ACCENTS.map((c) => (
+                  <button key={c} onClick={() => setAccent(c)} aria-label={`Accent ${c}`} aria-pressed={accent === c}
+                    className="w-6 h-6 rounded-full" style={{ background: c, outline: accent === c ? '2px solid rgb(var(--ink))' : 'none', outlineOffset: 2 }} />
+                ))}
+                {accent && <button onClick={() => setAccent(null)} className="text-[11px] text-ink-soft hover:text-ink">reset</button>}
+              </div>
+            </div>
+            {adapter?.mode === 'local' && (
+              <div className="px-2.5 pt-2 mt-1 border-t border-line flex items-center justify-between gap-2">
+                <span className="text-[11px] text-ink-soft">Demo: data lives in this browser</span>
+                <button onClick={pick(() => { void resetDemo(); })} className="text-[11px] font-semibold text-ink hover:text-mint">Reset</button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -149,6 +222,10 @@ function IconBtn({ onClick, label, children }: {
 
 // ------------------------------------------------------ habit list grid
 const CELL = 46;
+const WEEK_CELL_MIN = 32; // narrowest day column in the week view
+const MODE_KEY = 'openhabit.gridMode';
+type GridMode = 'week' | 'month';
+const SMALL_SCREEN = '(max-width: 639px)';
 const ROW_H = 44;
 const NAME_W_KEY = 'openhabit.nameW';
 const LIST_H_KEY = 'openhabit.listH';
@@ -175,15 +252,55 @@ export function HabitList() {
   const [drag, setDrag] = useState<{ id: string; to: number } | null>(null);
   const [cellMenu, setCellMenu] = useState<{ habit: Habit; date: string; x: number; y: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const iconOnly = nameW < ICON_ONLY;
+  const gridRef = useRef<HTMLDivElement>(null);
+  useFlip(gridRef); // rows glide to their new place after a reorder or a filter change
+
+  // Week view: seven days that always fit the screen (rolling window ending on `anchor`).
+  const [mode, setModeState] = useState<GridMode>(() => {
+    try {
+      const v = localStorage.getItem(MODE_KEY);
+      if (v === 'week' || v === 'month') return v;
+    } catch { /* private mode */ }
+    return matchMedia(SMALL_SCREEN).matches ? 'week' : 'month';
+  });
+  const setMode = (m: GridMode) => {
+    setModeState(m);
+    try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ }
+  };
+  const [anchor, setAnchor] = useState(() => today());
+  const [width, setWidth] = useState(390);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    setWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  const week = mode === 'week';
+  const nameEff = week ? Math.max(NAME_MIN, Math.min(nameW, width - 7 * WEEK_CELL_MIN)) : nameW;
+  const cell = week ? Math.max(WEEK_CELL_MIN, Math.floor((width - nameEff) / 7)) : CELL;
+  const iconOnly = nameEff < ICON_ONLY;
 
   const t = today();
   const { start, daysInMonth } = monthRange(gridYear, gridMonth);
   const days = useMemo(
-    () => Array.from({ length: daysInMonth }, (_, i) =>
-      `${start.slice(0, 8)}${String(i + 1).padStart(2, '0')}`),
-    [start, daysInMonth]
+    () => (week
+      ? Array.from({ length: 7 }, (_, i) => addDays(anchor, i - 6))
+      : Array.from({ length: daysInMonth }, (_, i) => `${start.slice(0, 8)}${String(i + 1).padStart(2, '0')}`)),
+    [week, anchor, start, daysInMonth]
   );
+  // entries are loaded for the last ~120 days (and the grid month): stay inside them
+  const oldestShown = addDays(t, -112);
+  const canGoBack = addDays(anchor, -13) >= oldestShown;
+  const canGoForward = anchor < t;
+  const weekLabel = (() => {
+    const a = fromISO(days[0]); const b = fromISO(days[6]);
+    const m = (d: Date) => d.toLocaleDateString('en', { month: 'short', timeZone: 'UTC' });
+    return a.getUTCMonth() === b.getUTCMonth()
+      ? `${a.getUTCDate()}–${b.getUTCDate()} ${m(b)}`
+      : `${a.getUTCDate()} ${m(a)} – ${b.getUTCDate()} ${m(b)}`;
+  })();
   const isCurrentMonth = t.slice(0, 7) === start.slice(0, 7);
   const hasData = habits.length > 0;
 
@@ -191,13 +308,13 @@ export function HabitList() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (isCurrentMonth) {
+    if (!week && isCurrentMonth) {
       const idx = parseInt(t.slice(8, 10), 10) - 1;
       el.scrollLeft = Math.max(0, idx * CELL - (el.clientWidth - nameW) / 2);
     } else {
       el.scrollLeft = 0;
     }
-  }, [start, hasData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [start, hasData, week]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const entryLookup = useMemo(() => {
     const m = new Map<string, Entry>();
@@ -290,34 +407,48 @@ export function HabitList() {
 
   return (
     <section className="panel">
+      <div className="panel-head">
+        Habits
+        <div className="seg" role="group" aria-label="Grid range">
+          {(['week', 'month'] as const).map((m) => (
+            <button key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className="capitalize">{m}</button>
+          ))}
+        </div>
+      </div>
       <div
         ref={scrollRef}
         className="overflow-auto thin-scroll overscroll-x-contain"
         style={{ maxHeight: listH || '60vh' }}
       >
-        <div style={{ minWidth: nameW + daysInMonth * CELL }}>
+        <div ref={gridRef} style={{ minWidth: nameEff + days.length * cell }}>
           {/* header: month switcher + day columns */}
           <div className="flex items-stretch border-b border-line sticky top-0 z-20 bg-panel">
             <div
               className="sticky left-0 z-10 bg-panel shrink-0 border-r border-line flex items-center justify-between gap-0.5 px-1"
-              style={{ width: nameW }}
+              style={{ width: nameEff }}
             >
-              <button onClick={() => shiftGridMonth(-1)} aria-label="Previous month"
-                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0">
+              <button
+                onClick={() => (week ? setAnchor(addDays(anchor, -7)) : shiftGridMonth(-1))}
+                disabled={week && !canGoBack}
+                aria-label={week ? 'Previous week' : 'Previous month'}
+                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0 disabled:opacity-30">
                 ‹
               </button>
               {!iconOnly && (
                 <span className="text-[11px] font-semibold text-center truncate">
-                  {MONTH_NAMES[gridMonth - 1].slice(0, 3)} <span className="num text-ink-soft">{gridYear}</span>
+                  {week ? weekLabel : <>{MONTH_NAMES[gridMonth - 1].slice(0, 3)} <span className="num text-ink-soft">{gridYear}</span></>}
                 </span>
               )}
-              <button onClick={() => shiftGridMonth(1)} aria-label="Next month"
-                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0">
+              <button
+                onClick={() => (week ? setAnchor(addDays(anchor, 7) > t ? t : addDays(anchor, 7)) : shiftGridMonth(1))}
+                disabled={week && !canGoForward}
+                aria-label={week ? 'Next week' : 'Next month'}
+                className="w-6 h-6 grid place-items-center rounded-md text-ink-soft hover:text-ink hover:bg-forest-850 shrink-0 disabled:opacity-30">
                 ›
               </button>
             </div>
             {days.map((d) => (
-              <div key={d} style={{ width: CELL }}
+              <div key={d} style={{ width: cell }}
                 className={`py-2 text-center shrink-0 ${d === t ? 'bg-forest-850/70 rounded-b-md' : ''}`}>
                 <div className={`text-[10px] leading-none ${d === t ? 'text-ink font-semibold' : 'text-ink-soft'}`}>
                   {DAY_LETTERS[dow(d)]}
@@ -332,6 +463,7 @@ export function HabitList() {
           {shown.map((habit, idx) => (
             <div
               key={habit.id}
+              data-flip={habit.id}
               className={`flex items-stretch border-b border-line last:border-b-0 transition-transform ${
                 drag?.id === habit.id ? 'opacity-40' : ''
               } ${drag && drag.id !== habit.id && drag.to === idx ? 'border-t-2 border-t-mint' : ''}`}
@@ -339,9 +471,9 @@ export function HabitList() {
             >
               <div
                 className="sticky left-0 z-10 bg-panel shrink-0 border-r border-line flex items-center min-w-0 group relative"
-                style={{ width: nameW }}
+                style={{ width: nameEff }}
               >
-                {filtered ? <span className="w-2 shrink-0" /> : <span
+                {filtered || (week && width < 500) ? <span className="w-2 shrink-0" /> : <span
                   onPointerDown={(e) => startReorder(e, habit.id)}
                   className={`cursor-grab active:cursor-grabbing px-1 flex items-center text-ink-soft/50 hover:text-ink-soft ${
                     iconOnly ? 'absolute left-0 top-0 h-full z-10 opacity-40 hover:opacity-100' : 'self-stretch'
@@ -387,6 +519,7 @@ export function HabitList() {
                 <DayCell
                   key={d}
                   habit={habit}
+                  w={cell}
                   date={d}
                   isFuture={d > t}
                   isToday={d === t}
@@ -459,15 +592,16 @@ export function CategoryBar() {
 // ---------------------------------------------------------------- cells
 const SkipGlyph = ({ size = 15 }: { size?: number }) => (
   <svg viewBox="0 0 20 20" width={size} height={size} aria-hidden>
-    <path d="M5 6l4 4-4 4M11 6l4 4-4 4" fill="none" stroke="rgb(var(--ink-soft))"
+    <path d="M5 6l4 4-4 4M11 6l4 4-4 4" fill="none" stroke="rgb(var(--skip))"
       strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
   </svg>
 );
 
 function DayCell({
-  habit, date, entry, isFuture, isToday, onToggle, onSetValue, onMenu,
+  habit, w, date, entry, isFuture, isToday, onToggle, onSetValue, onMenu,
 }: {
   habit: Habit;
+  w: number;
   date: string;
   entry: Entry | undefined;
   isFuture: boolean;
@@ -495,7 +629,7 @@ function DayCell({
       if (e.pointerType !== 'touch') return;
       const { clientX, clientY } = e;
       pressTimer.current = window.setTimeout(() => {
-        navigator.vibrate?.(12);
+        haptic(12);
         onMenu(clientX, clientY);
         pressTimer.current = null;
       }, 480);
@@ -510,7 +644,7 @@ function DayCell({
 
   if (!scheduled) {
     return (
-      <div style={{ width: CELL }} className={`grid place-items-center shrink-0 ${todayBg}`}>
+      <div style={{ width: w }} className={`grid place-items-center shrink-0 ${todayBg}`}>
         <span className="w-1 h-1 rounded-full bg-forest-700" />
       </div>
     );
@@ -523,10 +657,10 @@ function DayCell({
     const clean = !isFuture && !skipped && !slipped && started;
     return (
       <button
-        onClick={() => { navigator.vibrate?.(slipped ? 8 : [10, 30, 10]); onToggle(); }}
+        onClick={() => { haptic(slipped ? 8 : [10, 30, 10]); onToggle(); }}
         {...pressHandlers}
         disabled={isFuture}
-        style={{ width: CELL }}
+        style={{ width: w }}
         className={`cell-btn relative grid place-items-center shrink-0 h-full ${todayBg} ${isFuture ? 'opacity-25 cursor-default' : 'hover:bg-forest-850/60'}`}
         aria-label={`${habit.name}, ${date}: ${skipped ? 'skipped' : slipped ? 'slipped' : clean ? 'clean' : 'not tracked'}`}
         data-tip={skipped ? 'Skipped — streak preserved' : slipped ? 'Slipped — tap to undo' : clean ? 'Clean — tap if you slipped' : undefined}
@@ -555,10 +689,10 @@ function DayCell({
     const done = value != null && !skipped && value >= 1;
     return (
       <button
-        onClick={() => { navigator.vibrate?.(8); onToggle(); }}
+        onClick={() => { haptic(8); onToggle(); }}
         {...pressHandlers}
         disabled={isFuture}
-        style={{ width: CELL }}
+        style={{ width: w }}
         className={`cell-btn relative grid place-items-center shrink-0 h-full ${todayBg} ${isFuture ? 'opacity-25 cursor-default' : 'hover:bg-forest-850/60'}`}
         aria-label={`${habit.name}, ${date}: ${skipped ? 'skipped' : done ? 'done' : 'not done'}`}
         data-tip={skipped ? 'Skipped — streak preserved' : undefined}
@@ -581,6 +715,7 @@ function DayCell({
   if (editing) {
     return (
       <NumericEditor
+        w={w}
         initial={skipped ? undefined : value}
         onCommit={(v) => { setEditing(false); onSetValue(v); }}
         onCancel={() => setEditing(false)}
@@ -594,7 +729,7 @@ function DayCell({
       onClick={() => !isFuture && setEditing(true)}
       {...pressHandlers}
       disabled={isFuture}
-      style={{ width: CELL }}
+      style={{ width: w }}
       className={`cell-btn relative shrink-0 h-full flex flex-col items-center justify-center leading-none ${todayBg} ${isFuture ? 'opacity-25 cursor-default' : 'hover:bg-forest-850/60'}`}
       aria-label={`${habit.name}, ${date}: ${skipped ? 'skipped' : value ?? 'no entry'}${habit.unit ? ` ${habit.unit}` : ''}`}
       data-tip={skipped ? 'Skipped — streak preserved' : undefined}
@@ -633,6 +768,7 @@ function CellMenu({ habit, date, x, y, entry, onClose }: {
     if ((entry?.notes ?? '') !== note) setNote(habit, date, note.trim());
     onClose();
   };
+  useModalOpen(true, saveNote, { blur: false }); // Back saves the note and closes, like tapping outside
 
   return (
     <>
@@ -682,8 +818,9 @@ function CellMenu({ habit, date, x, y, entry, onClose }: {
 }
 
 function NumericEditor({
-  initial, onCommit, onCancel,
+  w, initial, onCommit, onCancel,
 }: {
+  w: number;
   initial: number | undefined;
   onCommit: (v: number | null) => void;
   onCancel: () => void;
@@ -698,7 +835,7 @@ function NumericEditor({
     onCommit(v);
   };
   return (
-    <div style={{ width: CELL }} className="shrink-0 h-full p-1">
+    <div style={{ width: w }} className="shrink-0 h-full p-1">
       <input
         ref={ref} autoFocus type="number" step="any" inputMode="decimal" value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -717,11 +854,13 @@ function NumericEditor({
 export function ArchivedModal() {
   const { archivedOpen, archived, closeArchived, restoreHabit, deleteHabit } = useApp();
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  if (!archivedOpen) return null;
+  const present = usePresence(archivedOpen);
+  useModalOpen(archivedOpen, closeArchived);
+  if (!present.show) return null;
   return (
-    <div className="backdrop grid place-items-center p-4"
+    <div className="backdrop grid place-items-center p-4" data-closing={present.closing || undefined}
       onClick={closeArchived} role="dialog" aria-modal="true" aria-label="Archived habits">
-      <div className="panel w-full max-w-md max-h-[80vh] overflow-y-auto thin-scroll" onClick={(e) => e.stopPropagation()}>
+      <div className="panel w-full max-w-md modal-scroll thin-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           Archived habits
           <button onClick={closeArchived} className="normal-case font-semibold hover:text-ink" aria-label="Close">✕</button>

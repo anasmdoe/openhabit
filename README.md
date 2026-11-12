@@ -48,7 +48,57 @@ it standalone.
   password change and full account deletion (cascades to all data). Set `ALLOW_REGISTRATION=false` on auth-service to
   close signups once your household has accounts. Demo mode (no backend) skips
   auth entirely.
-- **Three themes** — dark, pitch black (OLED), light; cycle from the toolbar
+- **Password reset and email verification** — "Forgot password?" emails a one-hour link; new accounts
+  get a confirmation link (optionally required before first sign-in). Needs an outgoing-mail setting,
+  see *Email* below; without one the app works as before and hides these options
+- **Themes** — Auto (follows the phone's light/dark setting), dark, pitch black (OLED), light
+- **Streak protection** — a daily habit can forgive a few missed days a month: a miss straight after a
+  completed day is "frozen" and the streak carries on (never two in a row; Off, 1, 2 or 3 a month per
+  habit, set in the habit editor, default 1). Frozen days show as a snowflake in the calendar, and the
+  habit window says how many freezes are left. Skips, Take a break and flexible "N per week" habits work as before
+- **Goals with deadlines** — "Read 1,800 pages by December", "Run 100 Km by June": pick a habit, a target and a
+  deadline. Stats > Goals shows a progress bar with a marker for where you should be by now, the pace you need per
+  day, and an honest status (ahead, on track, behind, missed, done). Numeric habits add up their values; yes/no
+  habits count days done. Needs about three days before it will call you behind
+- **Habit stacking** — "after Wake up, do Meditation": set *Stack after* in the habit editor. The habit moves to sit
+  right behind its anchor on Today (and under its time section), says "After Wake up", and its reminder says so too.
+  Loops, quit habits and other people's habits are refused
+- **Patterns** — Stats > Patterns reports things like "On days you do Gym you sleep 40 minutes longer" or "On days you
+  do Meditation you also do Reading 14/18 times, vs 6/20 otherwise". It only speaks when both groups have 8+ days and the
+  gap is clear (|t| or |z| of at least 2, at least 15 minutes or 15 points); otherwise it says what data is missing
+- **Habits that complete themselves** — set *Complete automatically* on a habit (steps, exercise, sleep, mindful
+  minutes, distance, active energy, water): the Android app sends daily totals from **Health Connect** every hour,
+  and on iPhone a **Shortcuts** automation sends them from **Apple Health** ([recipes](docs/iphone-shortcuts.md)).
+  Yes/no habits are done at a threshold, measurable ones take the day's total; manual values are never lowered.
+  Sleep fills the Patterns panel
+- **Phone, lock screen and watch** — [`android/`](android/README.md): home-screen (and lock-screen) widget, a Quick
+  Settings tile, Health Connect sync, and a **Wear OS** app with a complication. [`ios/`](ios/README.md): Home and
+  **Lock Screen** widgets with tap-to-complete, and an **Apple Watch** app with complications. All built in CI, not yet
+  tried on devices
+- **Talk to your habits (MCP)** — [`mcp/`](mcp/README.md) is a Model Context Protocol server, so Claude, ChatGPT,
+  Cursor and other assistants can read and log your habits with a personal API token: "I just ran 5 km",
+  "what's left today?", "how is my reading goal going?". Runs locally over stdio or as one HTTP endpoint
+- **Weekly review** — opt in under Account > Weekly review and every Sunday at 18:00 (your time) you get
+  one digest by notification, ntfy and, when the server has email set up, email: overall completion and the
+  change on the week before, the strongest habit, the one with most room, perfect days, your longest run
+  and any streak freezes used. Quiet weeks say so instead of inventing numbers
+- **Habit window** — tap a habit for a summary (tracking since, 7/30/90-day and all-time rates,
+  next milestone), trend and best-weekday sentences, an editable 3-month calendar (tap a day to
+  tick, skip, clear, set a value or add a note), a notes timeline, average/best/total for
+  measurable habits, clean days and money or time saved for quit habits, plus share card,
+  per-habit CSV export, pause just this habit and edit reminders
+- **Duration habits** — a numeric habit with the unit `min` or `h` is shown as `1h 30m`, and its
+  + button adds 5 minutes (or a quarter hour)
+- **Calendar feed** — Account menu > Calendar feed gives a subscription link (iCal) for Google,
+  Apple or Outlook Calendar: recurring events on the days a habit is due, at its first reminder
+  time. Names and cues only; anyone with the link can read it, and changing `JWT_SECRET` revokes it
+- **Scheduled export** — `scripts/export-data.js` writes the app's re-importable JSON export to a
+  folder and optionally uploads it (WebDAV or a presigned S3 URL); see *Scheduled export* below
+- **Android app** — build config for a Trusted Web Activity in [`twa/`](twa/README.md)
+- **Undo and time of day** — every Today action offers a 5-second Undo; Today groups habits into
+  Morning / Afternoon / Evening / Anytime from their first reminder time
+- **Accessibility** — axe-core clean (WCAG 2 A/AA) in all three themes, landmarks and a page
+  heading, 40px touch targets on touch screens
 - **Month navigation** — the habit grid shows one calendar month with ‹ › arrows
   (auto-scrolls to today); drag habits to reorder (order syncs to every panel);
   drag the column divider to resize habit names (great on phones) and the strip
@@ -59,10 +109,35 @@ it standalone.
 - **PWA + offline** — installable app; the shell works offline and any entries,
   skips, notes, or wellness logged while offline are queued locally and synced
   automatically when the connection returns
+- **Phone-first navigation** — on phones a bottom tab bar switches between
+  *Today*, *Habits*, *Stats* (and *Groups* with an account); wider screens show
+  everything on one page. The habit grid has a **Week** view (seven days that
+  always fit the screen, with ‹ › to move through the weeks) next to the full
+  **Month** view
+- **Swipe between tabs** — on a phone, swipe sideways to move between *Today*,
+  *Habits*, *Stats* and *Groups* (Groups is a page of its own on phones, a popup
+  on wider screens); the month grid and Today's own swipe rows keep their gestures
+- **Stats that explain themselves** — a **Recap** of the last 7 or 30 days against
+  the period before (best habit, most room, strongest weekday over four weeks, and a
+  few plain sentences), **trend arrows** on the stat cards, a **calendar of all habits**
+  (tap a day to see what was done), a **year in pixels** coloured by mood, and insights
+  that say how many more mood days they need. "N per week" habits are scored against
+  their weekly quota (3 of 3 is 100%). **Customize** hides and reorders the sections
+- **Swipe on Today** — swipe a row right to log it (or undo), left to skip it;
+  scrolling and the buttons work as before
+- **First-run checklist** — a new account is walked through adding habits,
+  turning on reminders on this device, and installing the app (once)
 - **Today at a glance** — a progress ring and one big tap target per habit
   (full-width rows on phones): tap to check in, **+1** to count up measurable
   habits (water, pages, sets), a streak flame per habit, and a gentle
   *don't miss twice* nudge on habits missed yesterday
+- **When & where cues, several reminders** — give a habit a cue ("After my
+  morning coffee, at my desk"): it shows under the habit on Today and in its
+  reminder. Set up to **3 reminder times a day**; each one is skipped if the
+  habit is already logged, and Snooze answers the reminder you just got
+- **Feedback you control** — Today can hide completed habits, play a soft
+  chime on completion (off by default), and vibrates on check-in unless your
+  device asks for reduced motion
 - **Categories** — group habits (Health, Work, …); chips filter Today and the
   grid, and *By category* shows each group's month completion
 - **Break a habit** — quit habits (smoking, doom-scrolling) where you log only
@@ -392,6 +467,18 @@ removes everything except your database.
   kept 14 days). The login rate limiter is per Lambda container.
 - Snooze / Done buttons work out of the box: `PUBLIC_URL` is set to the app URL.
   Web Push turns on when `.env` has the VAPID keys (`scripts/init-env.sh`).
+- Secrets: `use_secrets_manager = true` keeps `JWT_SECRET`, the database URLs and passwords, the VAPID
+  private key, the OIDC client secret and the SMTP URL in one Secrets Manager secret (about $0.40 a
+  month) that the functions read at start-up, instead of in their plain-text configuration. The
+  functions' role may read only that secret. (Sandboxes that cannot attach inline policies get the
+  broader AWS-managed `SecretsManagerReadWrite` instead.) The values are still in Terraform state: keep
+  it private.
+- Database that sleeps: `db_engine = "aurora-serverless"` (with `create_database`) uses Aurora PostgreSQL
+  Serverless v2, which pauses to zero capacity when idle, so you pay for storage only until the next
+  request (which waits ~15 s). Trade-offs, why not DynamoDB, and what a DynamoDB model would look like are in
+  [docs/adr/0001-database-for-scale-to-zero.md](docs/adr/0001-database-for-scale-to-zero.md). Offline-tested
+  only: the KodeKloud sandbox denies the instance class.
+- Email: set `mail` (see *Email* below) and, behind a custom domain, `public_url`.
 - SSO: set `oidc` in `terraform.tfvars` (Amazon Cognito works as the provider).
 - Next step on the roadmap: a DynamoDB storage backend, which removes the
   database's idle cost entirely.
@@ -421,7 +508,8 @@ retention or tagging, see the sandbox block in `terraform.tfvars.example`
 │   ├── social-service/       # groups, invites, sharing, reactions, group habits
 │   └── reminder-service/     # minute tick -> ntfy + Web Push reminders, quiet hours, action links
 ├── db/
-│   ├── init.sql              # schema + per-service roles (idempotent migration)
+│   ├── migrations/           # NNNN_name.sql: the schema, applied once each, in order
+│   ├── init.sql              # GENERATED from migrations/ (node db/build-init.js); used by psql, Docker, k8s
 │   └── seed.js               # demo data via the public API
 ├── scripts/
 │   ├── backup.sh             # compose backup (gzip pg_dump + rotation)
@@ -434,6 +522,14 @@ retention or tagging, see the sandbox block in `terraform.tfvars.example`
 ```
 
 ## API quick reference
+
+The complete, machine-readable description is the **OpenAPI 3.1** document at
+[`frontend/public/openapi.yaml`](frontend/public/openapi.yaml), also served by a
+running instance at `/openapi.yaml`. Paste it into Swagger Editor, Postman or
+Insomnia, or feed it to a client generator. CI fails if it drifts from the
+routes the services register (`scripts/check-openapi.js`) or stops being a
+valid OpenAPI document.
+
 
 ```
 POST   /api/auth/register              {email, password, name?} -> {token, user}
@@ -448,7 +544,7 @@ DELETE /api/auth/push/subscriptions    {endpoint}
 All routes below require:  Authorization: Bearer <token>
 
 GET    /api/habits                     list
-POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?, category?, kind?: build|quit}
+POST   /api/habits                     create {name, question?, type?, unit?, target?, targetType?, color?, activeDays?, category?, kind?: build|quit, cue?, reminderTime?: "HH:MM[,HH:MM[,HH:MM]]"}
 PUT    /api/habits/:id                 partial update (incl. archived)
 DELETE /api/habits/:id
 PUT    /api/habits/reorder             {ids: [...]}
@@ -531,11 +627,166 @@ stalled (>5 min without a tick), reminder tick errors, 5xx rate >5%, p95
 latency >1s, and pg pool saturation. Point Alertmanager (or Grafana alerting)
 at them to get notified — an ntfy receiver works nicely here too.
 
+## Streak protection and the weekly review
+
+**Streaks.** Each daily habit has a *streak protection* setting (0 to 3 freezes a month, default 1). Walking
+the scheduled days in order, a missed day is *frozen* when the day before it was completed and the habit
+still has a freeze left in that calendar month; two misses in a row always end the streak (a freeze covers a
+sick day, not a week off: use Skip or Take a break for that). Nothing is stored: freezes are derived from the
+entries, so fixing a past day always gives a consistent answer, and the browser, `analytics-service` and the
+weekly review all run the same rule (`frontend/src/lib/streaks.ts`, `services/_shared/streaks.js`). Quit
+habits and flexible weekly habits are not affected.
+
+**The review.** `reminder-service` checks each opted-in user (`users.weekly_review`); on Sunday between 18:00
+and 22:00 in the user's timezone it claims the week in `weekly_reviews_sent` (so replicas and retries never
+double-send) and sends the digest to their Web Push subscriptions, their ntfy topic and, if email is
+configured (see *Email* below; the reminder service takes the same `MAIL_*` settings), their account address.
+`GET /api/v1/analytics/weekly-review` returns the same digest for the in-app preview. For tests only,
+`OPENHABIT_TEST_CLOCK=2026-10-18T19:00:00Z` pins the clock the review uses.
+
+## Goals, stacking and patterns
+
+**Goals** live in the `goals` table (`habit-service`: `GET/POST /habits/goals`, `PUT/DELETE /habits/goals/:id`, at most 50
+each). Progress is never stored: `GET /analytics/goals` derives it from the habit's entries between the start date and the
+deadline (`services/analytics-service/src/goals.js`, mirrored by `frontend/src/lib/goals.ts` for demo mode). The status
+compares your pace over the last 14 days with what the deadline needs: `ahead` at 115% or more of the target projected,
+`on_track` at 100% or more, otherwise `behind`; the first three days are always `on_track`, a deadline that has passed
+is `missed`, and marking a goal done by hand wins.
+
+**Stacking** is one nullable column, `habits.after_habit_id` (migration `0006`). `habit-service` checks that the anchor is
+yours, not the habit itself, not a quit habit, and that following the chain never returns to the habit; deleting the
+anchor un-stacks its followers (`ON DELETE SET NULL`).
+
+**Patterns** (`GET /analytics/correlations`, `services/analytics-service/src/correlations.js`, mirrored in
+`frontend/src/lib/correlations.ts`): for each habit, sleep on days done versus missed (Welch t-test), and for each pair of
+habits, how often B is done when A is versus when it is not (two-proportion z-test). Today is left out, skipped and
+unscheduled days are left out, and the strongest 8 results are returned with the sample sizes. These are patterns, not causes.
+
+**Widget feed.** `GET /analytics/today` returns the habits due on the caller's date with state, value and streak in one call.
+
+## API versioning
+
+The stable address of the API is **`/api/v1`**: `GET /api/v1/habits`. The web app and the docs use it.
+`/api/...` without a version is an alias of the current version, handy for quick scripts; pin `/api/v1`
+for anything long-lived. Breaking changes will only ever appear under a new prefix (`/api/v2`) and the
+previous one stays available for at least six months. Additions (new fields, new endpoints) are not
+breaking and arrive in v1. Every layer serves both prefixes: the nginx gateway, the Kubernetes ingress
+and API Gateway on AWS. The full reference is `/openapi.yaml`.
+
+## Webhooks
+
+Set a webhook URL on a habit and OpenHabit sends it a `POST` when the habit is completed:
+
+```json
+{ "id": "6f1c...", "event": "habit.completed", "created": "2026-10-17T07:41:03.000Z",
+  "habitId": "…", "habit": "Reading", "date": "2026-10-17", "value": 12,
+  "message": "Reading completed (2026-10-17)" }
+```
+
+Every delivery is **signed** so the receiver can tell it from a forged request:
+
+| Header | Value |
+|---|---|
+| `X-OpenHabit-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">` |
+| `X-OpenHabit-Event` | `habit.completed` |
+| `X-OpenHabit-Delivery` | the same uuid as `id` in the body; use it to drop duplicates |
+
+The key is your signing secret (`whsec_…`): Account menu > Webhook signing, or `GET /api/v1/auth/webhook-secret`.
+Rotating it (`POST /api/v1/auth/webhook-secret/rotate`) replaces it for all your habits at once. Verify
+against the **raw bytes** you received, compare in constant time, and reject timestamps more than five
+minutes old (replays):
+
+```js
+// Node
+import crypto from 'node:crypto';
+function verify(secret, rawBody, header) {
+  const p = Object.fromEntries(header.split(',').map((kv) => kv.split('=')));
+  if (Math.abs(Date.now() / 1000 - Number(p.t)) > 300) return false;
+  const want = crypto.createHmac('sha256', secret).update(`${p.t}.${rawBody}`).digest('hex');
+  return p.v1.length === want.length && crypto.timingSafeEqual(Buffer.from(p.v1), Buffer.from(want));
+}
+```
+
+```python
+# Python
+import hmac, hashlib, time
+def verify(secret: str, raw_body: bytes, header: str) -> bool:
+    p = dict(kv.split("=", 1) for kv in header.split(","))
+    if abs(time.time() - int(p["t"])) > 300:
+        return False
+    want = hmac.new(secret.encode(), p["t"].encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(p["v1"], want)
+```
+
+A delivery is attempted once with a 3-second timeout (no retries); answer quickly and do slow work after
+responding. Services such as ntfy that just want a URL keep working: they ignore the extra headers.
+
+## Email: password reset and address verification
+
+Set these on the auth-service (Docker: in `.env`; Kubernetes: keys in `app-secrets`; AWS: the `mail` variable):
+
+| Setting | Meaning |
+|---|---|
+| `PUBLIC_URL` | The https address users open the app at. Links in emails point here and **only** here: it is never taken from a request, which would let anyone aim a victim's reset link at their own server |
+| `MAIL_TRANSPORT` | `ses` (AWS Lambda only: the Amazon SES API with the function's IAM role, so no SMTP credentials; set `mail.transport = "ses"` and `ses_identity` in `terraform.tfvars`), `smtp` (Amazon SES SMTP, Mailgun, a Gmail app password, your own server), `webhook` (POSTs `{to, subject, text}` to `MAIL_WEBHOOK_URL`: Home Assistant, n8n, a script) or `log` (prints links to the service log: development only) |
+| `SMTP_URL` | `smtp://user:password@host:587` or `smtps://…:465` |
+| `MAIL_FROM` | e.g. `OpenHabit <no-reply@example.com>` |
+| `REQUIRE_EMAIL_VERIFICATION` | `true`: refuse sign-in until the address is confirmed |
+
+**Amazon SES on AWS:** `ses_identity` is verified for you. For an email address, SES mails it a
+confirmation link to click once; for a domain, add the three DKIM CNAME records from the `ses_dkim_records`
+output to its DNS. A new SES account is in *sandbox* mode (200 mails a day, only to verified addresses): ask for
+production access in the SES console before inviting real users. `mail.from` must belong to the identity.
+
+Reset links last one hour, verification links 24 hours, both work once, and a newer request voids older
+ones. "Forgot password" answers the same whether or not the address has an account and is rate limited
+(3 per address per 15 minutes). Choosing a password through the emailed link also confirms the address.
+Single sign-in (SSO) accounts count as verified. With no mail settings the options are hidden and an
+administrator can reset a password by hand.
+
+## Database migrations
+
+The schema lives in numbered files, `db/migrations/0001_baseline.sql`, `0002_…`, applied once each in
+order inside a transaction and recorded (with a checksum) in `schema_migrations`. To change the schema,
+add the next number; never edit a released file (the runners refuse it). `db/init.sql` is generated from
+them (`node db/build-init.js`, checked in CI) so that Docker's first boot, the Kubernetes ConfigMap and
+`psql -f db/init.sql` keep working; the migrate Lambda applies the same files with `db/migrate.mjs`.
+Databases created before numbering adopt `0001` automatically (it is idempotent).
+
+## Scheduled export
+
+Keep an off-site copy of your habits, entries and mood, in the same JSON the app's Export button
+produces (re-importable from Account > Import). Create an API token under Account > API tokens, then:
+
+```bash
+OPENHABIT_URL=https://habits.example.com/api OPENHABIT_TOKEN=oh_xxx \
+  node scripts/export-data.js --out ~/openhabit-backups --keep 14
+# optional upload: --put https://cloud.example.com/remote.php/dav/files/me/backups/ --put-auth user:app-password
+#                  (a presigned S3 PUT URL also works)
+```
+
+Run it daily from cron (`15 3 * * * ...`), a systemd timer, a GitHub Actions `schedule:` job, or a
+Kubernetes CronJob. The database-level backup in *Backups & restore* covers the whole instance;
+this one covers a single account and works against any deployment, including AWS serverless.
+
+## Browser tests and the CI runner
+
+`e2e/` holds the Playwright suite (phone and desktop layouts: popups and the Back button, tab and row
+swiping, the habit window, undo, themes, tooltips, sign-in/reset screens against a stubbed API, and
+axe-core accessibility scans in all three themes). `.github/workflows/e2e.yml` runs it on a
+**self-hosted runner in your AWS account** (`deploy/aws-runner`, see its README), and nightly also runs
+the API smoke test and a signed-up-user journey against a deployed stack (repository variable
+`E2E_BASE_URL`).
+
 ## Tests & CI
 
 ```bash
 cd frontend && npm test                 # unit tests for streak/score/schedule math
 scripts/test-init-sql.sh                # applies db/init.sql twice, proves it is idempotent
+scripts/test-migrations.sh              # psql and node runners agree; edited migrations are refused
+node db/build-init.js --check           # db/init.sql is up to date with db/migrations
+cd e2e && npm ci && npx playwright install chromium && npm test   # browser tests (build the frontend first)
+scripts/verify-all.sh [--live URL]      # everything above in one go, as a PASS/FAIL table
 node scripts/smoke-test.js              # all services, each as its own DB role, end to end
 node scripts/smoke-test.js --lambda     # the same flows through the AWS Lambda handlers
 (cd deploy/aws && tofu test)            # Terraform stack, offline with a mocked AWS provider
