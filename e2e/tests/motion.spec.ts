@@ -1,12 +1,18 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { goTab, openApp } from './helpers';
+import { openApp } from './helpers';
 
 // Smooth motion: things glide instead of jump. These run with motion allowed (the default), and the
 // last test checks that "reduce motion" turns it all off.
 
 const hideCompleted = (p: Page) => p.getByRole('button', { name: 'Hide completed habits' });
-const row = (p: Page, name: string) => p.locator('[data-no-swipe]:visible:not([inert])', { hasText: name }).first();
+// "No sugar" is a daily yes/no habit. The demo data may already have it done today, so make sure it is open first.
+const sugar = (p: Page) => p.locator('[data-no-swipe]:visible:not([inert])', { hasText: 'No sugar' }).first();
+async function ensureOpen(p: Page) {
+  if (await sugar(p).locator('button[aria-pressed="true"]').count()) await sugar(p).locator('button[aria-pressed]').click();
+  await expect(sugar(p).locator('button[aria-pressed="false"]')).toBeVisible();
+}
+const tick = (p: Page) => sugar(p).locator('button[aria-pressed="false"]').click();
 
 /** y positions of an element sampled every ~30 ms for `ms`. */
 async function sampleY(p: Page, loc: ReturnType<Page['locator']>, ms: number) {
@@ -21,13 +27,13 @@ async function sampleY(p: Page, loc: ReturnType<Page['locator']>, ms: number) {
 
 test('completing a habit with "hide completed" on: the row fades out and what is below glides up', async ({ page }) => {
   await openApp(page);
+  await ensureOpen(page);
   await hideCompleted(page).click();
   const below = page.getByText('This month', { exact: true }).first(); // a stat card under the Today panel
   const y0 = (await below.boundingBox())!.y;
 
   // tick an open habit
-  const target = row(page, 'No sugar');
-  await target.locator('button').first().click();
+  await tick(page);
 
   // right away the row is still there, marked as leaving and not clickable
   await expect(page.locator('[data-no-swipe].row-out[inert]')).toHaveCount(1);
@@ -42,21 +48,23 @@ test('completing a habit with "hide completed" on: the row fades out and what is
 
 test('undo brings the row back with an entrance, not a pop', async ({ page }) => {
   await openApp(page);
+  await ensureOpen(page);
   await hideCompleted(page).click();
-  await row(page, 'No sugar').locator('button').first().click();
+  const name = 'No sugar';
+  await tick(page);
   await expect(page.locator('[data-no-swipe].row-out')).toHaveCount(0, { timeout: 3000 });
   await page.getByRole('button', { name: 'Undo', exact: true }).last().click();
-  const back = page.locator('[data-no-swipe].row-in', { hasText: 'No sugar' });
-  await expect(back).toHaveCount(1);
-  await expect(row(page, 'No sugar')).toBeVisible();
+  await expect(page.locator('[data-no-swipe].row-in', { hasText: name })).toHaveCount(1);
+  await expect(page.locator('[data-no-swipe]:visible', { hasText: name }).first()).toBeVisible();
 });
 
 test('stat numbers ease to their new value instead of snapping', async ({ page }) => {
   await openApp(page);
+  await ensureOpen(page);
   const today = page.locator('section', { has: page.locator('.panel-head', { hasText: /^Today$/ }) }).first();
   const read = async () => parseInt((await today.locator('.num').first().innerText()).replace(/\D/g, ''), 10);
   const start = await read();
-  await row(page, 'No sugar').locator('button').first().click();
+  await tick(page);
   const seen = new Set<number>();
   const end = Date.now() + 1200;
   while (Date.now() < end) { seen.add(await read()); await page.waitForTimeout(25); }
@@ -72,30 +80,11 @@ test('chart bars grow into place', async ({ page }) => {
   await expect.poll(() => bar.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).d)).toBeGreaterThan(0.01);
 });
 
-test('a popup fades out instead of vanishing', async ({ page }) => {
+test('a popup is marked closing, ignores clicks while it fades, then is removed', async ({ page }) => {
   await openApp(page);
-  await page.getByRole('button', { name: 'New habit' }).click();
-  const editor = page.getByRole('dialog', { name: 'Create habit' });
-  await expect(editor).toBeVisible();
-  await page.keyboard.press('Escape');
-  // not closable by Escape in every build; fall back to the close button
-  if (await editor.isVisible()) await editor.getByRole('button', { name: 'Close' }).click();
-  await expect(editor).toBeHidden({ timeout: 2000 });
-
-  await goTab(page, 'Habits');
-  await page.getByRole('button', { name: /Take a break/i }).first().click().catch(() => {});
-});
-
-test('Take a break: the dialog is marked closing, ignores clicks, then is removed', async ({ page }) => {
-  await openApp(page);
-  await page.locator('nav[aria-label=Main]').getByRole('button', { name: 'Today' }).click();
-  await page.getByRole('button', { name: 'Open menu' }).or(page.getByRole('button', { name: /more|menu|⋯/i })).first().click().catch(() => {});
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: /Take a break/ }).click();
   const dlg = page.getByRole('dialog', { name: 'Take a break' });
-  if (!(await dlg.isVisible().catch(() => false))) {
-    await page.keyboard.press('Control+k');
-    await page.getByPlaceholder(/search|type/i).fill('break');
-    await page.keyboard.press('Enter');
-  }
   await expect(dlg).toBeVisible();
   await dlg.getByRole('button', { name: 'Close' }).click();
   await expect(page.locator('.backdrop[data-closing]')).toHaveCount(1);
@@ -108,10 +97,11 @@ test.describe('reduce motion', () => {
 
   test('rows leave and numbers change at once, with no ghost row', async ({ page }) => {
     await openApp(page);
+    await ensureOpen(page);
     await hideCompleted(page).click();
-    const target = row(page, 'No sugar');
-    await target.locator('button').first().click();
-    await expect(page.locator('[data-no-swipe]', { hasText: 'No sugar' })).toHaveCount(0, { timeout: 400 });
+    const before = await page.locator('[data-no-swipe]:visible').count();
+    await tick(page);
+    await expect(page.locator('[data-no-swipe]:visible')).toHaveCount(before - 1, { timeout: 400 });
     await expect(page.locator('.row-out')).toHaveCount(0);
   });
 });
